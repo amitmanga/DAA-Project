@@ -1060,19 +1060,29 @@ def get_staff_for_date(date_str):
 
 
 def schedule_breaks(staff, assigned_windows):
-    """Schedule two breaks for a staff member given their assigned windows.
+    """Schedule two mandatory breaks for a staff member.
 
-    Break 1: 30 min in [shift_start+120, shift_start+360]
-    Break 2: 60 min in [b1_end+120 or shift_start+360, shift_end-60]
+    Break 1 (Short Break, 30 min):
+        Preferred window: [shift_start+120, shift_start+360]
+        Fallback:         [shift_start+60,  shift_end-30]   (anywhere in shift)
+
+    Break 2 (Meal Break, 60 min):
+        Preferred window: [b1_end+120, shift_end-60]  (at least 2 hrs after B1)
+        Fallback:         [shift_start+120, shift_end-60]   (anywhere after first hr)
+
+    Breaks are inserted outside busy task windows; if no gap exists in preferred
+    window we fall back to the widest possible window so every staff member
+    always receives both breaks.
     """
     shift_start = staff['shift_start']
-    shift_end = staff['shift_end']
+    shift_end   = staff['shift_end']
     breaks = []
 
     def find_free_slot(duration, search_start, search_end, busy):
-        """Find first free slot of `duration` mins between search_start and search_end."""
-        t = search_start
-        while t + duration <= search_end:
+        """Return start of first free slot of `duration` mins, or None."""
+        t = max(search_start, shift_start)
+        end_cap = min(search_end, shift_end - duration)
+        while t + duration <= end_cap:
             conflict = False
             for (ws, we) in busy:
                 if t < we and t + duration > ws:
@@ -1085,33 +1095,40 @@ def schedule_breaks(staff, assigned_windows):
 
     busy = sorted(assigned_windows)
 
-    # Break 1: 30-min short break
-    b1_search_start = shift_start + 120
-    b1_search_end = shift_start + 360
-    b1_start = find_free_slot(30, b1_search_start, b1_search_end, busy)
+    # ── Break 1: 30-min short break ──────────────────────────────
+    b1_start = (
+        find_free_slot(30, shift_start + 120, shift_start + 360, busy)
+        or find_free_slot(30, shift_start + 60, shift_end - 30,  busy)
+    )
+    b1_end = None
     if b1_start is not None:
         b1_end = b1_start + 30
         breaks.append({
             'start_mins': b1_start,
-            'end_mins': b1_end,
+            'end_mins':   b1_end,
             'start': mins_to_time(b1_start),
-            'end': mins_to_time(b1_end),
-            'type': 'Short Break',
+            'end':   mins_to_time(b1_end),
+            'type':  'Short Break',
         })
-        # Break 2: 60-min meal break
-        b2_search_start = max(b1_end + 120, shift_start + 360)
-        b2_search_end = shift_end - 60
-        busy2 = sorted(busy + [(b1_start, b1_end)])
-        b2_start = find_free_slot(60, b2_search_start, b2_search_end, busy2)
-        if b2_start is not None:
-            b2_end = b2_start + 60
-            breaks.append({
-                'start_mins': b2_start,
-                'end_mins': b2_end,
-                'start': mins_to_time(b2_start),
-                'end': mins_to_time(b2_end),
-                'type': 'Meal Break',
-            })
+
+    # ── Break 2: 60-min meal break ───────────────────────────────
+    busy2 = sorted(busy + ([(b1_start, b1_end)] if b1_end else []))
+    # Preferred: at least 2 hrs after short break (or 6 hrs into shift)
+    b2_pref_start = max(b1_end + 120 if b1_end else 0, shift_start + 360)
+    b2_start = (
+        find_free_slot(60, b2_pref_start,        shift_end - 60, busy2)
+        or find_free_slot(60, shift_start + 120, shift_end - 60, busy2)
+    )
+    if b2_start is not None:
+        b2_end = b2_start + 60
+        breaks.append({
+            'start_mins': b2_start,
+            'end_mins':   b2_end,
+            'start': mins_to_time(b2_start),
+            'end':   mins_to_time(b2_end),
+            'type':  'Meal Break',
+        })
+
     return breaks
 
 
