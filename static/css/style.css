@@ -1275,9 +1275,76 @@ canvas { display: block; }
   border: 1px solid var(--border);
   border-radius: 12px;
   width: 600px; max-width: 95vw;
-  max-height: 80vh;
+  max-height: 82vh;
   display: flex; flex-direction: column;
+  overflow: hidden;
   box-shadow: 0 20px 60px rgba(0,0,0,0.20);
+}
+.modal-box-wide {
+  width: 780px !important;
+  max-height: 88vh !important;
+  overflow: hidden !important;
+}
+
+/* Staff card click hint */
+.staff-card-click-hint {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-align: right;
+  margin-top: -4px;
+  letter-spacing: 0.02em;
+}
+.staff-card:hover .staff-card-click-hint { color: var(--info); }
+
+/* Staff detail modal body */
+.modal-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  flex: 1;
+  min-height: 0;  /* critical: lets flex child shrink below content size */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.staff-detail-kpis {
+  display: flex;
+  gap: 12px;
+}
+.staff-detail-kpi {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 12px;
+  text-align: center;
+}
+.staff-detail-kpi-val { font-size: 1.6rem; font-weight: 700; color: var(--text); line-height: 1; }
+.staff-detail-kpi-lbl { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 4px; }
+
+.staff-detail-section { display: flex; flex-direction: column; gap: 8px; }
+.staff-detail-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--navy);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Flights list inside staff detail */
+.staff-flights-list { display: flex; flex-direction: column; gap: 6px; }
+.staff-flight-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 140px 80px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
 }
 .modal-header {
   padding: 16px 20px;

@@ -350,43 +350,73 @@ function showSTFlightDetail(flight) {
   panel.classList.add('open');
 }
 
-// ── Staff Tab ──────────────────────────────────────────────────
+// -- Staff Tab ----------------------------------------------------
 function renderSTStaffTab(container) {
-  const staff = ST_DATA.staff;
+  const staff = ST_DATA.staff || [];
   const absent = ST_DATA.absent_staff || [];
 
   container.innerHTML = `
-    <div class="mt-16">
+    <div class="panel mt-16">
+      <div class="panel-title-row">
+        <span class="panel-title">Staff Roster \u2014 ${ST_DATA.date_label}</span>
+        <div class="filter-row">
+          <input class="search-input" id="st-staff-search" placeholder="Search by ID, skill\u2026" />
+          <select id="st-shift-filter" class="select-input">
+            <option value="">All Shifts</option>
+            <option value="Day">Day</option>
+            <option value="Night">Night</option>
+          </select>
+        </div>
+      </div>
       <div class="staff-grid" id="st-staff-grid"></div>
-      ${absent.length ? `
-        <div class="panel mt-16">
-          <div class="panel-title">Absent Staff (${absent.length})</div>
-          <div class="absent-chips">
-            ${absent.map(a => `
-              <div class="absent-card">
-                <div class="absent-id">${a.id}</div>
-                <div class="absent-skill">${a.skill1}</div>
-                <div class="badge badge-warn">${a.leave_type}</div>
-              </div>`).join('')}
-          </div>
-        </div>` : ''}
-    </div>`;
+    </div>
+    ${absent.length ? `
+      <div class="panel mt-16">
+        <div class="panel-title">Absent Staff (${absent.length})</div>
+        <div class="absent-chips">
+          ${absent.map(a => `
+            <div class="absent-card">
+              <div class="absent-id">${a.id}</div>
+              <div class="absent-skill">${a.skill1}</div>
+              <div class="badge badge-warn">${a.leave_type}</div>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}`;
 
   renderSTStaffCards(staff);
+  document.getElementById('st-staff-search').addEventListener('input', filterSTStaff);
+  document.getElementById('st-shift-filter').addEventListener('change', filterSTStaff);
+}
+
+function filterSTStaff() {
+  const q = (document.getElementById('st-staff-search')?.value || '').toLowerCase();
+  const shift = document.getElementById('st-shift-filter')?.value || '';
+  const filtered = (ST_DATA.staff || []).filter(s => {
+    const matchQ = !q || s.id.toLowerCase().includes(q)
+      || (s.skill1 || '').toLowerCase().includes(q)
+      || (s.skill2 || '').toLowerCase().includes(q);
+    const matchShift = !shift || s.shift === shift;
+    return matchQ && matchShift;
+  });
+  renderSTStaffCards(filtered);
 }
 
 function renderSTStaffCards(staffList) {
   const grid = document.getElementById('st-staff-grid');
   if (!grid) return;
+  if (!staffList.length) {
+    grid.innerHTML = '<div class="muted small" style="padding:16px">No staff match your search.</div>';
+    return;
+  }
   grid.innerHTML = staffList.map(s => {
-    const utilColor = s.utilisation_pct > 90 ? ST.crit
-      : s.utilisation_pct > 70 ? ST.warn : ST.ok;
+    const utilColor = s.utilisation_pct > 90 ? ST.crit : s.utilisation_pct > 70 ? ST.warn : ST.ok;
     const assignments = s.assignments || [];
     const breaks = s.breaks || [];
     const assignedFlights = [...new Set(assignments.map(a => a.task_id?.split('_')[0]).filter(Boolean))];
 
     return `
-      <div class="staff-card">
+      <div class="staff-card" style="cursor:pointer"
+           data-staffid="${s.id}">
         <div class="staff-card-header">
           <div class="staff-card-title">
             <div class="staff-card-id">${s.id}</div>
@@ -400,31 +430,144 @@ function renderSTStaffCards(staffList) {
         </div>
         <div class="staff-card-meta">${s.shift_label}</div>
         <div class="staff-card-summary">
-          <span class="staff-card-pill">${assignments.length} tasks</span>
-          <span class="staff-card-pill">${assignedFlights.length} flights</span>
-          <span class="staff-card-pill">${Math.round(s.utilisation_pct)}% utilisation</span>
+          <span class="staff-card-pill">\ud83d\udccb ${assignments.length} tasks</span>
+          <span class="staff-card-pill">\u2708 ${assignedFlights.length} flights</span>
+          <span class="staff-card-pill" style="color:${utilColor}">\ud83d\udcca ${Math.round(s.utilisation_pct)}%</span>
         </div>
         <div class="util-bar-row">
           <div class="util-bar">
-            <div class="util-bar-fill" style="width:${s.utilisation_pct}%;background:${utilColor}"></div>
+            <div class="util-bar-fill" style="width:${Math.min(s.utilisation_pct,100)}%;background:${utilColor}"></div>
           </div>
           <span class="util-pct" style="color:${utilColor}">${Math.round(s.utilisation_pct)}%</span>
         </div>
-        <div class="staff-assignments-list">
-          ${assignments.length > 0 ? assignments.slice(0, 5).map(a => `
-            <div class="staff-assign-row">
-              <span class="staff-assign-time">${a.start}–${a.end}</span>
-              <span class="staff-assign-task">${a.task} <span class="muted">${a.task_id?.split('_')[0] || ''}</span></span>
-            </div>`).join('') : '<div class="muted small">No tasks assigned</div>'}
-          ${assignments.length > 5 ? `<div class="muted small">+${assignments.length - 5} more tasks</div>` : ''}
-        </div>
-        ${breaks.length ? `
-          <div class="staff-breaks">
-            ${breaks.map(b => `<span class="break-chip">${b.type}: ${b.start}–${b.end}</span>`).join('')}
-          </div>` : ''}
+        <div class="staff-card-click-hint">Click for full details \u2192</div>
       </div>`;
   }).join('');
+
+  // Attach click handlers after rendering
+  grid.querySelectorAll('.staff-card[data-staffid]').forEach(card => {
+    card.addEventListener('click', () => {
+      const sid = card.dataset.staffid;
+      const s = (ST_DATA.staff || []).find(x => x.id === sid);
+      if (s) showSTStaffDetail(s);
+    });
+  });
 }
+
+function _getSTStaffOverlay() {
+  let overlay = document.getElementById('st-staff-detail-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'st-staff-detail-overlay';
+    overlay.className = 'modal-overlay hidden';
+    overlay.innerHTML = `<div class="modal-box modal-box-wide" id="st-staff-modal-box"></div>`;
+    document.body.appendChild(overlay);
+    // Click-outside to close
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) closeSTStaffDetail();
+    });
+  }
+  return overlay;
+}
+
+function showSTStaffDetail(s) {
+  const overlay = _getSTStaffOverlay();
+  const box = document.getElementById('st-staff-modal-box');
+  if (!box) return;
+
+  const utilColor = s.utilisation_pct > 90 ? ST.crit : s.utilisation_pct > 70 ? ST.warn : ST.ok;
+  const assignments = s.assignments || [];
+  const breaks = s.breaks || [];
+  const assignedFlights = [...new Set(assignments.map(a => a.task_id?.split('_')[0]).filter(Boolean))];
+
+  box.innerHTML = `
+    <div class="modal-header">
+      <div style="flex:1">
+        <div class="modal-title">👤 ${s.id}</div>
+        <div class="fd-meta" style="margin-top:4px;color:rgba(255,255,255,0.75)">
+          <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${ST_SKILL_COLOR[s.skill1]||'#888'};margin-right:5px;vertical-align:middle"></span>
+          ${s.skill1}${s.skill2 ? ` · ${s.skill2}` : ''}
+          &nbsp;·&nbsp;
+          <span class="staff-card-shift shift-${s.shift}" style="padding:2px 10px;vertical-align:middle">${s.shift}</span>
+        </div>
+      </div>
+      <button class="fd-close" onclick="closeSTStaffDetail()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="staff-detail-kpis">
+        <div class="staff-detail-kpi">
+          <div class="staff-detail-kpi-val">${assignments.length}</div>
+          <div class="staff-detail-kpi-lbl">Tasks Assigned</div>
+        </div>
+        <div class="staff-detail-kpi">
+          <div class="staff-detail-kpi-val">${assignedFlights.length}</div>
+          <div class="staff-detail-kpi-lbl">Flights Covered</div>
+        </div>
+        <div class="staff-detail-kpi">
+          <div class="staff-detail-kpi-val" style="color:${utilColor}">${Math.round(s.utilisation_pct)}%</div>
+          <div class="staff-detail-kpi-lbl">Utilisation</div>
+        </div>
+        <div class="staff-detail-kpi">
+          <div class="staff-detail-kpi-val">${breaks.length}</div>
+          <div class="staff-detail-kpi-lbl">Breaks</div>
+        </div>
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">🕐 Shift Details</div>
+        <div class="staff-card-meta">${s.shift_label}</div>
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">☕ Scheduled Breaks (${breaks.length})</div>
+        ${breaks.length
+          ? `<div class="staff-breaks">
+               ${breaks.map(b => `<span class="break-chip">${b.type}: ${b.start}–${b.end}</span>`).join('')}
+             </div>`
+          : '<div class="muted small">No breaks scheduled.</div>'}
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">📋 All Task Assignments (${assignments.length})</div>
+        ${assignments.length === 0 ? '<div class="muted small">No tasks assigned for this shift.</div>'
+          : assignments.map(a => `
+            <div class="staff-assign-row">
+              <span class="staff-assign-time">${a.start}–${a.end}</span>
+              <span class="staff-assign-task">
+                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${ST_SKILL_COLOR[a.skill]||'#888'};margin-right:5px;vertical-align:middle"></span>
+                ${a.task} <span class="muted">${a.task_id?.split('_')[0] || ''}</span>
+              </span>
+            </div>`).join('')}
+      </div>
+
+      ${assignedFlights.length ? `
+        <div class="staff-detail-section">
+          <div class="staff-detail-section-title">✈ Flights Covered (${assignedFlights.length})</div>
+          <div class="staff-flights-list">
+            ${assignedFlights.map(fn => {
+              const f = (ST_DATA.flights || []).find(fl => fl.flight_no === fn);
+              return f
+                ? `<div class="staff-flight-row">
+                    <span class="fn-cell">${f.flight_no}</span>
+                    <span>${f.origin_code} ${f.origin}</span>
+                    <span class="muted">${f.sta} · Gate ${f.gate}</span>
+                    <span class="status-badge ${f.status==='Arrival'?'badge-info':'badge-accent'}">${f.status}</span>
+                  </div>`
+                : `<div class="staff-flight-row"><span class="fn-cell">${fn}</span></div>`;
+            }).join('')}
+          </div>
+        </div>` : ''}
+    </div>`;
+
+  overlay.classList.remove('hidden');
+}
+
+function closeSTStaffDetail() {
+  const ov = document.getElementById('st-staff-detail-overlay');
+  if (ov) ov.classList.add('hidden');
+}
+window.closeSTStaffDetail = closeSTStaffDetail;
+window.showSTStaffDetail  = showSTStaffDetail;
 
 // ── Gate Timeline ──────────────────────────────────────────────
 function renderSTGateTimeline(container) {
