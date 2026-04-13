@@ -11,7 +11,7 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def read_csv(filename):
-    path = os.path.join(BASE_DIR, filename)
+    path = os.path.join(BASE_DIR, 'data', filename)
     with open(path, encoding='utf-8-sig') as f:
         rows = list(csv.DictReader(f))
     return [r for r in rows if any(v.strip() for v in r.values())]
@@ -722,7 +722,7 @@ _manual_assigns = {}       # {date_key: {task_id: [extra_staff_ids]}}
 
 def read_csv_flights():
     """Read Flights_schedule_4days.csv with cp1252 encoding, strip \xa0 from all values."""
-    path = os.path.join(BASE_DIR, 'Flights_schedule_4days.csv')
+    path = os.path.join(BASE_DIR, 'data', 'Flights_schedule_4days.csv')
     with open(path, encoding='cp1252') as f:
         reader = csv.DictReader(f)
         rows = []
@@ -771,7 +771,7 @@ def load_config_rules():
     global _config_rules
     if _config_rules is not None:
         return _config_rules
-    path = os.path.join(BASE_DIR, 'Config.csv')
+    path = os.path.join(BASE_DIR, 'data', 'Config.csv')
     with open(path, encoding='utf-8-sig') as f:
         rows = list(csv.DictReader(f))
     rules = []
@@ -868,7 +868,7 @@ def get_stands_map():
     global _stands_map
     if _stands_map is not None:
         return _stands_map
-    path = os.path.join(BASE_DIR, 'Stands.csv')
+    path = os.path.join(BASE_DIR, 'data', 'Stands.csv')
     with open(path, encoding='utf-8-sig') as f:
         rows = list(csv.DictReader(f))
     _stands_map = {}
@@ -983,12 +983,12 @@ def get_staff_for_date(date_str):
     staff_date_key = d.strftime('%d-%m-%Y')  # e.g. '11-04-2026'
 
     # Load staff schedule
-    path_staff = os.path.join(BASE_DIR, 'Staff_schedule.csv')
+    path_staff = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
     with open(path_staff, encoding='utf-8-sig') as f:
         staff_rows = list(csv.DictReader(f))
 
     # Load absences
-    path_abs = os.path.join(BASE_DIR, 'Staff_absence_schedule.csv')
+    path_abs = os.path.join(BASE_DIR, 'data', 'Staff_absence_schedule.csv')
     with open(path_abs, encoding='utf-8-sig') as f:
         abs_rows = list(csv.DictReader(f))
 
