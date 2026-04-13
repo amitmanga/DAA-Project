@@ -117,6 +117,7 @@ function renderIntradayPage() {
       <button class="sub-tab ${ID_ACTIVE_TAB==='staff'?'active':''}" data-idtab="staff">👤 Staff Roster</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='flights'?'active':''}" data-idtab="flights">✈ Flight Operations</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='gate-timeline'?'active':''}" data-idtab="gate-timeline">🛬 Gate Timeline</button>
+      <button class="sub-tab ${ID_ACTIVE_TAB==='map'?'active':''}" data-idtab="map">🗺 Network Map</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='perf'?'active':''}" data-idtab="perf">📈 Performance Analysis</button>
     </div>
     <div id="id-sub-content"></div>
@@ -498,6 +499,8 @@ function renderIDSubContent() {
     renderIDStaffRoster(ID_DATA.staff, ID_DATA.absent_staff || []);
   } else if (ID_ACTIVE_TAB === 'perf') {
     renderIDPerfChart(container);
+  } else if (ID_ACTIVE_TAB === 'map') {
+    renderIDMap(container);
   } else if (ID_ACTIVE_TAB === 'gate-timeline') {
     container.innerHTML = `
       <div class="panel mt-20">
@@ -1137,4 +1140,19 @@ window.showManageModal = showManageModal;
 window.showManageModalForTask = showManageModalForTask;
 window.closeManageModal = closeManageModal;
 window.toggleStaffAssignment = toggleStaffAssignment;
-window.unassignStaff = unassignStaff;
+window.unassignStaff = unassignStaff;// ── Route Map ──────────────────────────────────────────────────
+function renderIDMap(container) {
+  container.innerHTML = `
+    <div class="map-panel mt-16">
+      <div class="map-header">
+        <div class="map-title">✈ Live Connectivity Map — Operational View ${ID_DATA.date_label}</div>
+      </div>
+      <div id="map-intraday" class="map-container"></div>
+    </div>`;
+
+  setTimeout(() => {
+    const manager = new RouteMapManager('map-intraday');
+    if (window.MAPS) window.MAPS['intraday'] = manager;
+    manager.loadData('/api/map-data/intraday');
+  }, 100);
+}

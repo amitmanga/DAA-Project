@@ -629,6 +629,64 @@ def lt_flight_trend():
     } for m in months])
 
 
+# ---------------------------------------------------------------------------
+# Route Map API
+# ---------------------------------------------------------------------------
+
+def _get_map_data_from_flights(flights_list):
+    """Aggregates arrivals and departures by airport code."""
+    res = {
+        'arrivals': defaultdict(int),
+        'departures': defaultdict(int)
+    }
+    for f in flights_list:
+        code = f.get('origin_code', '').strip()
+        status = f.get('Status', '').strip()
+        if not code or code == 'DUB':
+            continue
+        if status == 'Arrival':
+            res['arrivals'][code] += 1
+        elif status == 'Departure':
+            res['departures'][code] += 1
+    
+    # Convert to standard dict for jsonify
+    return {
+        'arrivals': dict(res['arrivals']),
+        'departures': dict(res['departures'])
+    }
+
+@app.route('/api/map-data/long-term')
+def map_data_long_term():
+    """Returns aggregated route counts for the entire 4-day schedule as a representative network."""
+    flights = read_csv_flights()
+    return jsonify(_get_map_data_from_flights(flights))
+
+@app.route('/api/map-data/short-term/<date_str>')
+def map_data_short_term(date_str):
+    """Returns route counts for a specific date."""
+    # Convert date_str (YYYY-MM-DD or DD-MMM-YY) to DD-MMM-YY for CSV match
+    d = None
+    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%b-%Y', '%d-%m-%y'):
+        try:
+            d = datetime.strptime(date_str.strip(), fmt)
+            break
+        except ValueError:
+            pass
+    if not d:
+        return jsonify({'error': 'Invalid date'}), 400
+    
+    target_date = d.strftime('%d-%b-%y')
+    flights = [f for f in read_csv_flights() if f.get('date') == target_date]
+    return jsonify(_get_map_data_from_flights(flights))
+
+@app.route('/api/map-data/intraday')
+def map_data_intraday():
+    """Returns route counts for today (hardcoded to 13-Apr-26 in this project)."""
+    target_date = '13-Apr-26'
+    flights = [f for f in read_csv_flights() if f.get('date') == target_date]
+    return jsonify(_get_map_data_from_flights(flights))
+
+
 # ===========================================================================
 # SHORT-TERM & INTRADAY OPTIMISATION
 # ===========================================================================

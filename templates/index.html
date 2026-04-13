@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DAA Ground Operations — Staff Planning</title>
   <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/map.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -122,6 +125,7 @@
         <button class="sub-tab" data-sub="imbalance">Gap Analysis</button>
         <button class="sub-tab" data-sub="skills">Skill Distribution</button>
         <button class="sub-tab" data-sub="scenario">Scenario Planning</button>
+        <button class="sub-tab" data-sub="map">Route Map Network</button>
         <button class="sub-tab" data-sub="perf">Performance Analysis</button>
       </div>
 
@@ -293,6 +297,20 @@
       <div id="sub-scenario" class="sub-view">
       </div>
 
+      <!-- ── ROUTE MAP TAB ── -->
+      <div id="sub-map" class="sub-view">
+        <div class="section-header">
+          <h2>Global Route Map — Network Coverage</h2>
+          <span class="section-hint">Visualization of flight paths and volumes across the holiday season 2026.</span>
+        </div>
+        <div class="map-panel">
+          <div class="map-header">
+            <div class="map-title">✈ Network Connectivity Map — 2026 Strategic Plan</div>
+          </div>
+          <div id="map-long-term" class="map-container"></div>
+        </div>
+      </div>
+
       <!-- ── PERFORMANCE ANALYSIS TAB ── -->
       <div id="sub-perf" class="sub-view">
         <div class="section-header">
@@ -350,6 +368,8 @@
   <script src="/static/js/shortterm.js"></script>
   <script src="/static/js/intraday.js"></script>
   <script src="/static/js/scenario.js"></script>
+  <script src="/static/js/airports.js"></script>
+  <script src="/static/js/map-logic.js"></script>
   <script>
     // Wire up tab navigation to lazy-init views
     document.querySelectorAll('.nav-btn').forEach(btn => {
