@@ -787,7 +787,7 @@ canvas { display: block; }
 }
 .day-tab.active .day-tab-val { color: white; }
 .day-tab-label { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
-.day-tab.active .day-tab-label { color: rgba(255,255,255,0.5); }
+.day-tab.active .day-tab-label { color: #ffffff; font-weight: bold; }
 .day-tab.weekend .day-tab-name { color: var(--accent); }
 .day-tab.weekend::after { background: var(--accent); transform: scaleX(0.4); }
 .day-tab.weekend.active .day-tab-name { color: var(--accent-l); }

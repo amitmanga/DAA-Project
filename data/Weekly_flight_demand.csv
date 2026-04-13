@@ -1,4 +1,4 @@
-Season_Code,Week_In_Year,Week_Start,Terminal,Airline,Airline_Name,Flight_Category,Aircraft_Family,Weekly_Movements,Peak_Day_Movements,Avg_Load_Factor_Pct,Status,Data_type
+﻿Season_Code,Week_In_Year,Week_Start,Terminal,Airline,Airline_Name,Flight_Category,Aircraft_Family,Weekly_Movements,Peak_Day_Movements,Avg_Load_Factor_Pct,Status,Data_type
 W24,1,06-01-25,T1,FR,Ryanair,International Short-Haul,B737,704,135,81%,Arrival,Historical
 W24,1,06-01-25,T1,FR,Ryanair,International Short-Haul,A320,50,8,79%,Arrival,Historical
 W24,1,06-01-25,T1,FR,Ryanair,Domestic,B737,35,7,68%,Arrival,Historical
@@ -3899,66 +3899,66 @@ S26,14,30-03-26,T2,EK,Emirates,International Long-Haul,B777,17,3,89%,Departure,H
 S26,14,30-03-26,T2,EY,Etihad,International Long-Haul,A330,7,1,91%,Departure,Historical
 S26,14,30-03-26,T1,5X,UPS,Cargo,B767,7,1,nan%,Departure,Historical
 S26,14,30-03-26,T1,FX,FedEx,Cargo,A320,5,1,nan%,Departure,Historical
-S26,15,06-04-26,T1,FR,Ryanair,International Short-Haul,B737,1314,217,89%,Arrival,Forecast
-S26,15,06-04-26,T1,FR,Ryanair,International Short-Haul,A320,92,18,88%,Arrival,Forecast
-S26,15,06-04-26,T1,FR,Ryanair,Domestic,B737,74,13,77%,Arrival,Forecast
-S26,15,06-04-26,T2,EI,Aer Lingus,International Short-Haul,A320,459,85,89%,Arrival,Forecast
-S26,15,06-04-26,T2,EI,Aer Lingus,Transatlantic CBP,A330,166,30,92%,Arrival,Forecast
-S26,15,06-04-26,T2,EI,Aer Lingus,Transatlantic CBP,B787,77,15,94%,Arrival,Forecast
-S26,15,06-04-26,T2,EI,Aer Lingus,International Long-Haul,A330,19,3,88%,Arrival,Forecast
-S26,15,06-04-26,T2,RE,Aer Lingus Regional,Domestic,ATR72,154,28,76%,Arrival,Forecast
-S26,15,06-04-26,T2,RE,Aer Lingus Regional,International Short-Haul,ATR72,103,18,86%,Arrival,Forecast
-S26,15,06-04-26,T2,BA,British Airways,International Short-Haul,A320,107,19,89%,Arrival,Forecast
-S26,15,06-04-26,T2,BA,British Airways,International Short-Haul,E-Jet,75,14,86%,Arrival,Forecast
-S26,15,06-04-26,T1,LH,Lufthansa,International Short-Haul,A320,59,10,88%,Arrival,Forecast
-S26,15,06-04-26,T1,AF,Air France,International Short-Haul,A320,57,9,89%,Arrival,Forecast
-S26,15,06-04-26,T1,KL,KLM,International Short-Haul,A320,59,10,86%,Arrival,Forecast
-S26,15,06-04-26,T1,IB,Iberia,International Short-Haul,A320,36,6,87%,Arrival,Forecast
-S26,15,06-04-26,T1,VY,Vueling,International Short-Haul,A320,35,6,88%,Arrival,Forecast
-S26,15,06-04-26,T1,OS,Austrian,International Short-Haul,A320,19,3,88%,Arrival,Forecast
-S26,15,06-04-26,T1,SK,SAS,International Short-Haul,A320,18,3,88%,Arrival,Forecast
-S26,15,06-04-26,T1,AY,Finnair,International Short-Haul,A320,14,2,86%,Arrival,Forecast
-S26,15,06-04-26,T1,TK,Turkish Airlines,International Long-Haul,A320,26,4,88%,Arrival,Forecast
-S26,15,06-04-26,T1,U2,easyJet,International Short-Haul,A320,77,14,89%,Arrival,Forecast
-S26,15,06-04-26,T1,W6,Wizz Air,International Short-Haul,A320,63,10,86%,Arrival,Forecast
-S26,15,06-04-26,T2,AA,American Airlines,Transatlantic CBP,B787,42,7,92%,Arrival,Forecast
-S26,15,06-04-26,T2,UA,United Airlines,Transatlantic CBP,B787,21,3,94%,Arrival,Forecast
-S26,15,06-04-26,T2,DL,Delta Air Lines,Transatlantic CBP,A330,10,2,96%,Arrival,Forecast
-S26,15,06-04-26,T2,AC,Air Canada,Transatlantic CBP,B787,10,2,96%,Arrival,Forecast
-S26,15,06-04-26,T2,EK,Emirates,International Long-Haul,B777,18,3,90%,Arrival,Forecast
-S26,15,06-04-26,T2,EY,Etihad,International Long-Haul,A330,9,2,91%,Arrival,Forecast
-S26,15,06-04-26,T1,5X,UPS,Cargo,B767,8,1,nan%,Arrival,Forecast
-S26,15,06-04-26,T1,FX,FedEx,Cargo,A320,5,1,nan%,Arrival,Forecast
-S26,15,06-04-26,T1,FR,Ryanair,International Short-Haul,B737,1370,242,88%,Departure,Forecast
-S26,15,06-04-26,T1,FR,Ryanair,International Short-Haul,A320,99,19,88%,Departure,Forecast
-S26,15,06-04-26,T1,FR,Ryanair,Domestic,B737,67,12,75%,Departure,Forecast
-S26,15,06-04-26,T2,EI,Aer Lingus,International Short-Haul,A320,450,86,89%,Departure,Forecast
-S26,15,06-04-26,T2,EI,Aer Lingus,Transatlantic CBP,A330,167,29,97%,Departure,Forecast
-S26,15,06-04-26,T2,EI,Aer Lingus,Transatlantic CBP,B787,83,14,94%,Departure,Forecast
-S26,15,06-04-26,T2,EI,Aer Lingus,International Long-Haul,A330,18,3,90%,Departure,Forecast
-S26,15,06-04-26,T2,RE,Aer Lingus Regional,Domestic,ATR72,161,30,77%,Departure,Forecast
-S26,15,06-04-26,T2,RE,Aer Lingus Regional,International Short-Haul,ATR72,109,19,90%,Departure,Forecast
-S26,15,06-04-26,T2,BA,British Airways,International Short-Haul,A320,107,20,88%,Departure,Forecast
-S26,15,06-04-26,T2,BA,British Airways,International Short-Haul,E-Jet,78,14,89%,Departure,Forecast
-S26,15,06-04-26,T1,LH,Lufthansa,International Short-Haul,A320,59,9,87%,Departure,Forecast
-S26,15,06-04-26,T1,AF,Air France,International Short-Haul,A320,59,10,88%,Departure,Forecast
-S26,15,06-04-26,T1,KL,KLM,International Short-Haul,A320,58,10,89%,Departure,Forecast
-S26,15,06-04-26,T1,IB,Iberia,International Short-Haul,A320,34,6,90%,Departure,Forecast
-S26,15,06-04-26,T1,VY,Vueling,International Short-Haul,A320,35,6,90%,Departure,Forecast
-S26,15,06-04-26,T1,OS,Austrian,International Short-Haul,A320,18,3,87%,Departure,Forecast
-S26,15,06-04-26,T1,SK,SAS,International Short-Haul,A320,19,3,89%,Departure,Forecast
-S26,15,06-04-26,T1,AY,Finnair,International Short-Haul,A320,14,2,90%,Departure,Forecast
-S26,15,06-04-26,T1,TK,Turkish Airlines,International Long-Haul,A320,27,5,90%,Departure,Forecast
-S26,15,06-04-26,T1,U2,easyJet,International Short-Haul,A320,79,15,88%,Departure,Forecast
-S26,15,06-04-26,T1,W6,Wizz Air,International Short-Haul,A320,63,12,90%,Departure,Forecast
-S26,15,06-04-26,T2,AA,American Airlines,Transatlantic CBP,B787,41,7,97%,Departure,Forecast
-S26,15,06-04-26,T2,UA,United Airlines,Transatlantic CBP,B787,21,4,96%,Departure,Forecast
-S26,15,06-04-26,T2,DL,Delta Air Lines,Transatlantic CBP,A330,10,2,94%,Departure,Forecast
-S26,15,06-04-26,T2,AC,Air Canada,Transatlantic CBP,B787,10,2,96%,Departure,Forecast
-S26,15,06-04-26,T2,EK,Emirates,International Long-Haul,B777,18,3,92%,Departure,Forecast
-S26,15,06-04-26,T2,EY,Etihad,International Long-Haul,A330,9,2,91%,Departure,Forecast
-S26,15,06-04-26,T1,5X,UPS,Cargo,B767,8,1,nan%,Departure,Forecast
-S26,15,06-04-26,T1,FX,FedEx,Cargo,A320,5,1,nan%,Departure,Forecast
+S26,15,06-04-26,T1,FR,Ryanair,International Short-Haul,B737,1314,217,89%,Arrival,Historical
+S26,15,06-04-26,T1,FR,Ryanair,International Short-Haul,A320,92,18,88%,Arrival,Historical
+S26,15,06-04-26,T1,FR,Ryanair,Domestic,B737,74,13,77%,Arrival,Historical
+S26,15,06-04-26,T2,EI,Aer Lingus,International Short-Haul,A320,459,85,89%,Arrival,Historical
+S26,15,06-04-26,T2,EI,Aer Lingus,Transatlantic CBP,A330,166,30,92%,Arrival,Historical
+S26,15,06-04-26,T2,EI,Aer Lingus,Transatlantic CBP,B787,77,15,94%,Arrival,Historical
+S26,15,06-04-26,T2,EI,Aer Lingus,International Long-Haul,A330,19,3,88%,Arrival,Historical
+S26,15,06-04-26,T2,RE,Aer Lingus Regional,Domestic,ATR72,154,28,76%,Arrival,Historical
+S26,15,06-04-26,T2,RE,Aer Lingus Regional,International Short-Haul,ATR72,103,18,86%,Arrival,Historical
+S26,15,06-04-26,T2,BA,British Airways,International Short-Haul,A320,107,19,89%,Arrival,Historical
+S26,15,06-04-26,T2,BA,British Airways,International Short-Haul,E-Jet,75,14,86%,Arrival,Historical
+S26,15,06-04-26,T1,LH,Lufthansa,International Short-Haul,A320,59,10,88%,Arrival,Historical
+S26,15,06-04-26,T1,AF,Air France,International Short-Haul,A320,57,9,89%,Arrival,Historical
+S26,15,06-04-26,T1,KL,KLM,International Short-Haul,A320,59,10,86%,Arrival,Historical
+S26,15,06-04-26,T1,IB,Iberia,International Short-Haul,A320,36,6,87%,Arrival,Historical
+S26,15,06-04-26,T1,VY,Vueling,International Short-Haul,A320,35,6,88%,Arrival,Historical
+S26,15,06-04-26,T1,OS,Austrian,International Short-Haul,A320,19,3,88%,Arrival,Historical
+S26,15,06-04-26,T1,SK,SAS,International Short-Haul,A320,18,3,88%,Arrival,Historical
+S26,15,06-04-26,T1,AY,Finnair,International Short-Haul,A320,14,2,86%,Arrival,Historical
+S26,15,06-04-26,T1,TK,Turkish Airlines,International Long-Haul,A320,26,4,88%,Arrival,Historical
+S26,15,06-04-26,T1,U2,easyJet,International Short-Haul,A320,77,14,89%,Arrival,Historical
+S26,15,06-04-26,T1,W6,Wizz Air,International Short-Haul,A320,63,10,86%,Arrival,Historical
+S26,15,06-04-26,T2,AA,American Airlines,Transatlantic CBP,B787,42,7,92%,Arrival,Historical
+S26,15,06-04-26,T2,UA,United Airlines,Transatlantic CBP,B787,21,3,94%,Arrival,Historical
+S26,15,06-04-26,T2,DL,Delta Air Lines,Transatlantic CBP,A330,10,2,96%,Arrival,Historical
+S26,15,06-04-26,T2,AC,Air Canada,Transatlantic CBP,B787,10,2,96%,Arrival,Historical
+S26,15,06-04-26,T2,EK,Emirates,International Long-Haul,B777,18,3,90%,Arrival,Historical
+S26,15,06-04-26,T2,EY,Etihad,International Long-Haul,A330,9,2,91%,Arrival,Historical
+S26,15,06-04-26,T1,5X,UPS,Cargo,B767,8,1,nan%,Arrival,Historical
+S26,15,06-04-26,T1,FX,FedEx,Cargo,A320,5,1,nan%,Arrival,Historical
+S26,15,06-04-26,T1,FR,Ryanair,International Short-Haul,B737,1370,242,88%,Departure,Historical
+S26,15,06-04-26,T1,FR,Ryanair,International Short-Haul,A320,99,19,88%,Departure,Historical
+S26,15,06-04-26,T1,FR,Ryanair,Domestic,B737,67,12,75%,Departure,Historical
+S26,15,06-04-26,T2,EI,Aer Lingus,International Short-Haul,A320,450,86,89%,Departure,Historical
+S26,15,06-04-26,T2,EI,Aer Lingus,Transatlantic CBP,A330,167,29,97%,Departure,Historical
+S26,15,06-04-26,T2,EI,Aer Lingus,Transatlantic CBP,B787,83,14,94%,Departure,Historical
+S26,15,06-04-26,T2,EI,Aer Lingus,International Long-Haul,A330,18,3,90%,Departure,Historical
+S26,15,06-04-26,T2,RE,Aer Lingus Regional,Domestic,ATR72,161,30,77%,Departure,Historical
+S26,15,06-04-26,T2,RE,Aer Lingus Regional,International Short-Haul,ATR72,109,19,90%,Departure,Historical
+S26,15,06-04-26,T2,BA,British Airways,International Short-Haul,A320,107,20,88%,Departure,Historical
+S26,15,06-04-26,T2,BA,British Airways,International Short-Haul,E-Jet,78,14,89%,Departure,Historical
+S26,15,06-04-26,T1,LH,Lufthansa,International Short-Haul,A320,59,9,87%,Departure,Historical
+S26,15,06-04-26,T1,AF,Air France,International Short-Haul,A320,59,10,88%,Departure,Historical
+S26,15,06-04-26,T1,KL,KLM,International Short-Haul,A320,58,10,89%,Departure,Historical
+S26,15,06-04-26,T1,IB,Iberia,International Short-Haul,A320,34,6,90%,Departure,Historical
+S26,15,06-04-26,T1,VY,Vueling,International Short-Haul,A320,35,6,90%,Departure,Historical
+S26,15,06-04-26,T1,OS,Austrian,International Short-Haul,A320,18,3,87%,Departure,Historical
+S26,15,06-04-26,T1,SK,SAS,International Short-Haul,A320,19,3,89%,Departure,Historical
+S26,15,06-04-26,T1,AY,Finnair,International Short-Haul,A320,14,2,90%,Departure,Historical
+S26,15,06-04-26,T1,TK,Turkish Airlines,International Long-Haul,A320,27,5,90%,Departure,Historical
+S26,15,06-04-26,T1,U2,easyJet,International Short-Haul,A320,79,15,88%,Departure,Historical
+S26,15,06-04-26,T1,W6,Wizz Air,International Short-Haul,A320,63,12,90%,Departure,Historical
+S26,15,06-04-26,T2,AA,American Airlines,Transatlantic CBP,B787,41,7,97%,Departure,Historical
+S26,15,06-04-26,T2,UA,United Airlines,Transatlantic CBP,B787,21,4,96%,Departure,Historical
+S26,15,06-04-26,T2,DL,Delta Air Lines,Transatlantic CBP,A330,10,2,94%,Departure,Historical
+S26,15,06-04-26,T2,AC,Air Canada,Transatlantic CBP,B787,10,2,96%,Departure,Historical
+S26,15,06-04-26,T2,EK,Emirates,International Long-Haul,B777,18,3,92%,Departure,Historical
+S26,15,06-04-26,T2,EY,Etihad,International Long-Haul,A330,9,2,91%,Departure,Historical
+S26,15,06-04-26,T1,5X,UPS,Cargo,B767,8,1,nan%,Departure,Historical
+S26,15,06-04-26,T1,FX,FedEx,Cargo,A320,5,1,nan%,Departure,Historical
 S26,16,13-04-26,T1,FR,Ryanair,International Short-Haul,B737,1236,209,89%,Arrival,Forecast
 S26,16,13-04-26,T1,FR,Ryanair,International Short-Haul,A320,86,17,87%,Arrival,Forecast
 S26,16,13-04-26,T1,FR,Ryanair,Domestic,B737,63,12,76%,Arrival,Forecast

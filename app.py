@@ -1776,7 +1776,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 def st_dates():
     """Return available D+1 to D+3 dates."""
     from datetime import date as date_type
-    today = datetime(2026, 4, 11)
+    today = datetime.now()
     flight_dates = set(f['date'] for f in read_csv_flights())
     available_dates = []
     for i in [1, 2, 3]:
@@ -1824,10 +1824,11 @@ def st_apply_rec():
 @app.route('/api/intraday')
 def intraday_get():
     """Return today's intraday-optimised schedule with any live overrides."""
-    man = _manual_assigns.get('2026-04-11', {})
     now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    man = _manual_assigns.get(today_str, {})
     current_time_mins = now.hour * 60 + now.minute
-    result = optimize_day('2026-04-11', _intraday_overrides, man,
+    result = optimize_day(today_str, _intraday_overrides, man,
                           current_time_mins=current_time_mins,
                           prefer_early=True)
     if 'error' in result:
@@ -1845,10 +1846,11 @@ def intraday_delay():
     if not flight_no:
         return jsonify({'error': 'flight_no required'}), 400
     _intraday_overrides[flight_no] = {'delay_mins': delay_mins, 'cancelled': cancelled}
-    man = _manual_assigns.get('2026-04-11', {})
     now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    man = _manual_assigns.get(today_str, {})
     current_time_mins = now.hour * 60 + now.minute
-    result = optimize_day('2026-04-11', _intraday_overrides, man,
+    result = optimize_day(today_str, _intraday_overrides, man,
                           current_time_mins=current_time_mins,
                           prefer_early=True)
     if 'error' in result:
@@ -1860,8 +1862,9 @@ def intraday_delay():
 def intraday_reset():
     """Clear live intraday overrides and reload today's schedule."""
     _intraday_overrides.clear()
-    if '2026-04-11' in _manual_assigns:
-        _manual_assigns.pop('2026-04-11', None)
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    if today_str in _manual_assigns:
+        _manual_assigns.pop(today_str, None)
     return intraday_get()
 
 
@@ -1874,18 +1877,20 @@ def intraday_assign():
     action  = body.get('action', 'assign')  # 'assign' or 'unassign'
     if not task_id or not staff_id:
         return jsonify({'error': 'task_id and staff_id required'}), 400
-    if '2026-04-11' not in _manual_assigns:
-        _manual_assigns['2026-04-11'] = {}
-    existing = _manual_assigns['2026-04-11'].get(task_id, [])
+    now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    if today_str not in _manual_assigns:
+        _manual_assigns[today_str] = {}
+    existing = _manual_assigns[today_str].get(task_id, [])
     if action == 'assign':
         if staff_id not in existing:
             existing.append(staff_id)
     elif action == 'unassign':
         existing = [x for x in existing if x != staff_id]
-    _manual_assigns['2026-04-11'][task_id] = existing
-    now = datetime.now()
+    _manual_assigns[today_str][task_id] = existing
+    
     current_time_mins = now.hour * 60 + now.minute
-    result = optimize_day('2026-04-11', _intraday_overrides, _manual_assigns.get('2026-04-11', {}),
+    result = optimize_day(today_str, _intraday_overrides, _manual_assigns.get(today_str, {}),
                           current_time_mins=current_time_mins,
                           prefer_early=True)
     if 'error' in result:
@@ -2220,7 +2225,7 @@ def list_scenarios():
 def run_scenario():
     body = request.get_json(force=True) or {}
     name       = body.get('name', f'Scenario {_scenario_seq[0]+1}').strip() or f'Scenario {_scenario_seq[0]+1}'
-    base_date  = body.get('base_date', '2026-04-11')
+    base_date  = body.get('base_date', datetime.now().strftime('%Y-%m-%d'))
     constraints = {**DEFAULT_CONSTRAINTS, **body.get('constraints', {})}
     # Merge dict-valued constraints carefully so partial overrides work
     body_constraints = body.get('constraints', {})
@@ -2280,5 +2285,89 @@ def delete_scenario(sid):
     return jsonify({'deleted': sid})
 
 
+def update_csv_dates_to_current():
+    """Auto-update CSV dates to start from today."""
+    now = datetime.now()
+    
+    # 1. Update Flights_schedule_4days.csv
+    flights_path = os.path.join(BASE_DIR, 'data', 'Flights_schedule_4days.csv')
+    if os.path.exists(flights_path):
+        with open(flights_path, encoding='cp1252') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = reader.fieldnames
+        if rows:
+            raw_dates = set(r.get('date', '').strip() for r in rows if r.get('date', '').strip())
+            parsed = [(parse_date(d), d) for d in raw_dates if parse_date(d)]
+            parsed.sort(key=lambda x: x[0])
+            
+            if parsed:
+                date_map = {}
+                for i, (d_obj, d_str) in enumerate(parsed):
+                    date_map[d_str] = (now + timedelta(days=i)).strftime('%d-%b-%y')
+                for r in rows:
+                    if r.get('date', '').strip() in date_map:
+                        r['date'] = date_map[r.get('date', '').strip()]
+                with open(flights_path, 'w', encoding='cp1252', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+
+    # 2. Update Staff_schedule.csv
+    staff_path = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
+    if os.path.exists(staff_path):
+        with open(staff_path, encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = reader.fieldnames
+        if rows:
+            raw_dates = set(r.get('DATE', '').strip() for r in rows if r.get('DATE', '').strip())
+            parsed = [(parse_date(d), d) for d in raw_dates if parse_date(d)]
+            parsed.sort(key=lambda x: x[0])
+            
+            if parsed:
+                date_map = {}
+                for i, (d_obj, d_str) in enumerate(parsed):
+                    date_map[d_str] = (now + timedelta(days=i)).strftime('%d-%m-%Y')
+                for r in rows:
+                    if r.get('DATE', '').strip() in date_map:
+                        r['DATE'] = date_map[r.get('DATE', '').strip()]
+                with open(staff_path, 'w', encoding='utf-8-sig', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+
+    # 3. Update Weekly_flight_demand.csv status (Historical vs Forecast)
+    demand_path = os.path.join(BASE_DIR, 'data', 'Weekly_flight_demand.csv')
+    if os.path.exists(demand_path):
+        with open(demand_path, encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            fieldnames = reader.fieldnames
+        if rows:
+            changed = False
+            for r in rows:
+                week_start_str = r.get('Week_Start', '').strip()
+                if not week_start_str:
+                    continue
+                ws_date = parse_date(week_start_str)
+                if ws_date:
+                    # A week is considered completed if the current time is past its 7-day duration
+                    if now >= ws_date + timedelta(days=7):
+                        new_type = 'Historical'
+                    else:
+                        new_type = 'Forecast'
+                    
+                    if r.get('Data_type') != new_type:
+                        r['Data_type'] = new_type
+                        changed = True
+            
+            if changed:
+                with open(demand_path, 'w', encoding='utf-8-sig', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(rows)
+
 if __name__ == '__main__':
+    update_csv_dates_to_current()
     app.run(debug=True)
