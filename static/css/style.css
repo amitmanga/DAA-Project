@@ -609,6 +609,7 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   padding: 0 24px;
+  align-items: start;
 }
 .mt-8  { margin-top: 8px; }
 .mt-16 { margin-top: 16px; }
@@ -718,6 +719,15 @@ body {
    CHARTS
 ══════════════════════════════════════════════ */
 canvas { display: block; }
+
+/* Cap chart heights to keep long-term tab visuals on-screen */
+#imbalance-chart   { max-height: 220px; }
+#gap-donut-chart   { max-height: 220px; }
+#skill-bar-chart   { max-height: 220px; }
+#skill-donut-chart { max-height: 220px; }
+#absence-bar-chart { max-height: 220px; }
+#flight-trend-chart      { max-height: 200px; }
+#staff-req-avail-chart   { max-height: 200px; }
 
 /* ══════════════════════════════════════════════
    FOOTER
