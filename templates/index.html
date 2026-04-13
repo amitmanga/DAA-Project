@@ -122,8 +122,7 @@
       <div class="sub-tabs">
         <button class="sub-tab active" data-sub="demand">Staff Demand</button>
         <button class="sub-tab" data-sub="allocation">Annual Allocation Plan</button>
-        <button class="sub-tab" data-sub="imbalance">Gap Analysis</button>
-        <button class="sub-tab" data-sub="skills">Skill Distribution</button>
+        <button class="sub-tab" data-sub="gap-skill">Gap & Skill Analysis</button>
         <button class="sub-tab" data-sub="scenario">Scenario Planning</button>
         <button class="sub-tab" data-sub="map">Route Map Network</button>
         <button class="sub-tab" data-sub="perf">Performance Analysis</button>
@@ -240,55 +239,47 @@
         </div>
       </div>
 
-      <!-- ── IMBALANCE TAB ── -->
-      <div id="sub-imbalance" class="sub-view">
+      <!-- ── GAP & SKILL ANALYSIS TAB ── -->
+      <div id="sub-gap-skill" class="sub-view">
         <div class="section-header">
-          <h2>Workforce Gap Analysis — Required vs Available</h2>
-          <span class="section-hint">Negative gap = surplus. Positive gap = shortfall requiring cover.</span>
+          <h2>Workforce Gap & Skill Analysis — Strategic Resource Balance</h2>
+          <span class="section-hint">Detailed breakdown of weekly shortfalls per skill pool across 2026.</span>
         </div>
-        <div class="row-2col">
-          <div class="panel">
-            <div class="panel-title">Weekly Imbalance (FTE)</div>
-            <canvas id="imbalance-chart" height="160"></canvas>
-          </div>
-          <div class="panel">
-            <div class="panel-title">Gap Distribution</div>
-            <canvas id="gap-donut-chart" height="160"></canvas>
+
+        <div class="panel mb-16">
+          <div class="panel-title">Skill-Wise Gaps Weekly — 2026 (FTE)</div>
+          <div style="height: 280px;">
+            <canvas id="skill-gap-bar-chart"></canvas>
           </div>
         </div>
-        <div class="mt-24">
+
+        <div class="panel mb-16">
+          <div class="panel-title">Weekly Gap Detail</div>
+          <div class="table-container scrollable-10">
+            <table class="data-table compact-table" id="weekly-gap-table">
+              <thead><tr id="weekly-gap-head"></tr></thead>
+              <tbody id="weekly-gap-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="row-2col" style="gap: 16px;">
           <div class="panel">
-            <div class="panel-title">Weekly Gap Detail</div>
-            <div class="table-scroll">
-              <table class="data-table" id="gap-table">
+            <div class="panel-title">Skill Summary</div>
+            <div class="table-container scrollable-10" style="height: 400px;">
+              <table class="data-table compact-table" id="skill-summary-table">
                 <thead>
-                  <tr>
-                    <th>Week</th><th>Date</th><th>Month</th>
-                    <th>Staff Required (FTE)</th><th>Staff Available</th>
-                    <th>Gap (FTE)</th><th>Status</th>
-                  </tr>
+                  <tr><th>Role</th><th>Avg</th><th>Peak</th><th>Status</th></tr>
                 </thead>
-                <tbody id="gap-table-body"></tbody>
+                <tbody id="skill-summary-body"></tbody>
               </table>
             </div>
           </div>
-        </div>
-      </div>
-
-      <!-- ── SKILLS TAB ── -->
-      <div id="sub-skills" class="sub-view">
-        <div class="section-header">
-          <h2>Skill Distribution &amp; Absence Impact</h2>
-          <span class="section-hint">Workforce composition and monthly absence days by skill pool</span>
-        </div>
-        <div class="row-2col">
           <div class="panel">
-            <div class="panel-title">Total Staff by Primary Skill</div>
-            <canvas id="skill-donut-chart" height="180"></canvas>
-          </div>
-          <div class="panel">
-            <div class="panel-title">Monthly Absence Days by Skill — 2026</div>
-            <canvas id="absence-bar-chart" height="180"></canvas>
+            <div class="panel-title">Monthly Absence Impact</div>
+            <div style="height: 400px; display: flex; align-items: center;">
+               <canvas id="merged-absence-bar"></canvas>
+            </div>
           </div>
         </div>
       </div>

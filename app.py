@@ -629,6 +629,96 @@ def lt_flight_trend():
     } for m in months])
 
 
+@app.route('/api/long-term/gap-skill-data')
+def lt_merged_gap_skill():
+    demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
+
+    # Get all active skills from both req and avail
+    all_skills = set()
+    for wk in skill_req:
+        all_skills.update(skill_req[wk].keys())
+    for wk in skill_avail:
+        all_skills.update(skill_avail[wk].keys())
+    all_skills = sorted(list(all_skills))
+
+    weekly_data = []
+    for wk_key in sorted(staff_req.keys()):
+        try:
+            year_str, w_str = wk_key.split('-W')
+            d = datetime.strptime(f'{year_str}-W{int(w_str):02d}-1', '%G-W%V-%u')
+        except:
+            continue
+        
+        req_total = staff_req[wk_key]
+        avail_total = staff_avail.get(wk_key, 50)
+        gap_total = round(req_total - avail_total, 1)
+
+        sk_gaps = {}
+        for sk in all_skills:
+            s_req = skill_req.get(wk_key, {}).get(sk, 0)
+            s_avail = skill_avail.get(wk_key, {}).get(sk, 0)
+            sk_gaps[sk] = round(s_req - s_avail, 1)
+
+        weekly_data.append({
+            'week': wk_key,
+            'date': d.strftime('%d %b %Y'),
+            'month': d.strftime('%b'),
+            'required': req_total,
+            'available': avail_total,
+            'gap': gap_total,
+            'skill_gaps': sk_gaps,
+            'status': 'critical' if gap_total > 10 else ('warning' if gap_total > 0 else 'ok')
+        })
+
+    # Summary by skill (average across all weeks)
+    skill_summary = []
+    for sk in all_skills:
+        gaps = [w['skill_gaps'].get(sk, 0) for w in weekly_data]
+        avg_gap = round(sum(gaps) / len(gaps), 1) if gaps else 0
+        peak_gap = round(max(gaps), 1) if gaps else 0
+        skill_summary.append({
+            'skill': sk,
+            'avg_gap': avg_gap,
+            'peak_gap': peak_gap,
+            'status': 'critical' if avg_gap > 5 else ('warning' if avg_gap > 0 else 'ok')
+        })
+
+    # Historical monthly absences (from original skills API)
+    staff = load_staff()
+    absences = load_absences()
+    absence_map = defaultdict(list)
+    for a in absences:
+        emp = a['EMPLOYEE NUMBER'].strip()
+        d_from = parse_date(a.get('DATE FROM', ''))
+        d_to = parse_date(a.get('DATE TO', ''))
+        if d_from and d_to:
+            absence_map[emp].append((d_from, d_to))
+
+    total_by_skill = defaultdict(int)
+    for s in staff:
+        total_by_skill[s.get('Skill1', '').strip()] += 1
+
+    monthly_absent = defaultdict(lambda: defaultdict(int))
+    for emp, windows in absence_map.items():
+        emp_data = next((s for s in staff if s['EMPLOYEE NUMBER'] == emp), None)
+        if not emp_data: continue
+        sk = emp_data.get('Skill1', '').strip()
+        for (f, t) in windows:
+            curr = f
+            while curr <= t:
+                if curr.year == 2026:
+                    monthly_absent[curr.strftime('%b %Y')][sk] += 1
+                curr += timedelta(days=1)
+
+    return jsonify({
+        'weekly': weekly_data,
+        'skill_summary': skill_summary,
+        'total_by_skill': dict(total_by_skill),
+        'monthly_absent': {k: dict(v) for k, v in monthly_absent.items()},
+        'skills': all_skills
+    })
+
+
 # ---------------------------------------------------------------------------
 # Route Map API
 # ---------------------------------------------------------------------------

@@ -621,6 +621,48 @@ body {
    ALLOCATION TABLE
 ══════════════════════════════════════════════ */
 .table-scroll { overflow-x: auto; }
+.table-container { 
+  width: 100%; 
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+.scrollable-10 {
+  max-height: 420px; 
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.compact-table { font-size: 0.8rem; width: 100%; border-collapse: separate; border-spacing: 0; }
+.compact-table th, .compact-table td { padding: 4px 6px !important; }
+
+/* Sticky Header */
+.compact-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--surface-2);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+.compact-table tbody td { border-top: 1px solid var(--border); }
+
+/* Badges */
+.badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.badge-crit { background: var(--crit); color: #fff; }
+.badge-warn { background: var(--warn); color: #fff; }
+.badge-ok   { background: var(--ok); color: #fff; }
+
+.flex-col { display: flex; flex-direction: column; }
+/* Custom scrollbar for better visibility in the dark-themed components if needed */
+.scrollable-10::-webkit-scrollbar { width: 6px; }
+.scrollable-10::-webkit-scrollbar-track { background: transparent; }
+.scrollable-10::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
 
 .allocation-table {
   width: 100%;

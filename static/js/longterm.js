@@ -79,6 +79,7 @@ document.querySelectorAll('.sub-tab').forEach(tab => {
     if (tab.dataset.sub === 'scenario' && typeof initScenario === 'function') initScenario();
     if (tab.dataset.sub === 'map') initLongTermMap();
     if (tab.dataset.sub === 'perf') renderLongTermPerfChart();
+    if (tab.dataset.sub === 'gap-skill') initGapSkillAnalysis();
   });
 });
 
@@ -642,7 +643,7 @@ function renderGapDonut() {
     options: {
       responsive: true, cutout: '65%',
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'bottom' },
+        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 },
       },
     },
@@ -864,7 +865,7 @@ async function loadSkillCharts() {
     options: {
       responsive: true, cutout: '60%',
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'right' },
+        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'bottom' },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 },
       },
     },
@@ -886,7 +887,7 @@ async function loadSkillCharts() {
     options: {
       responsive: true,
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true, boxWidth: 10 }, position: 'bottom' },
+        legend: { labels: { color: DAA.white, usePointStyle: true, boxWidth: 10 }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1, mode: 'index' },
       },
       scales: {
@@ -995,8 +996,8 @@ async function boot() {
     loadStaffReqAvailChart(),
     loadAllocationTable(),
     loadSkillBarChart(),
-    loadImbalanceChart(),
-    loadSkillCharts(),
+
+
   ]);
 }
 // ═════════════════════════════════════════════════════════════
@@ -1014,3 +1015,180 @@ function initLongTermMap() {
 }
 
 boot().catch(console.error);
+
+// ── Gap & Skill Analysis — Merged View ────────────────────────
+async function initGapSkillAnalysis() {
+  const d = await api('/api/long-term/gap-skill-data');
+  
+  // Update shared state if needed
+  ALL_IMBALANCE = d.weekly;
+
+  renderSkillGapBarChart(d);
+// renderMergedGapDonut(d.weekly);
+// renderMergedSkillDonut(d.total_by_skill);
+  renderWeeklyGapTable(d);
+  renderSkillSummaryTable(d.skill_summary);
+  renderMergedAbsenceBar(d);
+}
+
+function renderSkillGapBarChart(data) {
+  destroyChart('skill-gap-bar');
+  const ctx = document.getElementById('skill-gap-bar-chart').getContext('2d');
+  
+  const datasets = data.skills.map(sk => ({
+    label: sk,
+    data: data.weekly.map(w => w.skill_gaps[sk] || 0),
+    backgroundColor: SKILL_COLOR[sk] || DAA.muted,
+    stack: 'gap',
+    borderRadius: 2,
+  }));
+
+  CHARTS['skill-gap-bar'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.weekly.map(w => w.date),
+      datasets: datasets
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { color: DAA.white, boxWidth: 8, font: {size: 10}, usePointStyle: true } },
+        tooltip: { mode: 'index', backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 }
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, grid: { color: '#e5e7eb' }, title: { display: true, text: 'FTE Gap (Shortfall > 0)', color: DAA.muted } }
+      }
+    }
+  });
+}
+
+function renderMergedGapDonut(weekly) {
+  destroyChart('merged-gap-donut');
+  let ok = 0, warn = 0, crit = 0;
+  weekly.forEach(d => {
+    if (d.gap <= 0) ok++;
+    else if (d.gap <= 10) warn++;
+    else crit++;
+  });
+  const ctx = document.getElementById('merged-gap-donut').getContext('2d');
+  CHARTS['merged-gap-donut'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Balanced / Surplus', 'Moderate Gap', 'Critical Gap'],
+      datasets: [{
+        data: [ok, warn, crit],
+        backgroundColor: ['rgba(46,204,113,.7)', 'rgba(243,156,18,.7)', 'rgba(231,76,60,.7)'],
+        borderColor: ['#2ECC71','#F39C12','#E74C3C'],
+        borderWidth: 2, hoverOffset: 6,
+      }],
+    },
+    options: {
+      responsive: true, cutout: '75%',
+      plugins: {
+        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
+      },
+    },
+  });
+}
+
+function renderMergedSkillDonut(pool) {
+  destroyChart('merged-skill-donut');
+  const labels = Object.keys(pool);
+  const data = Object.values(pool);
+  const ctx = document.getElementById('merged-skill-donut').getContext('2d');
+  CHARTS['merged-skill-donut'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: labels.map(l => SKILL_COLOR[l] || '#888'),
+        borderColor: '#ffffff', borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true, cutout: '75%',
+      plugins: {
+        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
+      },
+    },
+  });
+}
+
+function renderWeeklyGapTable(data) {
+  const head = document.getElementById('weekly-gap-head');
+  const body = document.getElementById('weekly-gap-body');
+
+  // Build header
+  let hHtml = `<th>Week</th><th>Total Gap</th>`;
+  data.skills.forEach(sk => {
+     hHtml += `<th>${sk}</th>`;
+  });
+  head.innerHTML = hHtml;
+
+  // Build body
+  body.innerHTML = data.weekly.map(w => {
+    let row = `<tr>
+      <td><span style="font-weight:700">${w.week}</span> <span style="font-size:0.7rem;color:var(--muted)">(${w.date})</span></td>
+      <td style="font-weight:700; color:${w.gap > 0 ? 'var(--crit)' : 'var(--ok)'}">${w.gap > 0 ? '+' : ''}${w.gap}</td>
+    `;
+    data.skills.forEach(sk => {
+      const g = w.skill_gaps[sk] || 0;
+      const col = g > 1 ? 'var(--crit)' : g > 0 ? 'var(--warn)' : 'var(--ok)';
+      row += `<td style="color:${col}">${g > 0 ? '+' : ''}${g}</td>`;
+    });
+    row += `</tr>`;
+    return row;
+  }).join('');
+}
+
+
+function renderSkillSummaryTable(summary) {
+  const body = document.getElementById('skill-summary-body');
+  body.innerHTML = summary.map(s => {
+    const avgCol = s.avg_gap > 5 ? 'var(--crit)' : s.avg_gap > 0 ? 'var(--warn)' : 'var(--ok)';
+    const peakCol = s.peak_gap > 8 ? 'var(--crit)' : s.peak_gap > 0 ? 'var(--warn)' : 'var(--ok)';
+    
+    return `
+      <tr>
+        <td style="font-weight:600; color:${avgCol}">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${SKILL_COLOR[s.skill]||'#888'};margin-right:8px;"></span>
+          ${s.skill}
+        </td>
+        <td style="font-weight:700; color:${avgCol}">${s.avg_gap > 0 ? '+' : ''}${s.avg_gap}</td>
+        <td style="font-weight:700; color:${peakCol}">${s.peak_gap > 0 ? '+' : ''}${s.peak_gap}</td>
+        <td><span class="badge badge-${s.status === 'critical' ? 'crit' : (s.status === 'warning' ? 'warn' : 'ok')}">${s.status === 'ok' ? 'Balanced' : (s.status === 'warning' ? 'Warning' : 'Critical')}</span></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderMergedAbsenceBar(d) {
+  destroyChart('merged-absence');
+  const months = ['Jan 2026','Feb 2026','Mar 2026','Apr 2026','May 2026','Jun 2026',
+                  'Jul 2026','Aug 2026','Sep 2026','Oct 2026','Nov 2026','Dec 2026'];
+  const labels = months.map(m => m.replace(' 2026',''));
+  const datasets = d.skills.map(sk => ({
+    label: sk,
+    data: months.map(m => (d.monthly_absent[m] || {})[sk] || 0),
+    backgroundColor: SKILL_COLOR[sk] || '#888',
+    stack: 'abs', borderRadius: 2,
+  }));
+  const ctx = document.getElementById('merged-absence-bar').getContext('2d');
+  CHARTS['merged-absence'] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: DAA.white, usePointStyle: true, boxWidth: 10 }, position: 'right' },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, grid: { color: '#e5e7eb' }, title: { display: true, text: 'Absence Days', color: DAA.muted } }
+      }
+    }
+  });
+}
