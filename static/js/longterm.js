@@ -385,14 +385,38 @@ function renderHeatmap() {
           ? Object.entries(w.skills).sort((a,b) => b[1]-a[1])[0]
           : null;
 
-        cell.innerHTML = `<span class="hm-pct">${Math.round(w.utilisation)}%</span><div class="hm-tooltip">
+        const ttHtml = `
             <div class="hm-tt-title">${w.week} &middot; ${w.week_start}</div>
             <div>Required: <b>${w.required}</b></div>
             <div>Available: <b>${w.available}</b></div>
             <div>Gap: <b style="color:${w.gap>0?'#ef4444':'#10b981'}">${w.gap>0?'+':''}${w.gap}</b></div>
             <div>Utilisation: <b>${w.utilisation}%</b></div>
             ${topSkill ? `<div>Top: <b>${topSkill[0]}</b></div>` : ''}
-          </div>`;
+          `;
+
+        cell.innerHTML = `<span class="hm-pct">${Math.round(w.utilisation)}%</span>`;
+
+        cell.addEventListener('mouseenter', () => {
+          let globalTt = document.getElementById('global-hm-tooltip');
+          if (!globalTt) {
+            globalTt = document.createElement('div');
+            globalTt.id = 'global-hm-tooltip';
+            globalTt.className = 'hm-tooltip';
+            globalTt.style.position = 'fixed';
+            globalTt.style.zIndex = '99999';
+            document.body.appendChild(globalTt);
+          }
+          globalTt.innerHTML = ttHtml;
+          globalTt.style.display = 'block';
+          const rect = cell.getBoundingClientRect();
+          globalTt.style.left = (rect.left + rect.width / 2) + 'px';
+          globalTt.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
+        });
+
+        cell.addEventListener('mouseleave', () => {
+          const globalTt = document.getElementById('global-hm-tooltip');
+          if (globalTt) globalTt.style.display = 'none';
+        });
 
         cell.addEventListener('click', () => selectWeek(w.week));
       }

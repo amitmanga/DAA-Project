@@ -214,12 +214,14 @@ body {
    KPI CARDS
 ══════════════════════════════════════════════ */
 .kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  display: flex;
   gap: 16px;
   padding: 20px 24px 4px;
+  overflow-x: auto;
 }
 .kpi-card {
+  flex: 1 1 0;
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -470,7 +472,7 @@ body {
 }
 .hm-cell:hover {
   transform: scale(1.35);
-  z-index: 20;
+  z-index: 1100;
   box-shadow: 0 3px 10px rgba(0,0,0,0.18);
 }
 .hm-cell.selected {
@@ -490,7 +492,7 @@ body {
 
 .hm-cell:hover {
   transform: scale(1.2);
-  z-index: 20;
+  z-index: 1100;
   box-shadow: 0 6px 20px rgba(0,0,0,0.18);
 }
 
@@ -508,7 +510,7 @@ body {
   font-size: 0.72rem;
   line-height: 1.6;
   white-space: nowrap;
-  z-index: 999;
+  z-index: 1200;
   box-shadow: 0 4px 16px rgba(0,0,0,0.25);
   pointer-events: none;
   min-width: 160px;
@@ -580,12 +582,14 @@ body {
 .dd-badge.crit { background: var(--crit-light);  color: #991b1b; }
 
 .drilldown-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  display: flex;
   gap: 12px;
   margin-bottom: 16px;
+  overflow-x: auto;
 }
 .dd-card {
+  flex: 1 1 0;
+  min-width: 0;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -799,10 +803,10 @@ canvas { display: block; }
    SHORT TERM KPI GRID
 ══════════════════════════════════════════════ */
 .st-kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  display: flex;
   gap: 12px;
   margin-bottom: 20px;
+  overflow-x: auto;
 }
 .kpi-card--ok   { border-top-color: var(--ok) !important; }
 .kpi-card--warn { border-top-color: var(--warn) !important; }
