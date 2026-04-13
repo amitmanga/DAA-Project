@@ -1056,10 +1056,10 @@ function renderIDPerfChart(container) {
       <h2>Task Performance &amp; Punctuality</h2>
       <span class="section-hint">Live performance of ground processes for today's operations.</span>
     </div>
-    <div class="panel" style="max-width:600px; margin: 0 auto; background: #1a1a1a; display: flex; flex-direction: column; height: calc(100vh - 220px); min-height: 350px;">
+    <div class="panel" style="max-width:600px; margin: 0 auto; display: flex; flex-direction: column; height: calc(100vh - 220px); min-height: 350px;">
       <div class="panel-title-row">
-        <span class="panel-title" style="color:#ffffff;"><img src="data:image/svg+xml;utf8,<svg fill='%23ffffff' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-1.08 2.4-1.73 0-.91-.54-1.57-2.73-2.18-2.6-.71-3.69-2.07-3.69-3.76 0-1.63 1.25-2.81 2.69-3.21V4h2.67v1.94c1.54.34 2.89 1.47 2.97 3.25h-1.96c-.11-1.07-.86-1.74-2.5-1.74-1.69 0-2.3.93-2.3 1.58 0 1.08.77 1.51 2.87 2.1 2.65.75 3.55 2.1 3.55 3.84-.01 1.86-1.5 3-2.64 3.3z'/></svg>" width="16" style="vertical-align:text-bottom; margin-right:4px;">Ground Process Punctuality</span>
-        <div style="font-size:0.75rem;"><span style="color:#ffffff;">79.4 %</span> <span style="color:rgba(255,255,255,0.5)">(Live Avg)</span></div>
+        <span class="panel-title"><img src="data:image/svg+xml;utf8,<svg fill='%231a2744' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-1.08 2.4-1.73 0-.91-.54-1.57-2.73-2.18-2.6-.71-3.69-2.07-3.69-3.76 0-1.63 1.25-2.81 2.69-3.21V4h2.67v1.94c1.54.34 2.89 1.47 2.97 3.25h-1.96c-.11-1.07-.86-1.74-2.5-1.74-1.69 0-2.3.93-2.3 1.58 0 1.08.77 1.51 2.87 2.1 2.65.75 3.55 2.1 3.55 3.84-.01 1.86-1.5 3-2.64 3.3z'/></svg>" width="16" style="vertical-align:text-bottom; margin-right:4px;">Ground Process Punctuality</span>
+        <div style="font-size:0.75rem;"><span style="color:var(--text); font-weight:700;">79.4 %</span> <span style="color:var(--muted);">(Live Avg)</span></div>
       </div>
       <div style="flex: 1; position: relative;">
         <canvas id="id-perf-radar"></canvas>
@@ -1072,7 +1072,7 @@ function renderIDPerfChart(container) {
     if (!ctx) return;
     if (window.ID_CHARTS && window.ID_CHARTS['perf-radar']) window.ID_CHARTS['perf-radar'].destroy();
 
-    Chart.defaults.color = 'rgba(255,255,255,0.7)';
+    Chart.defaults.color = window.DAA ? DAA.text : '#1a2744';
     Chart.defaults.font.family = 'Inter, sans-serif';
 
     if (!window.ID_CHARTS) window.ID_CHARTS = {};
@@ -1086,7 +1086,7 @@ function renderIDPerfChart(container) {
           backgroundColor: 'rgba(34, 114, 180, 0.4)',
           borderColor: '#2b8ad5',
           pointBackgroundColor: '#2b8ad5',
-          pointBorderColor: '#fff',
+          pointBorderColor: window.DAA ? (DAA.bg || '#fff') : '#fff',
           pointHoverBackgroundColor: '#fff',
           pointHoverBorderColor: '#2b8ad5',
           borderWidth: 2,
@@ -1094,8 +1094,8 @@ function renderIDPerfChart(container) {
         }, {
           label: 'Scheduled Avg',
           data: [90, 85, 80, 75, 65, 60],
-          backgroundColor: 'rgba(255, 255, 255, 0)',
-          borderColor: 'rgba(255, 255, 255, 0.3)',
+          backgroundColor: 'rgba(0, 0, 0, 0)',
+          borderColor: 'rgba(0, 0, 0, 0.3)',
           borderDash: [5, 5],
           borderWidth: 2,
           pointRadius: 0,
@@ -1107,16 +1107,16 @@ function renderIDPerfChart(container) {
         maintainAspectRatio: false,
         scales: {
           r: {
-            angleLines: { color: 'rgba(255, 255, 255, 0.1)' },
-            grid: { color: 'rgba(255, 255, 255, 0.1)' },
-            pointLabels: { color: 'rgba(255, 255, 255, 0.85)', font: { size: 11, weight: '500' } },
+            angleLines: { color: 'rgba(0, 0, 0, 0.1)' },
+            grid: { color: 'rgba(0, 0, 0, 0.1)' },
+            pointLabels: { color: window.DAA ? DAA.text : '#1a2744', font: { size: 11, weight: '500' } },
             ticks: { display: false, min: 0, max: 100 }
           }
         },
         plugins: {
           legend: {
             position: 'bottom', align: 'end',
-            labels: { color: 'rgba(255,255,255,0.6)', boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle' }
+            labels: { color: window.DAA ? DAA.muted : '#6b7280', boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle' }
           },
           tooltip: {
             backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 13 }, bodyFont: { size: 13 },

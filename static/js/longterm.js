@@ -902,7 +902,7 @@ function renderLongTermPerfChart() {
   if (!ctx) return;
   if (CHARTS['lt-perf-radar']) CHARTS['lt-perf-radar'].destroy();
 
-  Chart.defaults.color = 'rgba(255,255,255,0.7)';
+  Chart.defaults.color = DAA.text || '#1a2744';
   Chart.defaults.font.family = 'Inter, sans-serif';
 
   CHARTS['lt-perf-radar'] = new Chart(ctx, {
@@ -915,7 +915,7 @@ function renderLongTermPerfChart() {
         backgroundColor: 'rgba(34, 114, 180, 0.4)', // Base brand blue with opacity
         borderColor: '#2b8ad5',
         pointBackgroundColor: '#2b8ad5',
-        pointBorderColor: '#fff',
+        pointBorderColor: DAA.bg || '#fff',
         pointHoverBackgroundColor: '#fff',
         pointHoverBorderColor: '#2b8ad5',
         borderWidth: 2,
@@ -923,8 +923,8 @@ function renderLongTermPerfChart() {
       }, {
         label: 'YTD 2026',
         data: [88, 82, 75, 70, 60, 65],
-        backgroundColor: 'rgba(255, 255, 255, 0)',
-        borderColor: 'rgba(255, 255, 255, 0.3)',
+        backgroundColor: 'rgba(0, 0, 0, 0)',
+        borderColor: 'rgba(0, 0, 0, 0.3)',
         borderDash: [5, 5],
         borderWidth: 2,
         pointRadius: 0,
@@ -937,13 +937,13 @@ function renderLongTermPerfChart() {
       scales: {
         r: {
           angleLines: {
-            color: 'rgba(255, 255, 255, 0.1)'
+            color: 'rgba(0, 0, 0, 0.1)'
           },
           grid: {
-            color: 'rgba(255, 255, 255, 0.1)'
+            color: 'rgba(0, 0, 0, 0.1)'
           },
           pointLabels: {
-            color: 'rgba(255, 255, 255, 0.85)',
+            color: DAA.text || '#1a2744',
             font: { size: 11, weight: '500' }
           },
           ticks: {
@@ -958,7 +958,7 @@ function renderLongTermPerfChart() {
           position: 'bottom',
           align: 'end',
           labels: {
-            color: 'rgba(255,255,255,0.6)',
+            color: DAA.muted || '#6b7280',
             boxWidth: 10,
             boxHeight: 10,
             usePointStyle: true,
