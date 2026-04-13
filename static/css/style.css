@@ -1003,6 +1003,64 @@ canvas { display: block; }
 .fd-task-name { font-size: 0.82rem; font-weight: 600; color: var(--text); margin-bottom: 4px; }
 .fd-task-time { font-size: 0.72rem; color: var(--muted); }
 
+/* Event Timeline */
+.event-timeline {
+  position: relative;
+  padding-left: 20px;
+  margin-top: 12px;
+}
+.event-timeline::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  background: var(--border);
+}
+.timeline-item {
+  position: relative;
+  margin-bottom: 12px;
+}
+.timeline-dot {
+  position: absolute;
+  top: 12px;
+  left: -19px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  z-index: 2;
+}
+.timeline-content {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+.timeline-content-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.timeline-time {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.timeline-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+.timeline-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
 /* Staff chips */
 .staff-chip {
   display: inline-flex;

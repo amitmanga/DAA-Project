@@ -76,6 +76,7 @@ document.querySelectorAll('.sub-tab').forEach(tab => {
     tab.classList.add('active');
     document.getElementById(`sub-${tab.dataset.sub}`).classList.add('active');
     if (tab.dataset.sub === 'scenario' && typeof initScenario === 'function') initScenario();
+    if (tab.dataset.sub === 'perf') renderLongTermPerfChart();
   });
 });
 
@@ -892,6 +893,88 @@ async function loadSkillCharts() {
              title: { display: true, text: 'Absence Days', color: DAA.muted } },
       },
     },
+  });
+}
+
+// ── Performance Analysis & Punctuality ──────────────────────────
+function renderLongTermPerfChart() {
+  const ctx = document.getElementById('lt-perf-radar');
+  if (!ctx) return;
+  if (CHARTS['lt-perf-radar']) CHARTS['lt-perf-radar'].destroy();
+
+  Chart.defaults.color = 'rgba(255,255,255,0.7)';
+  Chart.defaults.font.family = 'Inter, sans-serif';
+
+  CHARTS['lt-perf-radar'] = new Chart(ctx, {
+    type: 'radar',
+    data: {
+      labels: ['Cleaning', 'Catering', 'Maintenance', 'Fueling', 'Loading', 'Boarding'],
+      datasets: [{
+        label: 'Today',
+        data: [92, 85, 78, 65, 55, 60],
+        backgroundColor: 'rgba(34, 114, 180, 0.4)', // Base brand blue with opacity
+        borderColor: '#2b8ad5',
+        pointBackgroundColor: '#2b8ad5',
+        pointBorderColor: '#fff',
+        pointHoverBackgroundColor: '#fff',
+        pointHoverBorderColor: '#2b8ad5',
+        borderWidth: 2,
+        fill: true,
+      }, {
+        label: 'YTD 2026',
+        data: [88, 82, 75, 70, 60, 65],
+        backgroundColor: 'rgba(255, 255, 255, 0)',
+        borderColor: 'rgba(255, 255, 255, 0.3)',
+        borderDash: [5, 5],
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        r: {
+          angleLines: {
+            color: 'rgba(255, 255, 255, 0.1)'
+          },
+          grid: {
+            color: 'rgba(255, 255, 255, 0.1)'
+          },
+          pointLabels: {
+            color: 'rgba(255, 255, 255, 0.85)',
+            font: { size: 11, weight: '500' }
+          },
+          ticks: {
+            display: false, // hide the central scale numbers like 0, 20, 40...
+            min: 0,
+            max: 100
+          }
+        }
+      },
+      plugins: {
+        legend: {
+          position: 'bottom',
+          align: 'end',
+          labels: {
+            color: 'rgba(255,255,255,0.6)',
+            boxWidth: 10,
+            boxHeight: 10,
+            usePointStyle: true,
+            pointStyle: 'circle'
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(0,0,0,0.8)',
+          titleFont: { size: 13 },
+          bodyFont: { size: 13 },
+          callbacks: {
+            label: function(ctx) { return ctx.dataset.label + ': ' + ctx.raw + '%'; }
+          }
+        }
+      }
+    }
   });
 }
 

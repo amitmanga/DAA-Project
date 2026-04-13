@@ -1563,9 +1563,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         })
         all_tasks.append(fd)
 
-    # Remove completed tasks in live intraday mode so staff are freed up.
+    # Mark completed tasks in live intraday mode instead of deleting them.
+    # This preserves them for the timeline and staff utilisation history.
     if current_time_mins is not None:
-        all_tasks = [t for t in all_tasks if t['end_mins'] > current_time_mins]
+        for t in all_tasks:
+            if t['end_mins'] <= current_time_mins:
+                t['is_past'] = True
 
     # Apply manual assigns FIRST
     for task in all_tasks:
@@ -1645,7 +1648,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
         if assigned_count < needed:
             gap = needed - assigned_count
-            task['alert'] = f'Under-staffed: need {needed}, assigned {assigned_count} (gap {gap})'
+            if not task.get('is_past'):
+                task['alert'] = f'Under-staffed: need {needed}, assigned {assigned_count} (gap {gap})'
 
     # Schedule breaks and compute utilisation
     shift_lengths = {'DAY': 720, 'NIGHT': 720}  # 12-hour shifts = 720 mins

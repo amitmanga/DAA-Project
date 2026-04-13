@@ -117,6 +117,7 @@ function renderIntradayPage() {
       <button class="sub-tab ${ID_ACTIVE_TAB==='staff'?'active':''}" data-idtab="staff">👤 Staff Roster</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='flights'?'active':''}" data-idtab="flights">✈ Flight Operations</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='gate-timeline'?'active':''}" data-idtab="gate-timeline">🛬 Gate Timeline</button>
+      <button class="sub-tab ${ID_ACTIVE_TAB==='perf'?'active':''}" data-idtab="perf">📈 Performance Analysis</button>
     </div>
     <div id="id-sub-content"></div>
     <div id="id-flight-detail" class="flight-detail-panel"></div>
@@ -495,6 +496,8 @@ function renderIDSubContent() {
         <div id="id-absent-staff"></div>
       </div>`;
     renderIDStaffRoster(ID_DATA.staff, ID_DATA.absent_staff || []);
+  } else if (ID_ACTIVE_TAB === 'perf') {
+    renderIDPerfChart(container);
   } else if (ID_ACTIVE_TAB === 'gate-timeline') {
     container.innerHTML = `
       <div class="panel mt-20">
@@ -833,29 +836,35 @@ function showIDFlightDetail(flight) {
       </div>
     </div>
 
-    <!-- Tasks -->
+    <!-- Event Timeline -->
     <div class="fd-tasks">
-      <div class="fd-section-title">Task Assignments</div>
+      <div class="fd-section-title">Event Timeline</div>
       ${tasks.length === 0
-        ? '<div class="empty-state small">No tasks for this flight.</div>'
-        : tasks.map(t => `
-          <div class="fd-task-row ${t.alert ? 'fd-task-gap' : ''}">
-            <div class="fd-task-name">
-              <span class="dot" style="background:${ID_SKILL_COLOR[t.skill]||'#888'}"></span>
-              ${t.task}
-              <span class="badge ${t.priority==='Critical'?'badge-crit':'badge-warn'}">${t.priority}</span>
-            </div>
-            <div class="fd-task-time">${t.start} – ${t.end} · need ${t.staff_needed}</div>
-            <div class="fd-task-staff">
-              ${t.assigned.length
-                ? t.assigned.map(id =>
-                    `<span class="staff-chip">${id}
-                      <button class="chip-remove" onclick="unassignStaff('${t.id}','${id}')">✕</button>
-                    </span>`).join('')
-                : '<span class="gap-chip">⚠ Unassigned</span>'}
-              <button class="btn-assign-inline" onclick="showManageModalForTask(${JSON.stringify(flight).replace(/"/g,'&quot;')}, '${t.id}')">+ Assign</button>
-            </div>
-          </div>`).join('')}
+        ? '<div class="empty-state small">No events for this flight.</div>'
+        : `<div class="event-timeline">
+            ${tasks.map(t => `
+            <div class="timeline-item">
+              <div class="timeline-dot" style="background:${t.is_past ? '#10b981' : (ID_SKILL_COLOR[t.skill]||'#888')}"></div>
+              <div class="timeline-content ${t.alert ? 'fd-task-gap' : ''}" style="${t.is_past ? 'opacity:0.75' : ''}">
+                <div class="timeline-content-header">
+                  <span class="timeline-time">${t.start}</span>
+                  <span class="timeline-title" style="${t.is_past ? 'text-decoration:line-through' : ''}">${t.task}</span>
+                  ${t.priority === 'Critical' && !t.is_past ? '<span class="badge badge-crit">Critical</span>' : (t.priority === 'High' && !t.is_past ? '<span class="badge badge-warn">High</span>' : '')}
+                  ${t.is_past ? '<span class="badge badge-ok">✓ Done</span>' : ''}
+                </div>
+                <div class="timeline-meta">Scheduled: ${t.start} – ${t.end} · need ${t.staff_needed}</div>
+                <div class="fd-task-staff">
+                  ${t.assigned.length
+                    ? t.assigned.map(id =>
+                        `<span class="staff-chip">${id}
+                          <button class="chip-remove" onclick="unassignStaff('${t.id}','${id}')">✕</button>
+                        </span>`).join('')
+                    : '<span class="gap-chip">⚠ Unassigned</span>'}
+                  <button class="btn-assign-inline" onclick="showManageModalForTask(${JSON.stringify(flight).replace(/"/g,'&quot;')}, '${t.id}')">+ Assign</button>
+                </div>
+              </div>
+            </div>`).join('')}
+          </div>`}
     </div>`;
   panel.classList.add('open');
 }
@@ -946,10 +955,29 @@ function refreshManageStaff(flightNo) {
   const assignedIds = task ? new Set(task.assigned) : new Set();
   const skill = task ? task.skill : undefined;
 
-  const primary = skill ? allStaff.filter(s => s.skill1 === skill) : allStaff;
-  const secondary = skill ? allStaff.filter(s => s.skill2 === skill && s.skill1 !== skill) : [];
+  function isAvailable(s, t) {
+    if (!t) return true; // Show all if no task selected
+    if (assignedIds.has(s.id)) return true; // Always show if already assigned
+    // Check shift bounds
+    if (s.shift_start !== undefined && s.shift_end !== undefined) {
+      if (t.start_mins < s.shift_start || t.end_mins > s.shift_end) return false;
+    }
+    // Check busy periods (assignments + breaks)
+    const busy = (s.assignments || []).concat(s.breaks || []);
+    for (let b of busy) {
+      // Overlap: A starts before B ends AND A ends after B starts
+      if (t.start_mins < b.end_mins && t.end_mins > b.start_mins) {
+        return false;
+      }
+    }
+    return true;
+  }
 
-  function staffRow(s, isPrimary) {
+  const primary = skill ? allStaff.filter(s => s.skill1 === skill && isAvailable(s, task)) : allStaff.filter(s => isAvailable(s, task));
+  const secondary = skill ? allStaff.filter(s => s.skill2 === skill && s.skill1 !== skill && isAvailable(s, task)) : [];
+  const others = skill ? allStaff.filter(s => s.skill1 !== skill && s.skill2 !== skill && isAvailable(s, task)) : [];
+
+  function staffRow(s, isPrimary, isOther) {
     const isAssigned = assignedIds.has(s.id);
     const util = s.utilisation_pct;
     const utilColor = util > 90 ? ID.crit : util > 70 ? ID.warn : ID.ok;
@@ -960,7 +988,7 @@ function refreshManageStaff(flightNo) {
           <span class="manage-staff-id">${s.id}</span>
           <span class="manage-staff-skill">${s.skill1}${s.skill2 ? ' / '+s.skill2 : ''}</span>
           <span class="shift-badge shift-${s.shift}">${s.shift_label}</span>
-          ${!isPrimary ? '<span class="badge badge-warn">2nd skill</span>' : ''}
+          ${isOther ? '<span class="badge badge-crit">Skill mismatch</span>' : (!isPrimary ? '<span class="badge badge-warn">2nd skill</span>' : '')}
         </div>
         <div class="manage-staff-util" style="color:${utilColor}">${util}% busy</div>
         ${task ? `<button class="btn-manage-assign ${isAssigned?'btn-unassign':''}"
@@ -983,10 +1011,13 @@ function refreshManageStaff(flightNo) {
         </div>
       </div>` : ''}
     <div class="manage-section-title">Primary Skill Staff (${primary.length})</div>
-    ${primary.length ? primary.map(s => staffRow(s, true)).join('') : '<div class="muted small">No primary skill staff on duty</div>'}
+    ${primary.length ? primary.map(s => staffRow(s, true, false)).join('') : '<div class="muted small">No primary skill staff available at this time</div>'}
     ${secondary.length ? `
       <div class="manage-section-title" style="margin-top:12px">Secondary Skill Staff (${secondary.length})</div>
-      ${secondary.map(s => staffRow(s, false)).join('')}` : ''}`;
+      ${secondary.map(s => staffRow(s, false, false)).join('')}` : ''}
+    ${others.length ? `
+      <div class="manage-section-title" style="margin-top:12px">Other Available Staff (${others.length})</div>
+      ${others.map(s => staffRow(s, false, true)).join('')}` : ''}`;
 }
 
 async function toggleStaffAssignment(taskId, staffId, action, flightNo) {
@@ -1016,6 +1047,85 @@ async function unassignStaff(taskId, staffId) {
 function closeManageModal() {
   const overlay = document.getElementById('id-manage-overlay');
   if (overlay) overlay.classList.add('hidden');
+}
+
+// ── Performance Analysis ───────────────────────────────────────
+function renderIDPerfChart(container) {
+  container.innerHTML = `
+    <div class="section-header" style="margin-top: 24px;">
+      <h2>Task Performance &amp; Punctuality</h2>
+      <span class="section-hint">Live performance of ground processes for today's operations.</span>
+    </div>
+    <div class="panel" style="max-width:600px; margin: 0 auto; background: #1a1a1a; display: flex; flex-direction: column; height: calc(100vh - 220px); min-height: 350px;">
+      <div class="panel-title-row">
+        <span class="panel-title" style="color:#ffffff;"><img src="data:image/svg+xml;utf8,<svg fill='%23ffffff' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-1.08 2.4-1.73 0-.91-.54-1.57-2.73-2.18-2.6-.71-3.69-2.07-3.69-3.76 0-1.63 1.25-2.81 2.69-3.21V4h2.67v1.94c1.54.34 2.89 1.47 2.97 3.25h-1.96c-.11-1.07-.86-1.74-2.5-1.74-1.69 0-2.3.93-2.3 1.58 0 1.08.77 1.51 2.87 2.1 2.65.75 3.55 2.1 3.55 3.84-.01 1.86-1.5 3-2.64 3.3z'/></svg>" width="16" style="vertical-align:text-bottom; margin-right:4px;">Ground Process Punctuality</span>
+        <div style="font-size:0.75rem;"><span style="color:#ffffff;">79.4 %</span> <span style="color:rgba(255,255,255,0.5)">(Live Avg)</span></div>
+      </div>
+      <div style="flex: 1; position: relative;">
+        <canvas id="id-perf-radar"></canvas>
+      </div>
+    </div>
+  `;
+
+  setTimeout(() => {
+    const ctx = document.getElementById('id-perf-radar');
+    if (!ctx) return;
+    if (window.ID_CHARTS && window.ID_CHARTS['perf-radar']) window.ID_CHARTS['perf-radar'].destroy();
+
+    Chart.defaults.color = 'rgba(255,255,255,0.7)';
+    Chart.defaults.font.family = 'Inter, sans-serif';
+
+    if (!window.ID_CHARTS) window.ID_CHARTS = {};
+    window.ID_CHARTS['perf-radar'] = new Chart(ctx, {
+      type: 'radar',
+      data: {
+        labels: ['Cleaning', 'Catering', 'Maintenance', 'Fueling', 'Loading', 'Boarding'],
+        datasets: [{
+          label: 'Live Tracking',
+          data: [94, 88, 85, 76, 68, 65],
+          backgroundColor: 'rgba(34, 114, 180, 0.4)',
+          borderColor: '#2b8ad5',
+          pointBackgroundColor: '#2b8ad5',
+          pointBorderColor: '#fff',
+          pointHoverBackgroundColor: '#fff',
+          pointHoverBorderColor: '#2b8ad5',
+          borderWidth: 2,
+          fill: true,
+        }, {
+          label: 'Scheduled Avg',
+          data: [90, 85, 80, 75, 65, 60],
+          backgroundColor: 'rgba(255, 255, 255, 0)',
+          borderColor: 'rgba(255, 255, 255, 0.3)',
+          borderDash: [5, 5],
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: false,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          r: {
+            angleLines: { color: 'rgba(255, 255, 255, 0.1)' },
+            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+            pointLabels: { color: 'rgba(255, 255, 255, 0.85)', font: { size: 11, weight: '500' } },
+            ticks: { display: false, min: 0, max: 100 }
+          }
+        },
+        plugins: {
+          legend: {
+            position: 'bottom', align: 'end',
+            labels: { color: 'rgba(255,255,255,0.6)', boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle' }
+          },
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 13 }, bodyFont: { size: 13 },
+            callbacks: { label: function(ctx) { return ctx.dataset.label + ': ' + ctx.raw + '%'; } }
+          }
+        }
+      }
+    });
+  }, 50);
 }
 
 // ── Expose ──────────────────────────────────────────────────────
