@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DAA Ground Operations — Staff Planning</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- ── Header ── -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="header-brand">
+        <div class="logo-mark">✈</div>
+        <div>
+          <div class="brand-title">AeroSched</div>
+          <div class="brand-sub">Operations Intelligence Platform</div>
+        </div>
+      </div>
+      <nav class="header-nav">
+        <button class="nav-btn active" data-view="long-term">Long Term</button>
+        <button class="nav-btn" data-view="short-term">Short Term</button>
+        <button class="nav-btn" data-view="intraday">Intraday</button>
+      </nav>
+      <div class="header-meta">
+        <span style="color:rgba(255,255,255,0.45);font-size:0.75rem">10 Gates &middot; 7 Airlines &middot; 7 Roles</span>
+        <span id="live-date"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main ── -->
+  <main class="app-main">
+
+    <!-- ===== LONG TERM VIEW ===== -->
+    <section id="view-long-term" class="view active">
+
+      <!-- Page title -->
+      <div class="page-header">
+        <h1 class="page-title">Strategic &middot; 12-Month</h1>
+        <span class="sep">—</span>
+        <p class="page-sub">Capacity planning, seasonal trends &amp; annual staff allocation</p>
+      </div>
+
+      <!-- ── KPI Cards ── -->
+      <div class="kpi-grid" id="kpi-grid">
+        <div class="kpi-card" id="kpi-annual-flights">
+          <div class="kpi-icon">✈</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="v-annual">—</div>
+            <div class="kpi-label">Annual Flights 2026</div>
+          </div>
+          <div class="kpi-trend up" id="t-annual"></div>
+        </div>
+        <div class="kpi-card" id="kpi-avg-weekly">
+          <div class="kpi-icon">📅</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="v-avg-weekly">—</div>
+            <div class="kpi-label">Avg Weekly Flights</div>
+          </div>
+        </div>
+        <div class="kpi-card" id="kpi-peak-month">
+          <div class="kpi-icon">🔥</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="v-peak-month">—</div>
+            <div class="kpi-label">Peak Month</div>
+          </div>
+        </div>
+        <div class="kpi-card" id="kpi-peak-week">
+          <div class="kpi-icon">📈</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="v-peak-week">—</div>
+            <div class="kpi-label">Peak Week</div>
+          </div>
+        </div>
+        <div class="kpi-card" id="kpi-util">
+          <div class="kpi-icon">👥</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="v-util">—</div>
+            <div class="kpi-label">Staff Utilisation %</div>
+          </div>
+          <div class="util-ring" id="util-ring"></div>
+        </div>
+        <div class="kpi-card" id="kpi-total-staff">
+          <div class="kpi-icon">🏷</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="v-total-staff">—</div>
+            <div class="kpi-label">Total Workforce</div>
+          </div>
+        </div>
+        <div class="kpi-card" id="kpi-gate-util">
+          <div class="kpi-icon">🛫</div>
+          <div class="kpi-body">
+            <div class="kpi-value" id="v-gate-util">—</div>
+            <div class="kpi-label">Gate Utilisation %</div>
+          </div>
+          <div class="util-ring" id="gate-util-ring"></div>
+        </div>
+      </div>
+
+      <!-- ── Week Selection Banner ── -->
+      <div id="week-banner" class="week-banner hidden">
+        <div class="week-banner-inner">
+          <div class="week-banner-left">
+            <span class="week-banner-icon">🗓</span>
+            <div>
+              <div class="week-banner-title" id="wb-title">Week selected</div>
+              <div class="week-banner-sub" id="wb-sub"></div>
+            </div>
+          </div>
+          <div class="week-banner-chips" id="wb-chips"></div>
+          <button class="week-banner-reset" id="btn-reset-week">
+            ✕ Reset to Annual View
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Sub-tabs ── -->
+      <div class="sub-tabs">
+        <button class="sub-tab active" data-sub="demand">Staff Demand</button>
+        <button class="sub-tab" data-sub="allocation">Annual Allocation Plan</button>
+        <button class="sub-tab" data-sub="imbalance">Gap Analysis</button>
+        <button class="sub-tab" data-sub="skills">Skill Distribution</button>
+        <button class="sub-tab" data-sub="scenario">Scenario Planning</button>
+      </div>
+
+      <!-- ── DEMAND TAB ── -->
+      <div id="sub-demand" class="sub-view active">
+        <div class="section-header">
+          <h2>Monthly Capacity Overview — 2026</h2>
+          <span class="section-hint">Each cell = one calendar week. Colour = staff utilisation %</span>
+        </div>
+        <div class="legend-row">
+          <span class="leg ok"></span><span>≤70% Under-utilised</span>
+          <span class="leg warn"></span><span>70–90% Optimal</span>
+          <span class="leg high"></span><span>90–110% High demand</span>
+          <span class="leg crit"></span><span>&gt;110% Critical</span>
+        </div>
+        <div id="calendar-heatmap" class="calendar-heatmap"></div>
+
+        <!-- Week drill-down panel (hidden until a week is selected) -->
+        <div id="week-drilldown" class="week-drilldown hidden mt-24">
+          <div class="drilldown-header">
+            <span id="dd-week-label" class="dd-week-label"></span>
+            <span class="dd-badge" id="dd-status-badge"></span>
+          </div>
+          <div class="drilldown-grid">
+            <div class="dd-card">
+              <div class="dd-card-label">FTE Required</div>
+              <div class="dd-card-value accent" id="dd-required">—</div>
+            </div>
+            <div class="dd-card">
+              <div class="dd-card-label">Staff Available</div>
+              <div class="dd-card-value info" id="dd-available">—</div>
+            </div>
+            <div class="dd-card">
+              <div class="dd-card-label">Gap (FTE)</div>
+              <div class="dd-card-value" id="dd-gap">—</div>
+            </div>
+            <div class="dd-card">
+              <div class="dd-card-label">Utilisation</div>
+              <div class="dd-card-value" id="dd-util">—</div>
+            </div>
+            <div class="dd-card">
+              <div class="dd-card-label">Staff Absent</div>
+              <div class="dd-card-value warn" id="dd-absent">—</div>
+            </div>
+          </div>
+          <div class="row-2col mt-16">
+            <div class="panel">
+              <div class="panel-title">Skill FTE — This Week</div>
+              <canvas id="dd-skill-bar" height="200"></canvas>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Flight Movements by Category — This Week</div>
+              <canvas id="dd-cat-chart" height="200"></canvas>
+            </div>
+          </div>
+          <div class="panel mt-16" id="dd-absence-panel">
+            <div class="panel-title">Absent Staff This Week</div>
+            <div class="table-scroll">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Employee</th><th>Primary Skill</th><th>Leave Type</th></tr>
+                </thead>
+                <tbody id="dd-absence-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="row-2col mt-24">
+          <div class="panel">
+            <div class="panel-title" id="trend-chart-title">Weekly Flight Trend — Historical vs Forecast</div>
+            <canvas id="flight-trend-chart" height="220"></canvas>
+          </div>
+          <div class="panel">
+            <div class="panel-title" id="req-avail-chart-title">Weekly Staff Required vs Available</div>
+            <canvas id="staff-req-avail-chart" height="220"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── ALLOCATION TAB ── -->
+      <div id="sub-allocation" class="sub-view">
+        <div class="section-header">
+          <h2>Annual Staff Allocation Plan — Headcount by Role &amp; Month</h2>
+          <span class="section-hint">Colour intensity reflects FTE demand relative to capacity. Red = peak. Blue = minimum.</span>
+        </div>
+        <div class="table-scroll">
+          <table class="allocation-table" id="allocation-table">
+            <thead id="alloc-head"></thead>
+            <tbody id="alloc-body"></tbody>
+          </table>
+        </div>
+        <!-- Gate Headcount Section -->
+        <div class="mt-24">
+          <div class="section-header">
+            <h2>Headcount by Gate / Pier — 2026</h2>
+            <span class="section-hint">Estimated FTE per gate area based on contact stand ratios. Remote Apron = bus-served remote stands.</span>
+          </div>
+          <div class="table-scroll">
+            <table class="allocation-table" id="gate-alloc-table">
+              <thead id="gate-alloc-head"></thead>
+              <tbody id="gate-alloc-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="mt-24">
+          <div class="panel">
+            <div class="panel-title">FTE Demand by Skill — 2026 Monthly</div>
+            <canvas id="skill-bar-chart" height="260"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── IMBALANCE TAB ── -->
+      <div id="sub-imbalance" class="sub-view">
+        <div class="section-header">
+          <h2>Workforce Gap Analysis — Required vs Available</h2>
+          <span class="section-hint">Negative gap = surplus. Positive gap = shortfall requiring cover.</span>
+        </div>
+        <div class="row-2col">
+          <div class="panel">
+            <div class="panel-title">Weekly Imbalance (FTE)</div>
+            <canvas id="imbalance-chart" height="260"></canvas>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Gap Distribution</div>
+            <canvas id="gap-donut-chart" height="260"></canvas>
+          </div>
+        </div>
+        <div class="mt-24">
+          <div class="panel">
+            <div class="panel-title">Weekly Gap Detail</div>
+            <div class="table-scroll">
+              <table class="data-table" id="gap-table">
+                <thead>
+                  <tr>
+                    <th>Week</th><th>Date</th><th>Month</th>
+                    <th>Staff Required (FTE)</th><th>Staff Available</th>
+                    <th>Gap (FTE)</th><th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="gap-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SKILLS TAB ── -->
+      <div id="sub-skills" class="sub-view">
+        <div class="section-header">
+          <h2>Skill Distribution &amp; Absence Impact</h2>
+          <span class="section-hint">Workforce composition and monthly absence days by skill pool</span>
+        </div>
+        <div class="row-2col">
+          <div class="panel">
+            <div class="panel-title">Total Staff by Primary Skill</div>
+            <canvas id="skill-donut-chart" height="300"></canvas>
+          </div>
+          <div class="panel">
+            <div class="panel-title">Monthly Absence Days by Skill — 2026</div>
+            <canvas id="absence-bar-chart" height="300"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SCENARIO PLANNING TAB ── -->
+      <div id="sub-scenario" class="sub-view">
+      </div>
+
+    </section><!-- /long-term -->
+
+    <!-- ===== SHORT TERM VIEW ===== -->
+    <section id="view-short-term" class="view">
+      <div class="page-header">
+        <h1 class="page-title">Tactical &middot; 7-Day Window</h1>
+        <span class="sep">—</span>
+        <p class="page-sub">Weekly gate schedules &amp; short-term roster optimisation</p>
+      </div>
+      <!-- Day selector tabs -->
+      <div class="day-tabs-bar" id="st-day-tabs"></div>
+      <!-- Dynamic content rendered by shortterm.js -->
+      <div id="st-content">
+        <div class="empty-state">Select a day to load the schedule.</div>
+      </div>
+    </section>
+
+    <!-- ===== INTRADAY VIEW ===== -->
+    <section id="view-intraday" class="view">
+      <div class="page-header">
+        <h1 class="page-title">Operational &middot; Live View</h1>
+        <span class="sep">—</span>
+        <p class="page-sub">Real-time flight schedule, delay management &amp; resource rebalancing</p>
+      </div>
+      <!-- Dynamic content rendered by intraday.js -->
+      <div id="id-content">
+        <div class="empty-state">Loading today's operations…</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <span>DAA Ground Operations — Resource Planning Tool &nbsp;|&nbsp; Data as of <span id="footer-date"></span></span>
+  </footer>
+
+  <script src="/static/js/longterm.js"></script>
+  <script src="/static/js/shortterm.js"></script>
+  <script src="/static/js/intraday.js"></script>
+  <script src="/static/js/scenario.js"></script>
+  <script>
+    // Wire up tab navigation to lazy-init views
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        const view = btn.dataset.view;
+        if (view === 'short-term' && typeof initShortTerm === 'function') initShortTerm();
+        if (view === 'intraday'   && typeof initIntraday   === 'function') initIntraday();
+      });
+    });
+  </script>
+</body>
+</html>

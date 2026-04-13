@@ -1,0 +1,194 @@
+{
+  "_meta": {
+    "source": "DAA Ground Operations — Roster Optimisation Constraints",
+    "version": "1.0.0",
+    "effective_date": "2026-04-10",
+    "description": "Constraint configuration for Flask-based roster optimisation engine. All time values in minutes unless stated. All flags are boolean."
+  },
+
+  "shifts": {
+    "description": "Two fixed shifts only. No split shifts or custom windows permitted.",
+    "definitions": [
+      {
+        "shift_id": "DAY",
+        "label": "Day Shift",
+        "start": "04:00",
+        "end": "16:00",
+        "duration_hrs": 12,
+        "start_mins": 240,
+        "end_mins": 960
+      },
+      {
+        "shift_id": "NIGHT",
+        "label": "Night Shift",
+        "start": "16:00",
+        "end": "04:00",
+        "duration_hrs": 12,
+        "start_mins": 960,
+        "end_mins": 1680,
+        "note": "end_mins uses 28:00 convention (next day 04:00 = 1680 mins from midnight)"
+      }
+    ]
+  },
+
+  "working_hours": {
+    "description": "Hard upper limits on working time. Optimiser must not generate rosters that breach these.",
+    "max_shift_hours": 12,
+    "max_shift_mins": 720,
+    "max_weekly_hours": 48,
+    "max_weekly_mins": 2880,
+    "enforcement": "hard",
+    "note": "max_shift_hours is already fixed by the two-shift structure above. Weekly cap applies across Mon–Sun."
+  },
+
+  "rest_rules": {
+    "description": "Minimum rest periods between consecutive shift assignments.",
+    "min_rest_between_shifts_hrs": 11,
+    "min_rest_between_shifts_mins": 660,
+    "enforcement": "hard",
+    "note": "A staff member finishing the 16:00–04:00 night shift cannot start the 04:00–16:00 day shift the same morning. The gap from 04:00 to 04:00 is exactly 24 hours so this constraint is satisfied by default across shift boundaries. Flag a breach if any assignment window violates this."
+  },
+
+  "overtime": {
+    "description": "Maximum permitted overtime beyond contracted hours.",
+    "max_overtime_per_day_hrs": 2,
+    "max_overtime_per_day_mins": 120,
+    "max_overtime_per_week_hrs": 8,
+    "max_overtime_per_week_mins": 480,
+    "max_overtime_per_month_hrs": 24,
+    "max_overtime_per_month_mins": 1440,
+    "enforcement": "hard",
+    "note": "Overtime is defined as any rostered time beyond the contracted 12-hour shift. Breach triggers a warning flag in the optimiser output before hard block is applied at the cap."
+  },
+
+  "breaks": {
+    "description": "Two mandatory breaks per shift. Minimum active working time required before each break can be taken.",
+    "breaks_per_shift": 2,
+    "first_half_break": {
+      "label": "First Half Break",
+      "duration_mins": 30,
+      "earliest_after_shift_start_mins": 120,
+      "window": "Must fall within first half of shift (first 6 hours). Minimum 2 hours worked before break starts.",
+      "latest_start_offset_from_shift_start_mins": 360,
+      "enforcement": "hard"
+    },
+    "second_half_break": {
+      "label": "Second Half Break",
+      "duration_mins": 60,
+      "earliest_after_first_break_end_mins": 120,
+      "window": "Must fall within second half of shift (hours 6–12). Minimum 2 hours worked after first break ends before second break starts.",
+      "enforcement": "hard"
+    },
+    "net_working_time_per_shift_mins": 630,
+    "note": "Gross shift = 720 mins. Less 30 min first break and 60 min second break = 630 mins net working time available for task assignment."
+  },
+
+  "skill_assignment": {
+    "description": "Rules governing which skill is used when assigning staff to tasks.",
+    "priority_order": ["primary_skill", "secondary_skill"],
+    "use_primary_first": true,
+    "secondary_skill_conditions": [
+      "No available primary skill holder exists for the task window",
+      "All primary skill holders are already assigned or on break",
+      "A critical gap exists and no primary holder is reachable within time"
+    ],
+    "enforcement": "soft",
+    "note": "Optimiser should maximise primary skill usage. Secondary skill deployment should be logged as a reallocation event in the output for supervisor visibility."
+  },
+
+  "travel_time": {
+    "description": "Additional buffer time added to task windows when a staff member must physically relocate before starting a task.",
+    "rules": [
+      {
+        "rule_id": "TT_SKILL_SWITCH",
+        "trigger": "Staff member switching from primary skill task to secondary skill task at a different location",
+        "travel_time_mins": 10,
+        "enforcement": "hard",
+        "note": "Add 10 minutes to the end of the current task window before the next task can start. Prevents double-booking across the travel gap."
+      },
+      {
+        "rule_id": "TT_T1_TO_T2",
+        "trigger": "Staff member moving from any T1 post to any T2 post",
+        "travel_time_mins": 15,
+        "enforcement": "hard",
+        "note": "Inter-terminal transit. No task assignment should begin at the destination terminal until travel time has elapsed."
+      },
+      {
+        "rule_id": "TT_T2_TO_T1",
+        "trigger": "Staff member moving from any T2 post to any T1 post",
+        "travel_time_mins": 15,
+        "enforcement": "hard",
+        "note": "Symmetric with T1_TO_T2. Same buffer applies in both directions."
+      },
+      {
+        "rule_id": "TT_SAME_TERMINAL_SAME_SKILL",
+        "trigger": "Staff member moving between tasks within the same terminal on the same skill",
+        "travel_time_mins": 0,
+        "enforcement": "soft",
+        "note": "No mandatory buffer but optimiser should check pier distance if pier data is available."
+      }
+    ]
+  },
+
+  "double_booking": {
+    "description": "A single staff member cannot be assigned to two overlapping task windows, accounting for travel time.",
+    "allow_overlap": false,
+    "enforcement": "hard",
+    "note": "Task window overlap check must include travel_time buffer from the travel_time rules above. Two tasks are considered overlapping if task_2.start < task_1.end + travel_time."
+  },
+
+  "absence": {
+    "description": "Staff on any recorded leave type must be excluded from all task assignment on affected dates.",
+    "leave_types_excluded": ["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"],
+    "enforcement": "hard",
+    "note": "Absence data is sourced from the leave register. Absent staff must not appear in any optimised roster output for their leave period."
+  },
+
+  "optimiser_flags": {
+    "description": "Output flags the optimiser should attach to generated rosters for supervisor review.",
+    "flags": [
+      {
+        "flag_id": "GAP_CRITICAL",
+        "condition": "A CRITICAL priority task has 0 staff assigned",
+        "severity": "CRITICAL",
+        "action": "Block roster publish until resolved"
+      },
+      {
+        "flag_id": "GAP_HIGH",
+        "condition": "A HIGH priority task is understaffed by 1 or more",
+        "severity": "HIGH",
+        "action": "Warn supervisor. Suggest reallocation from secondary skill holders."
+      },
+      {
+        "flag_id": "SECONDARY_SKILL_USED",
+        "condition": "A task has been filled using a secondary skill holder instead of primary",
+        "severity": "INFO",
+        "action": "Log reallocation event. No block."
+      },
+      {
+        "flag_id": "OVERTIME_WARNING",
+        "condition": "Staff member approaches 80% of any overtime cap",
+        "severity": "MEDIUM",
+        "action": "Warn. Do not assign further overtime without supervisor approval."
+      },
+      {
+        "flag_id": "REST_BREACH",
+        "condition": "Assignment would leave less than 11 hours rest before next shift",
+        "severity": "CRITICAL",
+        "action": "Block assignment. Do not roster."
+      },
+      {
+        "flag_id": "TRAVEL_CONFLICT",
+        "condition": "Travel time between two consecutive assignments is insufficient",
+        "severity": "HIGH",
+        "action": "Reject second assignment. Propose next available slot."
+      },
+      {
+        "flag_id": "BREAK_BREACH",
+        "condition": "Break has not been scheduled within the required window",
+        "severity": "HIGH",
+        "action": "Insert break before next task assignment is made."
+      }
+    ]
+  }
+}
