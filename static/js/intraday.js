@@ -30,15 +30,6 @@ function formatMins(mins) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
-function normIDMins(m) {
-  return m < 240 ? m + 1440 : m;
-}
-
-function idPct(m) {
-  const nm = normIDMins(m);
-  return Math.max(0, Math.min(100, (nm - 240) / 1440 * 100));
-}
-
 function getCurrentTimeMins() {
   const now = new Date();
   return now.getHours() * 60 + now.getMinutes();
@@ -48,15 +39,7 @@ function startGateTimelineTimer() {
   if (ID_SIM_TIMER) return;
   if (ID_SIM_TIME == null) ID_SIM_TIME = getCurrentTimeMins();
   ID_SIM_TIMER = setInterval(() => {
-    // Range is [240, 1680] effectively. 
-    // If it hits 240 (04:00 next day aka 1680), pause or stop.
-    let next = ID_SIM_TIME + (ID_SIM_SPEED * 0.5);
-    // If we were at 03:59 (239) and moved past 04:00 (240), that's the end.
-    if (ID_SIM_TIME < 240 && next >= 240) {
-      next = 240;
-      stopGateTimelineTimer();
-    }
-    ID_SIM_TIME = next;
+    ID_SIM_TIME = Math.min(1440, ID_SIM_TIME + (ID_SIM_SPEED * 0.5));
     renderGateTimelineNowLine();
   }, 500);
 }
@@ -95,7 +78,7 @@ function renderGateTimelineNowLine() {
   const rtLabel = document.getElementById('id-rt-now-label');
   
   if (typeof ID_SIM_TIME !== 'number') return;
-  const left = idPct(ID_SIM_TIME);
+  const left = Math.max(0, Math.min(100, (ID_SIM_TIME / 1440) * 100));
   
   if (line) line.style.left = `${left.toFixed(2)}%`;
   const label = line ? line.querySelector('.gt-now-label') : null;
@@ -143,7 +126,7 @@ function renderIntradayPage() {
       <button class="sub-tab ${ID_ACTIVE_TAB==='flights'?'active':''}" data-idtab="flights">✈ Flight Operations</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='gate-timeline'?'active':''}" data-idtab="gate-timeline">🛬 Gate Timeline</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='staff-timeline'?'active':''}" data-idtab="staff-timeline">📅 Roster Timeline</button>
-      <button class="sub-tab ${ID_ACTIVE_TAB==='map'?'active':''}" data-idtab="map">🗺 Network Map</button>
+
       <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Optimization</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='perf'?'active':''}" data-idtab="perf">📈 Performance Analysis</button>
     </div>
@@ -551,8 +534,7 @@ function renderIDSubContent() {
     renderIDPerfChart(container);
   } else if (ID_ACTIVE_TAB === 'opt') {
     renderIDOptimization(container);
-  } else if (ID_ACTIVE_TAB === 'map') {
-    renderIDMap(container);
+
   } else if (ID_ACTIVE_TAB === 'gate-timeline') {
     container.innerHTML = `
       <div class="panel mt-20">
@@ -619,9 +601,9 @@ function renderIDSubContent() {
 
 function renderIDGateTimeline() {
   const flights = Array.isArray(ID_DATA.flights) ? ID_DATA.flights : [];
-  const TIME_START = 240;
-  const TIME_END = 1680;
-  const RANGE = 1440;
+  const TIME_START = 0;
+  const TIME_END = 1440;
+  const RANGE = TIME_END - TIME_START;
   const LEAD_MINS = 30;
   const TRAIL_MINS = 60;
 
@@ -662,7 +644,7 @@ function renderIDGateTimeline() {
   }
 
   function pct(mins) {
-    return idPct(mins);
+    return Math.max(0, Math.min(100, (mins - TIME_START) / RANGE * 100));
   }
 
   if (ID_SIM_TIME == null) {
@@ -709,9 +691,9 @@ function renderIDGateTimeline() {
   }
 
   const axisHtml = [];
-  for (let h = 4; h <= 28; h++) {
+  for (let h = 0; h <= 24; h++) {
     axisHtml.push(`
-      <div class="gt-hour-tick" style="left:${((h - 4) / 24 * 100).toFixed(2)}%">
+      <div class="gt-hour-tick" style="left:${pct(h * 60).toFixed(2)}%">
         <span class="gt-hour-label">${String(h % 24).padStart(2, '0')}</span>
         <div class="gt-hour-line"></div>
       </div>`);
@@ -805,9 +787,8 @@ function renderIDFlightsTable(flights) {
           ? 'badge-ok'
           : 'badge-warn';
 
-    const timeSuffix = f.time_mins < 240 ? ' <small style="opacity:0.6">+1</small>' : '';
     return `<tr class="${rowCls}" data-fn="${f.flight_no}" style="cursor:pointer">
-      <td class="time-cell">${f.sta}${timeSuffix} ${delayBadge}</td>
+      <td class="time-cell">${f.sta} ${delayBadge}</td>
       <td class="fn-cell">${f.flight_no}</td>
       <td class="route-cell">${f.origin_code} ${f.origin}</td>
       <td>${f.airline_name}</td>
@@ -1193,22 +1174,8 @@ window.showManageModal = showManageModal;
 window.showManageModalForTask = showManageModalForTask;
 window.closeManageModal = closeManageModal;
 window.toggleStaffAssignment = toggleStaffAssignment;
-window.unassignStaff = unassignStaff;// ── Route Map ──────────────────────────────────────────────────
-function renderIDMap(container) {
-  container.innerHTML = `
-    <div class="map-panel mt-16">
-      <div class="map-header">
-        <div class="map-title">✈ Live Connectivity Map — Operational View ${ID_DATA.date_label}</div>
-      </div>
-      <div id="map-intraday" class="map-container"></div>
-    </div>`;
+window.unassignStaff = unassignStaff;
 
-  setTimeout(() => {
-    const manager = new RouteMapManager('map-intraday');
-    if (window.MAPS) window.MAPS['intraday'] = manager;
-    manager.loadData('/api/map-data/intraday');
-  }, 100);
-}
 
 // ── Optimization Tab ────────────────────────────────────────────
 async function renderIDOptimization(container) {
@@ -1285,6 +1252,34 @@ async function renderIDOptimization(container) {
           </div>
         </div>
 
+        <!-- Permitted Shifts -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>📅</span> Permitted Shift Timings
+          </div>
+          <div id="opt-shift-toggles" style="display:flex; flex-direction:column; gap:8px;">
+            ${[
+              {label: '00:00 - 12:00', s: 0, e: 720},
+              {label: '12:00 - 24:00', s: 720, e: 1440},
+              {label: '10:00 - 22:00', s: 600, e: 1320},
+              {label: '4:00 - 16:00', s: 240, e: 960},
+              {label: '16:00 - 4:00', s: 960, e: 240}
+            ].map((sh, idx) => {
+              const isChecked = (constraints.permitted_shifts || []).some(ps => ps[0] === sh.s && ps[1] === sh.e) || 
+                                (!constraints.permitted_shifts && idx < 3);
+              return `
+                <div class="input-group" style="display:flex; align-items:center; gap:12px;">
+                  <input type="checkbox" class="shift-chk" id="chk-sh-${idx}" 
+                    data-label="${sh.label}" data-start="${sh.s}" data-end="${sh.e}"
+                    style="width:18px;height:18px;accent-color:#3498DB;" 
+                    ${isChecked ? 'checked' : ''} />
+                  <label for="chk-sh-${idx}" style="font-size:0.85rem; color:#333;">${sh.label}</label>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
         <!-- Allocation Policy -->
         <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
           <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
@@ -1312,6 +1307,12 @@ async function renderIDOptimization(container) {
 
     const leaves = Array.from(document.querySelectorAll('#opt-leave-toggles input:checked')).map(cb => cb.value);
 
+    const shifts = Array.from(document.querySelectorAll('#opt-shift-toggles input:checked')).map(cb => [
+      parseInt(cb.dataset.start, 10),
+      parseInt(cb.dataset.end, 10),
+      cb.dataset.label
+    ]);
+
     const payload = {
       tt_t1_t2: parseInt(document.getElementById('opt-tt-t1-t2').value, 10),
       tt_skill_switch: parseInt(document.getElementById('opt-tt-sk').value, 10),
@@ -1320,7 +1321,8 @@ async function renderIDOptimization(container) {
       shift_duration_hrs: parseInt(document.getElementById('opt-shift-hrs').value, 10),
       b1_duration_mins: parseInt(document.getElementById('opt-b1-dur').value, 10),
       b2_duration_mins: parseInt(document.getElementById('opt-b2-dur').value, 10),
-      leave_types_excluded: leaves
+      leave_types_excluded: leaves,
+      permitted_shifts: shifts
     };
 
     try {
@@ -1366,8 +1368,8 @@ function renderIDRosterTimeline() {
   });
 
   const axisTicks = [];
-  for (let h = 4; h <= 28; h++) {
-    const left = (h - 4) / 24 * 100;
+  for (let h = 0; h <= 24; h++) {
+    const left = (h * 60) / 1440 * 100;
     axisTicks.push(`
       <div class="rt-hour-tick" style="left:${left.toFixed(2)}%">
         <span class="rt-hour-label">${String(h % 24).padStart(2, '0')}</span>
@@ -1381,10 +1383,10 @@ function renderIDRosterTimeline() {
     const shiftWidth = (shiftEnd - shiftStart) / 1440 * 100;
     const shiftLeft = shiftStart / 1440 * 100;
 
-    const shiftBg = `<div class="rt-shift-bg" style="left:${idPct(shiftStart)}%; width:${(shiftWidth / 1440 * 100)}%" title="${s.shift_label}"></div>`;
+    const shiftBg = `<div class="rt-shift-bg" style="left:${shiftLeft}%; width:${shiftWidth}%" title="${s.shift_label}"></div>`;
 
     const tasks = (s.assignments || []).map(a => {
-      const left = idPct(a.start_mins);
+      const left = a.start_mins / 1440 * 100;
       const width = (a.end_mins - a.start_mins) / 1440 * 100;
       const color = stringToColor(a.task);
       const label = width > 2 ? a.task.split(' ')[0] : '';
@@ -1394,7 +1396,7 @@ function renderIDRosterTimeline() {
     }).join('');
 
     const bks = (s.breaks || []).map(b => {
-      const left = idPct(b.start_mins);
+      const left = b.start_mins / 1440 * 100;
       const width = (b.end_mins - b.start_mins) / 1440 * 100;
       const label = width > 3 ? 'Bk' : '';
       return `<div class="rt-block break" style="left:${left}%; width:${width}%" 

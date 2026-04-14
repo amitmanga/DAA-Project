@@ -91,7 +91,7 @@ function renderShortTermDay() {
       <button class="sub-tab ${ST_ACTIVE_TAB==='flights'?'active':''}" data-sttab="flights">✈ Flights &amp; Tasks</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff'?'active':''}" data-sttab="staff">👤 Staff Roster</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='gate-timeline'?'active':''}" data-sttab="gate-timeline">🛬 Gate Timeline</button>
-      <button class="sub-tab ${ST_ACTIVE_TAB==='map'?'active':''}" data-sttab="map">🗺 Network Map</button>
+
       <button class="sub-tab ${ST_ACTIVE_TAB==='perf'?'active':''}" data-sttab="perf">📈 Performance Analysis</button>
     </div>
     <div id="st-sub-content"></div>
@@ -219,7 +219,7 @@ function renderSTSubContent() {
   const el = document.getElementById('st-sub-content');
   if (ST_ACTIVE_TAB === 'flights') renderSTFlightsTab(el);
   else if (ST_ACTIVE_TAB === 'gate-timeline') renderSTGateTimeline(el);
-  else if (ST_ACTIVE_TAB === 'map') renderSTMap(el);
+
   else if (ST_ACTIVE_TAB === 'perf') renderSTPerfChart(el);
   else renderSTStaffTab(el);
 }
@@ -826,19 +826,5 @@ function renderSTPerfChart(el) {
 }
 
 // ── Expose to global ───────────────────────────────────────────
-window.initShortTerm = initShortTerm;// ── Route Map ──────────────────────────────────────────────────
-function renderSTMap(container) {
-  container.innerHTML = `
-    <div class="map-panel mt-16">
-      <div class="map-header">
-        <div class="map-title">✈ Network Connectivity Map — Tactical View ${ST_DATA.date_label}</div>
-      </div>
-      <div id="map-short-term" class="map-container"></div>
-    </div>`;
+window.initShortTerm = initShortTerm;
 
-  setTimeout(() => {
-    const manager = new RouteMapManager('map-short-term');
-    if (window.MAPS) window.MAPS['short-term'] = manager;
-    manager.loadData(`/api/map-data/short-term/${ST_CURRENT_DATE}`);
-  }, 100);
-}

@@ -862,7 +862,13 @@ _config_rules = None
 _stands_map = None
 _intraday_overrides = {}   # {flight_no: {delay_mins: int, cancelled: bool}}
 _manual_assigns = {}       # {date_key: {task_id: [extra_staff_ids]}}
-_intraday_custom_constraints = {} # Live overrides from Roster_constraints.json
+_intraday_custom_constraints = {
+    'permitted_shifts': [
+        (0, 720, '00:00 - 12:00'),
+        (720, 1440, '12:00 - 24:00'),
+        (600, 1320, '10:00 - 22:00')
+    ]
+} # Live overrides from Roster_constraints.json
 
 
 # ---------------------------------------------------------------------------
@@ -1174,9 +1180,11 @@ def get_staff_for_date(date_str, custom_constraints=None):
     shift_duration_hrs = int(custom_constraints.get('shift_duration_hrs', 12))
     shift_duration_mins = shift_duration_hrs * 60
 
-    # Operational Window for STAFF: [04:00 Today, 04:00 Tomorrow]
-    # We assign shifts that START in this window.
-    for r in day_staff:
+    # Permitted shifts from constraints
+    sh_options = custom_constraints.get('permitted_shifts')
+
+    # Current Day
+    for i, r in enumerate(day_staff):
         emp_id = r.get('EMPLOYEE NUMBER', '').strip()
         skill1 = r.get('Skill1', '').strip()
         skill2 = r.get('Skill2', '').strip()
@@ -1186,22 +1194,63 @@ def get_staff_for_date(date_str, custom_constraints=None):
             absent_staff.append({'id': emp_id, 'skill1': skill1, 'leave_type': absent_set[emp_id], 'absent': True})
             continue
 
-        digits = ''.join(c for c in emp_id if c.isdigit())
-        if digits and int(digits) % 2 == 1:
-            # Day Shift: 04:00 to 16:00
-            st, lb = 240, 'Day Shift'
+        if sh_options and len(sh_options) > 0:
+            sh_data = sh_options[i % len(sh_options)]
+            st, en, lb = sh_data[0], sh_data[1], sh_data[2]
         else:
-            # Night Shift: 16:00 to 04:00 next day
-            st, lb = 960, 'Night Shift'
-            
-        en = st + shift_duration_mins
+            # New default fallback: Round-robin across 00-12, 12-00, 10-22
+            sys_defaults = [
+                (0, 720, '00:00 - 12:00'),
+                (720, 1440, '12:00 - 24:00'),
+                (600, 1320, '10:00 - 22:00')
+            ]
+            st, en, lb = sys_defaults[i % len(sys_defaults)]
+
         on_duty.append({
             'id': emp_id, 'skill1': skill1, 'skill2': skill2,
             'employment': employment, 'shift': lb.upper().replace(' SHIFT',''),
             'shift_start': st, 'shift_end': en,
-            'shift_label': f"{lb} {mins_to_time(st)}–{mins_to_time(en if en < 1440 else en-1440)}",
+            'shift_label': f"{lb} {mins_to_time(st)}–{mins_to_time(en)}",
             'assignments': [], 'breaks': [], 'utilisation_pct': 0
         })
+
+    # Previous Day Carry-over (Night shifts that cross midnight)
+    prev_d = d - timedelta(days=1)
+    prev_key = prev_d.strftime('%d-%m-%Y')
+    path_staff = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
+    with open(path_staff, encoding='utf-8-sig') as f:
+        prev_day_rows = [r for r in csv.DictReader(f) if r.get('DATE','').strip() == prev_key and r.get('EMPLOYEE NUMBER','').strip()]
+    
+    # Check absences for the previous day too
+    prev_absent = set()
+    path_abs = os.path.join(BASE_DIR, 'data', 'Staff_absence_schedule.csv')
+    with open(path_abs, encoding='utf-8-sig') as f:
+        for a in csv.DictReader(f):
+            e_id = a.get('EMPLOYEE NUMBER','').strip()
+            df, dt = parse_date(a.get('DATE FROM','')), parse_date(a.get('DATE TO',''))
+            if df and dt and df <= prev_d <= dt:
+                if a.get('LEAVE TYPE','') in leave_types_excluded: prev_absent.add(e_id)
+
+    for r in prev_day_rows:
+        emp_id = r.get('EMPLOYEE NUMBER', '').strip()
+        if emp_id in prev_absent: continue
+        
+        digits = ''.join(c for c in emp_id if c.isdigit())
+        if digits and int(digits) % 2 == 0: # Only Night shifts
+            st = 960
+            en = st + shift_duration_mins
+            if en > 1440: # crosses midnight
+                on_duty.append({
+                    'id': f"{emp_id} (Carry-over)",
+                    'skill1': r.get('Skill1','').strip(),
+                    'skill2': r.get('Skill2','').strip(),
+                    'employment': r.get('EMPLOYMENT TYPE','').strip(),
+                    'shift': 'NIGHT',
+                    'shift_start': 0, 
+                    'shift_end': en - 1440,
+                    'shift_label': f"Carry-over from prev day (Ends {mins_to_time(en-1440)})",
+                    'assignments': [], 'breaks': [], 'utilisation_pct': 0
+                })
 
     return on_duty, absent_staff
 
@@ -1561,24 +1610,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     iso_date_key    = d.strftime('%Y-%m-%d')    # e.g. '2026-04-11'
     date_label      = d.strftime('%A %d %b %Y')
 
-    # Load flights for the 24h window starting at 04:00
+    # Load flights for this date
     all_flights = read_csv_flights()
-    d_next = d + timedelta(days=1)
-    flight_date_key_next = d_next.strftime('%d-%b-%y')
-
-    flights_raw = []
-    for f in all_flights:
-        f_date = f.get('date','')
-        f_tm = f.get('time','00:00')
-        m = parse_time(f_tm)
-        
-        if f_date == flight_date_key and m >= 240:
-            flights_raw.append(f)
-        elif f_date == flight_date_key_next and m < 240:
-            # Normalize tomorrow's early morning flights to the end of our current 24h view
-            f_aug = f.copy()
-            f_aug['_tomorrow'] = True 
-            flights_raw.append(f_aug)
+    flights_raw = [f for f in all_flights if f.get('date', '') == flight_date_key]
 
     # Apply overrides
     cancelled_set = set()
@@ -1607,37 +1641,40 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     busy_map = defaultdict(list)
 
     def available(s, task_start, task_end, task_terminal, task_skill):
-        """Check if staff member s is available for window [task_start, task_end).
+        """Check if staff member s is available for window [task_start, task_end)."""
 
-        Night shift covers 16:00-04:00 (wraps midnight).
-        Early-morning tasks (start < 240) are treated as night-shift territory.
-        Day shift covers 04:00-16:00 only.
-        """
-        if s['shift'] == 'DAY':
-            if task_start < s['shift_start'] or task_end > s['shift_end']:
-                return False
-        else:
-            if 240 <= task_start < 960:
-                return False
-
-        def norm(t):
-            return t + 1440 if (s['shift'] == 'NIGHT' and t < 240) else t
-
-        ns, ne = norm(task_start), norm(task_end)
+        # Shift window
+        S, E = s['shift_start'], s['shift_end']
+        D_shift = (E - S) % 1440
+        if D_shift == 0 and E == S: D_shift = 1440
         
+        # Task duration and relative start
+        task_dur = (task_end - task_start) % 1440
+        if task_dur == 0 and task_end != task_start: task_dur = 1440
+        ts_rel = (task_start - S) % 1440
+        
+        # Is task within shift window?
+        if ts_rel + task_dur > D_shift:
+            return False
+            
         if allow_overlap:
             return True
-
+            
+        # Check busy map for overlaps with buffer
         for (ws, we, term, sk) in busy_map[s['id']]:
             buffer_mins = 0
             if term != task_terminal and term != 'ALL' and task_terminal != 'ALL':
                 buffer_mins = max(buffer_mins, tt_t1_t2)
             if sk != task_skill:
                 buffer_mins = max(buffer_mins, tt_skill_switch)
-
-            nws, nwe = norm(ws), norm(we)
-            # Expanded window by buffer
-            if ns < (nwe + buffer_mins) and ne > (nws - buffer_mins):
+            
+            # Normalize busy window to shift-relative coordinates
+            ws_rel = (ws - S) % 1440
+            w_dur = (we - ws) % 1440
+            if w_dur == 0 and we != ws: w_dur = 1440
+            
+            # Overlap check in relative space
+            if ts_rel < (ws_rel + w_dur + buffer_mins) and (ts_rel + task_dur) > (ws_rel - buffer_mins):
                 return False
         return True
 
@@ -2025,7 +2062,7 @@ def st_apply_rec():
 
 @app.route('/api/intraday')
 def intraday_get():
-    """Return today's intraday-optimised schedule with any live overrides."""
+    """Return todays intraday-optimised schedule with any live overrides."""
     now = datetime.now()
     today_str = now.strftime('%Y-%m-%d')
     man = _manual_assigns.get(today_str, {})
@@ -2129,7 +2166,8 @@ def intraday_constraints():
         'shift_duration_hrs': _intraday_custom_constraints.get('shift_duration_hrs', 12),
         'b1_duration_mins': _intraday_custom_constraints.get('b1_duration_mins', 30),
         'b2_duration_mins': _intraday_custom_constraints.get('b2_duration_mins', 60),
-        'leave_types_excluded': _intraday_custom_constraints.get('leave_types_excluded', ["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"])
+        'leave_types_excluded': _intraday_custom_constraints.get('leave_types_excluded', ["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"]),
+        'permitted_shifts': _intraday_custom_constraints.get('permitted_shifts')
     }
     return jsonify(res)
 

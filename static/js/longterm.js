@@ -41,7 +41,7 @@ let SELECTED_WEEK  = null; // currently selected week key
 
 // Chart instances (kept so they can be destroyed/recreated)
 const CHARTS = {};
-const MAPS   = {};
+
 
 // ── Helpers ───────────────────────────────────────────────────
 const fmt    = n  => Number(n).toLocaleString();
@@ -77,7 +77,7 @@ document.querySelectorAll('.sub-tab').forEach(tab => {
     tab.classList.add('active');
     document.getElementById(`sub-${tab.dataset.sub}`).classList.add('active');
     if (tab.dataset.sub === 'scenario' && typeof initScenario === 'function') initScenario();
-    if (tab.dataset.sub === 'map') initLongTermMap();
+
     if (tab.dataset.sub === 'perf') renderLongTermPerfChart();
     if (tab.dataset.sub === 'gap-skill') initGapSkillAnalysis();
   });
@@ -1000,19 +1000,7 @@ async function boot() {
 
   ]);
 }
-// ═════════════════════════════════════════════════════════════
-// ROUTE MAP
-// ═════════════════════════════════════════════════════════════
 
-function initLongTermMap() {
-  if (MAPS['long-term']) {
-    MAPS['long-term'].map.invalidateSize();
-    return;
-  }
-  MAPS['long-term'] = new RouteMapManager('map-long-term');
-  const url = SELECTED_WEEK ? `/api/map-data/short-term/${SELECTED_WEEK}` : '/api/map-data/long-term';
-  MAPS['long-term'].loadData(url);
-}
 
 boot().catch(console.error);
 
