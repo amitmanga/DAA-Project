@@ -118,6 +118,7 @@ function renderIntradayPage() {
       <button class="sub-tab ${ID_ACTIVE_TAB==='flights'?'active':''}" data-idtab="flights">✈ Flight Operations</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='gate-timeline'?'active':''}" data-idtab="gate-timeline">🛬 Gate Timeline</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='map'?'active':''}" data-idtab="map">🗺 Network Map</button>
+      <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Optimization</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='perf'?'active':''}" data-idtab="perf">📈 Performance Analysis</button>
     </div>
     <div id="id-sub-content"></div>
@@ -499,6 +500,8 @@ function renderIDSubContent() {
     renderIDStaffRoster(ID_DATA.staff, ID_DATA.absent_staff || []);
   } else if (ID_ACTIVE_TAB === 'perf') {
     renderIDPerfChart(container);
+  } else if (ID_ACTIVE_TAB === 'opt') {
+    renderIDOptimization(container);
   } else if (ID_ACTIVE_TAB === 'map') {
     renderIDMap(container);
   } else if (ID_ACTIVE_TAB === 'gate-timeline') {
@@ -1155,4 +1158,137 @@ function renderIDMap(container) {
     if (window.MAPS) window.MAPS['intraday'] = manager;
     manager.loadData('/api/map-data/intraday');
   }, 100);
+}
+
+// ── Optimization Tab ────────────────────────────────────────────
+async function renderIDOptimization(container) {
+  container.innerHTML = `<div class="loading-spinner"><div class="spinner"></div><span>Loading constraints...</span></div>`;
+  
+  let constraints;
+  try {
+    constraints = await fetch('/api/intraday/constraints').then(r => r.json());
+  } catch (e) {
+    container.innerHTML = `<div class="empty-state">Failed to load constraints.</div>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="panel mt-20">
+      <div class="panel-title-row">
+        <span class="panel-title">Optimization Constraints & Buffer Rules</span>
+        <button class="btn-primary" id="id-opt-update" style="padding:4px 16px; font-weight:600;">🔄 Update Schedule</button>
+      </div>
+      <div class="section-hint mb-16" style="color:#444;">Adjust the default parameters loaded from Roster_constraints.json for the live Intraday session. Modifying these limits will immediately trigger a re-allocation of staff.</div>
+      
+      <div class="opt-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px;">
+        
+        <!-- Shifts & Breaks -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>⏱</span> Working Hours & Breaks
+          </div>
+          <div class="input-group" style="margin-bottom:12px">
+            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Shift Duration (Hrs)</label>
+            <input type="number" id="opt-shift-hrs" class="select-input" style="width:100%" value="${constraints.shift_duration_hrs || 12}" min="6" max="16"/>
+          </div>
+          <div class="input-group" style="margin-bottom:12px; display:flex; gap:12px;">
+            <div style="flex:1;">
+              <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Short Break (mins)</label>
+              <input type="number" id="opt-b1-dur" class="select-input" style="width:100%" value="${constraints.b1_duration_mins || 30}" min="15" max="60"/>
+            </div>
+            <div style="flex:1;">
+              <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Meal Break (mins)</label>
+              <input type="number" id="opt-b2-dur" class="select-input" style="width:100%" value="${constraints.b2_duration_mins || 60}" min="30" max="120"/>
+            </div>
+          </div>
+        </div>
+
+        <!-- Travel Times -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>🚶</span> Travel Time Buffers (mins)
+          </div>
+          <div class="input-group" style="margin-bottom:12px">
+            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">T1 to T2 Transfer (mins)</label>
+            <input type="number" id="opt-tt-t1-t2" class="select-input" style="width:100%" value="${constraints.tt_t1_t2 || 15}" min="0" max="60"/>
+          </div>
+          <div class="input-group">
+            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Skill Switch Transfer (mins)</label>
+            <input type="number" id="opt-tt-sk" class="select-input" style="width:100%" value="${constraints.tt_skill_switch || 10}" min="0" max="60"/>
+          </div>
+        </div>
+
+        <!-- Absences -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>🚫</span> Absence Exclusions
+          </div>
+          <div class="section-hint" style="font-size:0.75rem; margin-bottom:12px; color:#666;">Staff with selected leave types will not be rostered.</div>
+          <div id="opt-leave-toggles" style="display:flex; flex-direction:column; gap:8px;">
+            ${["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"].map(lt => `
+              <div class="input-group" style="display:flex; align-items:center; gap:12px;">
+                <input type="checkbox" id="chk-lt-${lt.replace(/\s+/g,'-')}" value="${lt}" style="width:18px;height:18px;accent-color:#3498DB;" 
+                  ${(constraints.leave_types_excluded || []).includes(lt) ? 'checked' : ''} />
+                <label for="chk-lt-${lt.replace(/\s+/g,'-')}" style="font-size:0.85rem; color:#333;">${lt}</label>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Allocation Policy -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>⚖</span> Assignment Logic
+          </div>
+          <div class="input-group" style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
+            <input type="checkbox" id="opt-prim-first" style="width:18px;height:18px;accent-color:#3498DB;" ${constraints.use_primary_first ? 'checked' : ''} />
+            <label for="opt-prim-first" style="font-size:0.85rem; color:#333;">Prioritize Primary Skills First</label>
+          </div>
+          <div class="input-group" style="display:flex; align-items:center; gap:12px;">
+            <input type="checkbox" id="opt-overlap" style="width:18px;height:18px;accent-color:#3498DB;" ${constraints.allow_overlap ? 'checked' : ''} />
+            <label for="opt-overlap" style="font-size:0.85rem; color:#333;">Allow Schedule Overlap (Soft Limit)</label>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  `;
+
+  document.getElementById('id-opt-update').addEventListener('click', async (e) => {
+    const btn = e.target;
+    const oldText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;margin-right:8px;display:inline-block;vertical-align:middle;"></span>Updating...';
+    btn.disabled = true;
+
+    const leaves = Array.from(document.querySelectorAll('#opt-leave-toggles input:checked')).map(cb => cb.value);
+
+    const payload = {
+      tt_t1_t2: parseInt(document.getElementById('opt-tt-t1-t2').value, 10),
+      tt_skill_switch: parseInt(document.getElementById('opt-tt-sk').value, 10),
+      use_primary_first: document.getElementById('opt-prim-first').checked,
+      allow_overlap: document.getElementById('opt-overlap').checked,
+      shift_duration_hrs: parseInt(document.getElementById('opt-shift-hrs').value, 10),
+      b1_duration_mins: parseInt(document.getElementById('opt-b1-dur').value, 10),
+      b2_duration_mins: parseInt(document.getElementById('opt-b2-dur').value, 10),
+      leave_types_excluded: leaves
+    };
+
+    try {
+      const res = await fetch('/api/intraday/constraints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('Update failed');
+      const data = await res.json();
+      ID_DATA = data;
+      renderIntradayPage();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update constraints.');
+    } finally {
+      btn.innerHTML = oldText;
+      btn.disabled = false;
+    }
+  });
 }

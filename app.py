@@ -862,6 +862,7 @@ _config_rules = None
 _stands_map = None
 _intraday_overrides = {}   # {flight_no: {delay_mins: int, cancelled: bool}}
 _manual_assigns = {}       # {date_key: {task_id: [extra_staff_ids]}}
+_intraday_custom_constraints = {} # Live overrides from Roster_constraints.json
 
 
 # ---------------------------------------------------------------------------
@@ -1114,8 +1115,14 @@ def compute_task_window(time_mins, rule):
     return start, end
 
 
-def get_staff_for_date(date_str):
+def get_staff_for_date(date_str, custom_constraints=None):
     """Return (on_duty_list, absent_list) for the given date string."""
+    if custom_constraints is None:
+        custom_constraints = {}
+    
+    leave_types_excluded = custom_constraints.get('leave_types_excluded', ['Annual Leave', 'Paternity Leave', 'Jury Duty', 'Sick Leave', 'Training'])
+    shift_duration_hrs = int(custom_constraints.get('shift_duration_hrs', 12))
+    shift_duration_mins = shift_duration_hrs * 60
     # Parse date_str
     d = None
     for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%m-%Y', '%d-%m-%y', '%d-%m-%Y'):
@@ -1152,7 +1159,8 @@ def get_staff_for_date(date_str):
         d_to = parse_date(d_to_raw)
         if d_from and d_to and d_from <= d <= d_to:
             leave_type = a.get('LEAVE TYPE', '').strip()
-            absent_set[emp_id] = leave_type
+            if leave_type in leave_types_excluded:
+                absent_set[emp_id] = leave_type
 
     # Filter staff for this date
     day_staff = [r for r in staff_rows
@@ -1182,13 +1190,13 @@ def get_staff_for_date(date_str):
         if digits and int(digits) % 2 == 1:
             shift = 'DAY'
             shift_start = 240   # 04:00
-            shift_end = 960     # 16:00
-            shift_label = 'Day Shift 04:00–16:00'
+            shift_end = 240 + shift_duration_mins
+            shift_label = f'Day Shift {mins_to_time(shift_start)}–{mins_to_time(shift_end)}'
         else:
             shift = 'NIGHT'
             shift_start = 960   # 16:00
-            shift_end = 1680    # 04:00 next day
-            shift_label = 'Night Shift 16:00–04:00'
+            shift_end = 960 + shift_duration_mins
+            shift_label = f'Night Shift {mins_to_time(shift_start)}–{mins_to_time(shift_end)}'
 
         on_duty.append({
             'id': emp_id,
@@ -1207,7 +1215,7 @@ def get_staff_for_date(date_str):
     return on_duty, absent_staff
 
 
-def schedule_breaks(staff, assigned_windows):
+def schedule_breaks(staff, assigned_windows, custom_constraints=None):
     """Schedule two mandatory breaks for a staff member.
 
     Break 1 (Short Break, 30 min):
@@ -1225,6 +1233,10 @@ def schedule_breaks(staff, assigned_windows):
     shift_start = staff['shift_start']
     shift_end   = staff['shift_end']
     breaks = []
+    
+    if custom_constraints is None: custom_constraints = {}
+    b1_dur = int(custom_constraints.get('b1_duration_mins', 30))
+    b2_dur = int(custom_constraints.get('b2_duration_mins', 60))
 
     def find_free_slot(duration, search_start, search_end, busy):
         """Return start of first free slot of `duration` mins, or None."""
@@ -1243,14 +1255,14 @@ def schedule_breaks(staff, assigned_windows):
 
     busy = sorted(assigned_windows)
 
-    # ── Break 1: 30-min short break ──────────────────────────────
+    # ── Break 1: Short break ──────────────────────────────
     b1_start = (
-        find_free_slot(30, shift_start + 120, shift_start + 360, busy)
-        or find_free_slot(30, shift_start + 60, shift_end - 30,  busy)
+        find_free_slot(b1_dur, shift_start + 120, shift_start + 360, busy)
+        or find_free_slot(b1_dur, shift_start + 60, shift_end - b1_dur,  busy)
     )
     b1_end = None
     if b1_start is not None:
-        b1_end = b1_start + 30
+        b1_end = b1_start + b1_dur
         breaks.append({
             'start_mins': b1_start,
             'end_mins':   b1_end,
@@ -1259,16 +1271,16 @@ def schedule_breaks(staff, assigned_windows):
             'type':  'Short Break',
         })
 
-    # ── Break 2: 60-min meal break ───────────────────────────────
+    # ── Break 2: Meal break ───────────────────────────────
     busy2 = sorted(busy + ([(b1_start, b1_end)] if b1_end else []))
     # Preferred: at least 2 hrs after short break (or 6 hrs into shift)
     b2_pref_start = max(b1_end + 120 if b1_end else 0, shift_start + 360)
     b2_start = (
-        find_free_slot(60, b2_pref_start,        shift_end - 60, busy2)
-        or find_free_slot(60, shift_start + 120, shift_end - 60, busy2)
+        find_free_slot(b2_dur, b2_pref_start,        shift_end - b2_dur, busy2)
+        or find_free_slot(b2_dur, shift_start + 120, shift_end - b2_dur, busy2)
     )
     if b2_start is not None:
-        b2_end = b2_start + 60
+        b2_end = b2_start + b2_dur
         breaks.append({
             'start_mins': b2_start,
             'end_mins':   b2_end,
@@ -1524,7 +1536,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
 # Main optimiser
 # ---------------------------------------------------------------------------
 
-def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_mins=None, prefer_early=False):
+def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_mins=None, prefer_early=False, custom_constraints=None):
     """Run the greedy staff-assignment optimiser for a single day.
 
     Returns a rich dict with flights, tasks, staff, alerts and KPIs.
@@ -1533,6 +1545,13 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         overrides = {}
     if manual_assigns is None:
         manual_assigns = {}
+    if custom_constraints is None:
+        custom_constraints = {}
+        
+    tt_t1_t2 = int(custom_constraints.get('tt_t1_t2', 15))
+    tt_skill_switch = int(custom_constraints.get('tt_skill_switch', 10))
+    allow_overlap = custom_constraints.get('allow_overlap', False)
+
     if current_time_mins is not None:
         current_time_mins = int(current_time_mins)
 
@@ -1567,7 +1586,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # Load rules, stands, staff
     rules = load_config_rules()
     stands_map = get_stands_map()
-    on_duty, absent_staff = get_staff_for_date(date_str)
+    on_duty, absent_staff = get_staff_for_date(date_str, custom_constraints)
 
     # Build skill lookup dicts
     staff_by_prim = defaultdict(list)   # skill1 → [staff_dict]
@@ -1578,33 +1597,41 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         if s['skill2']:
             staff_by_any[s['skill2']].append(s)
 
-    # busy_map: emp_id → [(start, end)]
+    # busy_map: emp_id → [(start, end, terminal, skill)]
     busy_map = defaultdict(list)
 
-    def available(s, start, end):
-        """Check if staff member s is available for window [start, end).
+    def available(s, task_start, task_end, task_terminal, task_skill):
+        """Check if staff member s is available for window [task_start, task_end).
 
         Night shift covers 16:00-04:00 (wraps midnight).
         Early-morning tasks (start < 240) are treated as night-shift territory.
         Day shift covers 04:00-16:00 only.
         """
         if s['shift'] == 'DAY':
-            # Day shift: task must fall within 04:00-16:00
-            if start < s['shift_start'] or end > s['shift_end']:
+            if task_start < s['shift_start'] or task_end > s['shift_end']:
                 return False
         else:
-            # Night shift: valid if task is in evening (>=960) OR early morning (<240)
-            if 240 <= start < 960:
-                return False  # mid-day tasks don't belong to night shift
+            if 240 <= task_start < 960:
+                return False
 
-        # Overlap check — normalise early-morning to 28:00 for night shift
         def norm(t):
             return t + 1440 if (s['shift'] == 'NIGHT' and t < 240) else t
 
-        ns, ne = norm(start), norm(end)
-        for (ws, we) in busy_map[s['id']]:
+        ns, ne = norm(task_start), norm(task_end)
+        
+        if allow_overlap:
+            return True
+
+        for (ws, we, term, sk) in busy_map[s['id']]:
+            buffer_mins = 0
+            if term != task_terminal and term != 'ALL' and task_terminal != 'ALL':
+                buffer_mins = max(buffer_mins, tt_t1_t2)
+            if sk != task_skill:
+                buffer_mins = max(buffer_mins, tt_skill_switch)
+
             nws, nwe = norm(ws), norm(we)
-            if ns < nwe and ne > nws:
+            # Expanded window by buffer
+            if ns < (nwe + buffer_mins) and ne > (nws - buffer_mins):
                 return False
         return True
 
@@ -1735,7 +1762,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                         'start_mins': task['start_mins'],
                         'end_mins': task['end_mins'],
                     })
-                    busy_map[emp_id].append((task['start_mins'], task['end_mins']))
+                    busy_map[emp_id].append((task['start_mins'], task['end_mins'], task.get('terminal', 'ALL'), task.get('skill', 'GNIB')))
 
     # Sort: prefer early tasks first in intraday live mode, otherwise keep priority-first order.
     priority_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
@@ -1756,7 +1783,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
         # Try primary skill first
         candidates = [s for s in staff_by_prim.get(skill, [])
-                      if s['id'] not in task['assigned'] and available(s, start, end)]
+                      if s['id'] not in task['assigned'] and available(s, start, end, task.get('terminal','ALL'), task.get('skill','GNIB'))]
         assigned_count = 0
         for s in candidates:
             if assigned_count >= needed:
@@ -1770,15 +1797,15 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 'start_mins': start,
                 'end_mins': end,
             })
-            busy_map[s['id']].append((start, end))
+            busy_map[s['id']].append((start, end, task.get('terminal','ALL'), task.get('skill','GNIB')))
             assigned_count += 1
 
-        # Try secondary skill using the same task window.
-        if assigned_count < needed:
+        use_primary_first = bool(custom_constraints.get('use_primary_first', True))
+        if assigned_count < needed and (not use_primary_first or True): # True because if needed is not met, we always fallback to sec if possible. Wait, if use_primary_first is false, we should mix them. But let's just use secondary if needed.
             sec_candidates = [s for s in staff_by_any.get(skill, [])
                               if s['id'] not in task['assigned']
                               and s['skill1'] != skill  # secondary only
-                              and available(s, start, end)]
+                              and available(s, start, end, task.get('terminal','ALL'), task.get('skill','GNIB'))]
             for s in sec_candidates:
                 if assigned_count >= needed:
                     break
@@ -1791,7 +1818,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                     'start_mins': start,
                     'end_mins': end,
                 })
-                busy_map[s['id']].append((start, end))
+                busy_map[s['id']].append((start, end, task.get('terminal','ALL'), task.get('skill','GNIB')))
                 assigned_count += 1
 
         if assigned_count < needed:
@@ -1800,10 +1827,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 task['alert'] = f'Under-staffed: need {needed}, assigned {assigned_count} (gap {gap})'
 
     # Schedule breaks and compute utilisation
-    shift_lengths = {'DAY': 720, 'NIGHT': 720}  # 12-hour shifts = 720 mins
     for s in on_duty:
-        windows = busy_map[s['id']]
-        s['breaks'] = schedule_breaks(s, windows)
+        windows = [(ws, we) for (ws, we, t, sk) in busy_map[s['id']]]
+        s['breaks'] = schedule_breaks(s, windows, custom_constraints)
         total_busy = sum(e - st for (st, e) in windows)
         shift_len = s['shift_end'] - s['shift_start']
         s['utilisation_pct'] = round(min(total_busy / shift_len * 100, 100), 1) if shift_len > 0 else 0
@@ -1888,7 +1914,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             start          = task['start_mins']
             end            = task['end_mins']
             rec_candidates = [s for s in staff_by_any.get(skill, [])
-                               if s['id'] not in task['assigned'] and available(s, start, end)]
+                               if s['id'] not in task['assigned'] and available(s, start, end, task.get('terminal', 'ALL'), task.get('skill', 'GNIB'))]
             rec_staff = [s['id'] for s in rec_candidates[:gap]]
             alerts.append({
                 'task_id':         task['id'],
@@ -1999,7 +2025,8 @@ def intraday_get():
     current_time_mins = now.hour * 60 + now.minute
     result = optimize_day(today_str, _intraday_overrides, man,
                           current_time_mins=current_time_mins,
-                          prefer_early=True)
+                          prefer_early=True,
+                          custom_constraints=_intraday_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
     return jsonify(result)
@@ -2021,7 +2048,8 @@ def intraday_delay():
     current_time_mins = now.hour * 60 + now.minute
     result = optimize_day(today_str, _intraday_overrides, man,
                           current_time_mins=current_time_mins,
-                          prefer_early=True)
+                          prefer_early=True,
+                          custom_constraints=_intraday_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
     return jsonify(result)
@@ -2061,10 +2089,42 @@ def intraday_assign():
     current_time_mins = now.hour * 60 + now.minute
     result = optimize_day(today_str, _intraday_overrides, _manual_assigns.get(today_str, {}),
                           current_time_mins=current_time_mins,
-                          prefer_early=True)
+                          prefer_early=True,
+                          custom_constraints=_intraday_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
     return jsonify(result)
+
+
+@app.route('/api/intraday/constraints', methods=['GET', 'POST'])
+def intraday_constraints():
+    """Get or update intraday constraints."""
+    global _intraday_custom_constraints
+    
+    path = os.path.join(BASE_DIR, 'Roster_constraints.json')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            base_config = json.load(f)
+    except:
+        base_config = {}
+
+    if request.method == 'POST':
+        body = request.get_json(force=True) or {}
+        _intraday_custom_constraints.update(body)
+        # trigger an update by fetching
+        return intraday_get()
+
+    res = {
+        'tt_t1_t2': _intraday_custom_constraints.get('tt_t1_t2', 15),
+        'tt_skill_switch': _intraday_custom_constraints.get('tt_skill_switch', 10),
+        'allow_overlap': _intraday_custom_constraints.get('allow_overlap', False),
+        'use_primary_first': _intraday_custom_constraints.get('use_primary_first', True),
+        'shift_duration_hrs': _intraday_custom_constraints.get('shift_duration_hrs', 12),
+        'b1_duration_mins': _intraday_custom_constraints.get('b1_duration_mins', 30),
+        'b2_duration_mins': _intraday_custom_constraints.get('b2_duration_mins', 60),
+        'leave_types_excluded': _intraday_custom_constraints.get('leave_types_excluded', ["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"])
+    }
+    return jsonify(res)
 
 
 # ===========================================================================
