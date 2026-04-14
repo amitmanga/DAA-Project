@@ -39,69 +39,42 @@ function _buildUI() {
             <input id="sc-name" class="sc-input" type="text" placeholder="e.g. Summer Peak +10 GNIB" />
           </div>
 
-          <div class="sc-field-group">
-            <label class="sc-label">Base Date</label>
-            <input id="sc-base-date" class="sc-input" type="date" />
+          <div class="sc-field-row">
+            <div class="sc-field-half">
+              <label class="sc-label">Start Date</label>
+              <input id="sc-start-date" class="sc-input sc-input-sm" type="date" />
+            </div>
+            <div class="sc-field-half">
+              <label class="sc-label">End Date</label>
+              <input id="sc-end-date" class="sc-input sc-input-sm" type="date" />
+            </div>
           </div>
 
           <div class="sc-section-title">Demand & Variability</div>
-
-          <div class="sc-slider-row">
-            <label class="sc-label">Demand Variability (CV)
-              <span class="sc-hint">How much daily flight count varies around forecast</span>
-            </label>
-            <div class="sc-slider-wrap">
-              <input type="range" id="sl-demand-cv" min="0" max="0.30" step="0.01" value="0.08"
-                     oninput="document.getElementById('sv-demand-cv').textContent=parseFloat(this.value).toFixed(2)">
-              <span class="sc-slider-val" id="sv-demand-cv">0.08</span>
-            </div>
-          </div>
-
-          <div class="sc-slider-row">
-            <label class="sc-label">Surge Event Probability
-              <span class="sc-hint">Chance of a demand spike on this day (match, bank holiday, diversion)</span>
-            </label>
-            <div class="sc-slider-wrap">
-              <input type="range" id="sl-surge-prob" min="0" max="0.30" step="0.01" value="0.05"
-                     oninput="document.getElementById('sv-surge-prob').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-              <span class="sc-slider-val" id="sv-surge-prob">5%</span>
-            </div>
-          </div>
 
           <div class="sc-slider-row">
             <label class="sc-label">Surge Demand Multiplier
               <span class="sc-hint">How much demand increases during a surge event</span>
             </label>
             <div class="sc-slider-wrap">
-              <input type="range" id="sl-surge-factor" min="1.0" max="2.5" step="0.05" value="1.35"
+              <input type="range" id="sl-surge-factor" min="1.0" max="2.5" step="0.05" value="1.0"
                      oninput="document.getElementById('sv-surge-factor').textContent=parseFloat(this.value).toFixed(2)+'×'">
-              <span class="sc-slider-val" id="sv-surge-factor">1.35×</span>
-            </div>
-          </div>
-
-          <div class="sc-slider-row">
-            <label class="sc-label">Airline Punctuality
-              <span class="sc-hint">Fraction of flights on time — lower = task bunching, more staff needed concurrently</span>
-            </label>
-            <div class="sc-slider-wrap">
-              <input type="range" id="sl-punctuality" min="0.40" max="1.00" step="0.05" value="0.75"
-                     oninput="document.getElementById('sv-punctuality').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-              <span class="sc-slider-val" id="sv-punctuality">75%</span>
-            </div>
-          </div>
-
-          <div class="sc-slider-row">
-            <label class="sc-label">Task Duration Variability (CV)
-              <span class="sc-hint">Variability in individual task durations</span>
-            </label>
-            <div class="sc-slider-wrap">
-              <input type="range" id="sl-duration-cv" min="0" max="0.30" step="0.01" value="0.10"
-                     oninput="document.getElementById('sv-duration-cv').textContent=parseFloat(this.value).toFixed(2)">
-              <span class="sc-slider-val" id="sv-duration-cv">0.10</span>
+              <span class="sc-slider-val" id="sv-surge-factor">1.0×</span>
             </div>
           </div>
 
           <div class="sc-section-title">Absence & Workforce</div>
+
+          <div class="sc-slider-row">
+            <label class="sc-label">Target Staff Utilisation
+              <span class="sc-hint">Expected maximum practical utilisation rate (1.0 = 100%)</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-staff-util" min="0.50" max="1.0" step="0.05" value="0.80"
+                     oninput="document.getElementById('sv-staff-util').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
+              <span class="sc-slider-val" id="sv-staff-util">80%</span>
+            </div>
+          </div>
 
           <div class="sc-slider-row">
             <label class="sc-label">Absence Rate
@@ -138,23 +111,12 @@ function _buildUI() {
 
           <div class="sc-slider-row">
             <label class="sc-label">Cross-Training Rate
-              <span class="sc-hint">Fraction of each skill pool cross-trained in another skill — creates a shared flex pool to cover shortages</span>
+              <span class="sc-hint">Fraction of each skill pool cross-trained in another skill</span>
             </label>
             <div class="sc-slider-wrap">
               <input type="range" id="sl-cross-train" min="0" max="0.50" step="0.05" value="0.15"
                      oninput="document.getElementById('sv-cross-train').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
               <span class="sc-slider-val" id="sv-cross-train">15%</span>
-            </div>
-          </div>
-
-          <div class="sc-slider-row">
-            <label class="sc-label">Fatigue Factor
-              <span class="sc-hint">Sustained high-demand fatigue penalty on effective capacity (0 = none, 0.20 = severe)</span>
-            </label>
-            <div class="sc-slider-wrap">
-              <input type="range" id="sl-fatigue" min="0" max="0.20" step="0.01" value="0.00"
-                     oninput="document.getElementById('sv-fatigue').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-              <span class="sc-slider-val" id="sv-fatigue">0%</span>
             </div>
           </div>
 
@@ -195,8 +157,8 @@ function _buildUI() {
               <input id="sc-min-rest" class="sc-input sc-input-sm" type="number" min="8" max="16" value="11" />
             </div>
             <div class="sc-field-half">
-              <label class="sc-label">Overtime Limit (hrs/day)</label>
-              <input id="sc-overtime" class="sc-input sc-input-sm" type="number" min="0" max="4" value="0" />
+              <label class="sc-label" style="opacity: 0.5;">Overtime Limit (Disabled)</label>
+              <input id="sc-overtime" class="sc-input sc-input-sm" type="number" value="0" disabled style="opacity: 0.5;" />
             </div>
           </div>
 
@@ -224,16 +186,23 @@ function _buildUI() {
         <div id="sc-result-panel" class="panel sc-result-panel hidden">
           <div class="panel-title" id="sc-result-title">Simulation Results</div>
           <div class="sc-result-kpis" id="sc-result-kpis"></div>
-          <div class="row-2col mt-16">
+          <div class="row-1col mt-16" style="display:grid; grid-template-columns: 1fr;">
             <div class="panel-inner">
-              <div class="panel-title-sm">Coverage Distribution (p10–p90)</div>
-              <canvas id="sc-hist-chart" height="220"></canvas>
+              <div class="panel-title-row" style="margin-bottom:8px; display:block">
+                 <div class="panel-title-sm" style="margin:0 0 8px 0">Monthly FTE: Required vs Available</div>
+                 <div class="sc-filters" id="sc-monthly-skill-filter" style="display:flex; flex-wrap:wrap; gap:8px; font-size:11px;">
+                   <label><input type="checkbox" value="GNIB" checked onchange="scUpdateMonthlyRiskFilter()"> GNIB</label>
+                   <label><input type="checkbox" value="CBP Pre-clearance" checked onchange="scUpdateMonthlyRiskFilter()"> CBP Pre-clearance</label>
+                   <label><input type="checkbox" value="Bussing" checked onchange="scUpdateMonthlyRiskFilter()"> Bussing</label>
+                   <label><input type="checkbox" value="PBZ" checked onchange="scUpdateMonthlyRiskFilter()"> PBZ</label>
+                   <label><input type="checkbox" value="Mezz Operation" checked onchange="scUpdateMonthlyRiskFilter()"> Mezz Operation</label>
+                   <label><input type="checkbox" value="Litter Picking" checked onchange="scUpdateMonthlyRiskFilter()"> Litter Picking</label>
+                 </div>
+              </div>
+              <div style="position:relative; height: 250px; width: 100%;">
+                <canvas id="sc-monthly-risk-chart"></canvas>
+              </div>
             </div>
-            <div class="panel-inner">
-              <div class="panel-title-sm">Risk by Skill</div>
-              <canvas id="sc-skill-chart" height="220"></canvas>
-            </div>
-          </div>
         </div>
 
         <!-- Saved Scenarios Table -->
@@ -249,10 +218,11 @@ function _buildUI() {
                 <tr>
                   <th></th><!-- checkbox -->
                   <th>Name</th>
-                  <th>Base Date</th>
+                  <th>Start Date</th>
+                  <th>End Date</th>
                   <th>Runs</th>
-                  <th>p50 Coverage</th>
-                  <th>p10 Coverage</th>
+                  <th>Median Coverage</th>
+                  <th>Avg Utilisation</th>
                   <th>Risk Score</th>
                   <th>Risk Level</th>
                   <th>Status</th>
@@ -266,24 +236,27 @@ function _buildUI() {
           </div>
         </div>
 
-        <!-- Comparison Chart (hidden until compare) -->
+        <!-- Comparison Table (hidden until compare) -->
         <div id="sc-compare-panel" class="panel mt-16 hidden">
           <div class="panel-title-row">
-            <span class="panel-title" style="margin:0">Scenario Comparison — Coverage Distribution</span>
+            <span class="panel-title" style="margin:0">Scenario Monthly Comparison</span>
             <button class="sc-close-btn" onclick="scCloseCompare()">✕ Close</button>
           </div>
-          <canvas id="sc-comp-chart" height="300"></canvas>
-          <div id="sc-comp-table" class="mt-16"></div>
+          <div class="panel-inner mt-16">
+            <div class="sc-compare-table-wrap mt-8" id="sc-compare-table-container">
+               <!-- Dynamic Table Rendered Here -->
+            </div>
+          </div>
         </div>
 
       </div>
     </div>
   `;
 
-  // Set default base date to tomorrow
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  document.getElementById('sc-base-date').value = tomorrow.toISOString().slice(0, 10);
+  // Set default dates
+  const today = new Date();
+  document.getElementById('sc-start-date').value = today.toISOString().slice(0, 10);
+  document.getElementById('sc-end-date').value = '2026-12-31';
 }
 
 /* ── Staff spinners (extra permanent + contractor) ── */
@@ -308,20 +281,14 @@ function _gatherConstraints() {
     contr[sk] = cEl ? parseInt(cEl.textContent || '0') : 0;
   });
   return {
-    demand_cv:           parseFloat(document.getElementById('sl-demand-cv').value),
-    surge_probability:   parseFloat(document.getElementById('sl-surge-prob').value),
     surge_demand_factor: parseFloat(document.getElementById('sl-surge-factor').value),
-    airline_punctuality: parseFloat(document.getElementById('sl-punctuality').value),
-    duration_cv:         parseFloat(document.getElementById('sl-duration-cv').value),
+    staff_utilisation:   parseFloat(document.getElementById('sl-staff-util').value),
     absence_rate:        parseFloat(document.getElementById('sl-absence-rate').value),
     absence_cv:          parseFloat(document.getElementById('sl-absence-cv').value),
     new_hire_fraction:   parseFloat(document.getElementById('sl-new-hire').value),
     cross_training_rate: parseFloat(document.getElementById('sl-cross-train').value),
-    fatigue_factor:      parseFloat(document.getElementById('sl-fatigue').value),
     extra_staff:         extra,
     contractor_staff:    contr,
-    min_rest_hrs:        parseInt(document.getElementById('sc-min-rest').value),
-    overtime_daily_hrs:  parseInt(document.getElementById('sc-overtime').value),
     n_runs:              parseInt(document.getElementById('sc-n-runs').value),
   };
 }
@@ -329,9 +296,10 @@ function _gatherConstraints() {
 /* ── Run Simulation ── */
 window.scRunSimulation = async function() {
   const name = (document.getElementById('sc-name').value || '').trim();
-  const baseDate = document.getElementById('sc-base-date').value;
+  const startDate = document.getElementById('sc-start-date').value;
+  const endDate = document.getElementById('sc-end-date').value;
   if (!name) { _setStatus('error', 'Please enter a scenario name.'); return; }
-  if (!baseDate) { _setStatus('error', 'Please select a base date.'); return; }
+  if (!startDate || !endDate) { _setStatus('error', 'Please select start and end dates.'); return; }
 
   const constraints = _gatherConstraints();
   const btn = document.getElementById('btn-run-sc');
@@ -343,7 +311,7 @@ window.scRunSimulation = async function() {
     const res = await fetch('/api/scenarios/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, base_date: baseDate, constraints })
+      body: JSON.stringify({ name, start_date: startDate, end_date: endDate, constraints })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Server error');
@@ -365,140 +333,137 @@ function _setStatus(type, msg) {
   el.textContent = msg;
 }
 
+let _currentRenderedScenario = null;
+
 /* ── Render result panel ── */
 function _renderResultPanel(sc) {
+  _currentRenderedScenario = sc;
   const panel = document.getElementById('sc-result-panel');
   panel.classList.remove('hidden');
   document.getElementById('sc-result-title').textContent = `Results — ${sc.name}`;
 
-  const cov = sc.coverage;
   const riskClass = _riskClass(sc.risk_level);
-  document.getElementById('sc-result-kpis').innerHTML = `
-    <div class="sc-res-kpi"><div class="sc-res-val">${(cov.p50 * 100).toFixed(1)}%</div><div class="sc-res-lbl">p50 Coverage</div></div>
-    <div class="sc-res-kpi"><div class="sc-res-val">${(cov.p10 * 100).toFixed(1)}%</div><div class="sc-res-lbl">p10 Coverage</div></div>
-    <div class="sc-res-kpi"><div class="sc-res-val">${(cov.p90 * 100).toFixed(1)}%</div><div class="sc-res-lbl">p90 Coverage</div></div>
-    <div class="sc-res-kpi"><div class="sc-res-val">${(sc.prob_adequate * 100).toFixed(1)}%</div><div class="sc-res-lbl">Prob. Adequate (≥80%)</div></div>
-    <div class="sc-res-kpi"><div class="sc-res-val sc-risk-${riskClass}">${sc.risk_score.toFixed(0)}</div><div class="sc-res-lbl">Risk Score</div></div>
-    <div class="sc-res-kpi"><div class="sc-res-val sc-risk-${riskClass}">${sc.risk_level}</div><div class="sc-res-lbl">Risk Level</div></div>
+  document.getElementById('sc-result-kpis').outerHTML = `
+    <div class="sc-result-kpis" id="sc-result-kpis" style="display:grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+      <div class="sc-res-kpi"><div class="sc-res-val">${(sc.overall_coverage * 100).toFixed(1)}%</div><div class="sc-res-lbl">Overall Coverage</div></div>
+      <div class="sc-res-kpi"><div class="sc-res-val">${((sc.average_utilisation || 0) * 100).toFixed(1)}%</div><div class="sc-res-lbl">Average Utilisation</div></div>
+      <div class="sc-res-kpi"><div class="sc-res-val sc-risk-${riskClass}">${(sc.risk_score || 0).toFixed(0)}</div><div class="sc-res-lbl">Risk Score</div></div>
+      <div class="sc-res-kpi"><div class="sc-res-val sc-risk-${riskClass}">${sc.risk_level || 'Low'}</div><div class="sc-res-lbl">Risk Level</div></div>
+    </div>
   `;
 
-  // Histogram
-  _renderHistogram(sc);
-  // Skill breakdown
-  _renderSkillChart(sc);
+  _renderMonthlyRisk(sc);
 }
 
-function _renderHistogram(sc) {
-  const ctx = document.getElementById('sc-hist-chart');
+window.scUpdateMonthlyRiskFilter = function() {
+  if (_currentRenderedScenario) _renderMonthlyRisk(_currentRenderedScenario);
+};
+
+function _renderMonthlyRisk(sc) {
+  const ctx = document.getElementById('sc-monthly-risk-chart');
   if (!ctx) return;
   if (_histChart) { _histChart.destroy(); _histChart = null; }
+  
+  const monthlyData = sc.monthly_fte_breakdown || {};
+  // Sort months chronologically to prevent alphabetical sorting by JSON/browser
+  const months = Object.keys(monthlyData).sort((a, b) => new Date(a) - new Date(b));
+  if (!months.length) return;
 
-  const hist = sc.coverage_histogram || [];
-  const labels = hist.map(b => `${(b.lo * 100).toFixed(0)}–${(b.hi * 100).toFixed(0)}%`);
-  const values = hist.map(b => b.count);
+  const skills = ['GNIB', 'CBP Pre-clearance', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking'];
+  
+  // Get all checked skills
+  const checks = document.querySelectorAll('#sc-monthly-skill-filter input:checked');
+  const selectedSkills = Array.from(checks).map(cb => cb.value);
 
-  // Color bars: red if coverage<60%, amber if <80%, green otherwise
-  const colors = hist.map(b => {
-    const mid = (b.lo + b.hi) / 2;
-    if (mid < 0.60) return 'rgba(231,76,60,0.7)';
-    if (mid < 0.80) return 'rgba(243,156,18,0.7)';
-    return 'rgba(46,204,113,0.7)';
+  // If none selected, fallback to empty to clear chart
+  const reqData = [];
+  const availData = [];
+  const baseReqData = [];
+  const baseAvailData = [];
+
+  months.forEach(m => {
+      let r = 0, a = 0, br = 0, ba = 0;
+      selectedSkills.forEach(sk => {
+          r += (monthlyData[m].req[sk] || 0);
+          a += (monthlyData[m].avail[sk] || 0);
+          br += ((monthlyData[m].base_req && monthlyData[m].base_req[sk]) || 0);
+          ba += ((monthlyData[m].base_avail && monthlyData[m].base_avail[sk]) || 0);
+      });
+      reqData.push(r);
+      availData.push(a);
+      baseReqData.push(br);
+      baseAvailData.push(ba);
   });
+
+  const labelSuffix = selectedSkills.length === skills.length ? ' (All Skills)' : (selectedSkills.length === 1 ? ` (${selectedSkills[0]})` : ' (Selected Skills)');
 
   _histChart = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ label: 'Runs', data: values, backgroundColor: colors, borderWidth: 0 }] },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { display: false },
-        annotation: {}, // skip
-        tooltip: { callbacks: { title: t => t[0].label + ' coverage', label: t => t.parsed.y + ' runs' } }
-      },
-      scales: {
-        x: { ticks: { color: '#8BA5C0', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
-        y: { ticks: { color: '#8BA5C0', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.07)' } }
-      }
-    }
-  });
-
-  // Draw p10/p50/p90 vertical markers by drawing on the canvas after render
-  _histChart.options.animation = { onComplete: () => _drawPercentileLines(_histChart, sc.coverage, hist) };
-  _histChart.update();
-}
-
-function _drawPercentileLines(chart, cov, hist) {
-  const ctx = chart.ctx;
-  if (!ctx || !hist.length) return;
-  const xScale = chart.scales.x;
-  const yScale = chart.scales.y;
-  const top = yScale.top, bottom = yScale.bottom;
-
-  function getX(val) {
-    // Find which bucket contains val
-    for (let i = 0; i < hist.length; i++) {
-      if (val >= hist[i].lo && val <= hist[i].hi) {
-        const frac = (val - hist[i].lo) / (hist[i].hi - hist[i].lo);
-        const barLeft = xScale.getPixelForValue(i) - xScale.width / hist.length / 2;
-        return barLeft + frac * (xScale.width / hist.length);
-      }
-    }
-    return null;
-  }
-
-  [[cov.p10, '#E74C3C', 'p10'], [cov.p50, '#E8850A', 'p50'], [cov.p90, '#2ECC71', 'p90']].forEach(([v, color, lbl]) => {
-    const x = getX(v);
-    if (!x) return;
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 3]);
-    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = color;
-    ctx.font = 'bold 10px Segoe UI';
-    ctx.textAlign = 'center';
-    ctx.fillText(lbl, x, top - 4);
-    ctx.restore();
-  });
-}
-
-function _renderSkillChart(sc) {
-  const ctx = document.getElementById('sc-skill-chart');
-  if (!ctx) return;
-  if (_skillChart) { _skillChart.destroy(); _skillChart = null; }
-
-  const breakdown = sc.skill_breakdown || {};
-  const skills = Object.keys(breakdown);
-  if (!skills.length) return;
-
-  const p50vals = skills.map(s => parseFloat((breakdown[s].p50 * 100).toFixed(1)));
-  const p10vals = skills.map(s => parseFloat((breakdown[s].p10 * 100).toFixed(1)));
-
-  _skillChart = new Chart(ctx, {
-    type: 'bar',
     data: {
-      labels: skills,
+      labels: months,
       datasets: [
-        { label: 'p50 Coverage %', data: p50vals, backgroundColor: 'rgba(52,152,219,0.7)', borderWidth: 0 },
-        { label: 'p10 Coverage %', data: p10vals, backgroundColor: 'rgba(231,76,60,0.5)', borderWidth: 0 },
+        {
+            type: 'bar',
+            label: 'Scenario Required FTE' + labelSuffix,
+            data: reqData,
+            backgroundColor: 'rgba(231, 76, 60, 0.7)',
+            borderColor: '#E74C3C',
+            borderWidth: 1,
+            order: 3
+        },
+        {
+            type: 'line',
+            label: 'Scenario Available FTE' + labelSuffix,
+            data: availData,
+            borderColor: '#2ECC71',
+            backgroundColor: '#2ECC71',
+            borderWidth: 2,
+            pointRadius: 4,
+            fill: false,
+            order: 1
+        },
+        {
+            type: 'line',
+            label: 'Base Available FTE' + labelSuffix,
+            data: baseAvailData,
+            borderColor: '#3498DB',
+            backgroundColor: '#3498DB',
+            borderWidth: 2,
+            borderDash: [5, 5],
+            pointRadius: 4,
+            fill: false,
+            order: 2
+        }
       ]
     },
     options: {
       responsive: true,
-      plugins: { legend: { labels: { color: '#8BA5C0', font: { size: 10 } } } },
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#8BA5C0', font: { size: 10 }, boxWidth: 10 }, position: 'top' },
+        tooltip: {
+            callbacks: {
+                title: (ctx) => ctx[0].label + ' FTE',
+                label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.toFixed(1)}`
+            }
+        }
+      },
       scales: {
-        x: { ticks: { color: '#8BA5C0', font: { size: 9 }, maxRotation: 30 }, grid: { color: 'rgba(255,255,255,0.04)' } },
-        y: {
-          min: 0, max: 100,
-          ticks: { color: '#8BA5C0', font: { size: 10 }, callback: v => v + '%' },
-          grid: { color: 'rgba(255,255,255,0.07)' }
+        x: { 
+            ticks: { color: '#8BA5C0', font: { size: 10 } }, 
+            grid: { color: 'rgba(255,255,255,0.04)' } 
+        },
+        y: { 
+          ticks: { color: '#8BA5C0', font: { size: 10 } }, 
+          grid: { color: 'rgba(255,255,255,0.07)' },
+          title: { display: true, text: 'FTE', color: '#8BA5C0', font: {size: 10}},
+          min: 0
         }
       }
     }
   });
 }
-
+  // old code removed.
 /* ── Load + render saved scenarios table ── */
 async function _loadScenarios() {
   try {
@@ -529,11 +494,12 @@ function _renderScenariosTable() {
     return `<tr class="${sc.status === 'finalised' ? 'sc-row-finalised' : ''}">
       <td><input type="checkbox" class="sc-cmp-chk" ${checked} onchange="scToggleCompare('${sc.id}', this.checked)" /></td>
       <td class="sc-name-cell"><strong>${sc.name}</strong></td>
-      <td>${sc.base_date}</td>
+      <td>${(sc.start_date || sc.base_date).substring(0,10)}</td>
+      <td>${(sc.end_date || sc.base_date).substring(0,10)}</td>
       <td>${sc.n_runs}</td>
-      <td><strong>${(sc.p50 * 100).toFixed(1)}%</strong></td>
-      <td>${(sc.p10 * 100).toFixed(1)}%</td>
-      <td class="sc-risk-${rc}">${sc.risk_score.toFixed(0)}</td>
+      <td><strong>${((sc.p50_coverage || 0) * 100).toFixed(1)}%</strong></td>
+      <td>${((sc.average_utilisation || 0) * 100).toFixed(1)}%</td>
+      <td class="sc-risk-${rc}">${(sc.risk_score || 0).toFixed(0)}</td>
       <td><span class="sc-risk-badge sc-risk-${rc}">${sc.risk_level}</span></td>
       <td>${statusBadge}</td>
       <td class="sc-actions">
@@ -610,140 +576,146 @@ window.scShowCompare = async function() {
   // Fetch full details for each selected scenario
   const details = await Promise.all(ids.map(id => fetch(`/api/scenarios/${id}`).then(r => r.json()).then(_normalizeScenario)));
 
-  _renderCompareChart(details);
   _renderCompareTable(details);
 };
 
 window.scCloseCompare = function() {
   const panel = document.getElementById('sc-compare-panel');
   panel.classList.add('hidden');
-  if (_compChart) { _compChart.destroy(); _compChart = null; }
 };
 
-function _renderCompareChart(details) {
-  const ctx = document.getElementById('sc-comp-chart');
-  if (!ctx) return;
-  if (_compChart) { _compChart.destroy(); _compChart = null; }
-
-  const COLORS = ['#3498DB','#E8850A','#2ECC71','#9B59B6','#E74C3C','#1ABC9C'];
-
-  const datasets = details.map((sc, i) => {
-    const cov = sc.coverage;
-    const color = COLORS[i % COLORS.length];
-    // Floating bar: [p10, p90], median marker
-    return {
-      label: sc.name,
-      data: [{ x: sc.name, y: [parseFloat((cov.p10*100).toFixed(1)), parseFloat((cov.p90*100).toFixed(1))] }],
-      backgroundColor: color + '44',
-      borderColor: color,
-      borderWidth: 2,
-      borderSkipped: false,
-    };
-  });
-
-  // Also add p50 as scatter overlay
-  const p50Dataset = {
-    type: 'scatter',
-    label: 'p50 (median)',
-    data: details.map(sc => ({ x: sc.name, y: parseFloat((sc.coverage.p50 * 100).toFixed(1)) })),
-    backgroundColor: '#ECEFF4',
-    pointRadius: 6,
-    pointHoverRadius: 8,
-    showLine: false,
-  };
-
-  _compChart = new Chart(ctx, {
-    type: 'bar',
-    data: { datasets: [...datasets, p50Dataset] },
-    options: {
-      responsive: true,
-      plugins: {
-        legend: { labels: { color: '#8BA5C0' } },
-        tooltip: { callbacks: { label: ctx => {
-          if (Array.isArray(ctx.parsed.y)) return `${ctx.dataset.label}: p10=${ctx.parsed.y[0]}% – p90=${ctx.parsed.y[1]}%`;
-          return `${ctx.dataset.label}: ${ctx.parsed.y}%`;
-        }}}
-      },
-      scales: {
-        x: { ticks: { color: '#8BA5C0' }, grid: { color: 'rgba(255,255,255,0.04)' } },
-        y: {
-          min: 0, max: 100,
-          ticks: { color: '#8BA5C0', callback: v => v + '%' },
-          grid: { color: 'rgba(255,255,255,0.07)' },
-          title: { display: true, text: 'Coverage %', color: '#8BA5C0' }
-        }
-      }
-    }
-  });
-}
+function _renderCompareChart() {}
 
 function _renderCompareTable(details) {
-  const container = document.getElementById('sc-comp-table');
-  const COLORS = ['#3498DB','#E8850A','#2ECC71','#9B59B6','#E74C3C','#1ABC9C'];
+  const container = document.getElementById('sc-compare-table-container');
+  if (!container) return;
 
-  // Collect all skills from all scenarios
-  const allSkills = new Set();
-  details.forEach(sc => { if (sc.skill_breakdown) Object.keys(sc.skill_breakdown).forEach(s => allSkills.add(s)); });
+  // 1. Identify all unique months across selected scenarios
+  const allMonthsSet = new Set();
+  details.forEach(sc => {
+      if (sc.comparison_data && sc.comparison_data.months) {
+          sc.comparison_data.months.forEach(m => allMonthsSet.add(m));
+      }
+  });
+  // Sort months chronologically
+  const sortedMonths = Array.from(allMonthsSet).sort((a, b) => new Date(a) - new Date(b));
 
-  const skillRows = [...allSkills].map(skill => {
-    const cells = details.map(sc => {
-      const sb = sc.skill_breakdown && sc.skill_breakdown[skill];
-      if (!sb) return '<td>—</td>';
-      const rc = _coverageClass(sb.p50);
-      return `<td class="${rc}">${(sb.p50*100).toFixed(1)}% <span class="sc-cmp-p10">(p10: ${(sb.p10*100).toFixed(1)}%)</span></td>`;
-    }).join('');
-    return `<tr><td class="sc-cmp-skill">${skill}</td>${cells}</tr>`;
-  }).join('');
+  // 2. Build row data
+  const rows = [];
+  const totals = { base: 0, scenarios: details.map(() => 0), imbalances: details.map(() => 0) };
+
+  sortedMonths.forEach(m => {
+      // Find base plan value (Base Available FTE)
+      let baseVal = 0;
+      details.forEach(sc => {
+          if (!sc.comparison_data) return;
+          const idx = sc.comparison_data.months.indexOf(m);
+          if (idx !== -1) {
+              baseVal = sc.comparison_data.current_fte[idx];
+          }
+      });
+
+      const scValues = details.map(sc => {
+          if (!sc.comparison_data) return baseVal;
+          const idx = sc.comparison_data.months.indexOf(m);
+          return idx !== -1 ? sc.comparison_data.scenario_fte_avail[idx] : baseVal;
+      });
+
+      const imbalances = scValues.map(v => v - baseVal);
+
+      // Check if any scenario differs from base plan
+      const differs = imbalances.some(imb => Math.abs(imb) > 0.01);
+      
+      if (differs) {
+          const row = { month: m, base: baseVal, values: scValues, imbalances: imbalances };
+          rows.push(row);
+          
+          // Update totals
+          totals.base += baseVal;
+          scValues.forEach((v, i) => totals.scenarios[i] += v);
+          imbalances.forEach((imb, i) => totals.imbalances[i] += imb);
+      }
+  });
+
+  if (rows.length === 0) {
+      container.innerHTML = `<div class="empty-state">No differences in Available FTE found across the selected date ranges.</div>`;
+      return;
+  }
+
+  // 3. Render Table
+  const scenarioHeaders = details.map(sc => `<th>${sc.name} (Avail)</th>`).join('');
+  const imbalanceHeaders = details.map(sc => `<th>${sc.name} Adj</th>`).join('');
+
+  const tableBody = rows.map(r => `
+    <tr>
+      <td>${r.month}</td>
+      <td>${r.base.toFixed(1)}</td>
+      ${r.values.map(v => `<td>${v.toFixed(1)}</td>`).join('')}
+      ${r.imbalances.map(imb => {
+          const cls = imb > 0 ? 'sc-imbalance-neg' : (imb < 0 ? 'sc-imbalance-pos' : ''); // Swapped colors: extra availability is green (neg), loss is red (pos) - wait.
+          // Actually if Scen > Base, Imbalance is positive. For Available FTE, more is usually good (Green).
+          const cls_fixed = imb > 0 ? 'sc-imbalance-neg' : (imb < 0 ? 'sc-imbalance-pos' : '');
+          // Wait, let's stick to: Positive difference = green, Negative difference = red for Available FTE.
+          // Previously: pos imb = red (more required).
+          // Now: pos imb = green (more available).
+          const sign = imb > 0 ? '+' : '';
+          return `<td class="${imb > 0 ? 'sc-imbalance-neg' : (imb < 0 ? 'sc-imbalance-pos' : '')}">${sign}${imb.toFixed(1)}</td>`;
+      }).join('')}
+    </tr>
+  `).join('');
 
   container.innerHTML = `
-    <table class="data-table">
-      <thead>
+    <table class="sc-compare-table">
+      <thead class="sc-sticky-header">
         <tr>
-          <th>Metric</th>
-          ${details.map((sc, i) => `<th style="color:${COLORS[i % COLORS.length]}">${sc.name}</th>`).join('')}
+          <th>Month</th>
+          <th>Base Available</th>
+          ${scenarioHeaders}
+          ${imbalanceHeaders}
         </tr>
       </thead>
       <tbody>
-        <tr><td>p50 Coverage</td>${details.map(sc => `<td><strong>${(sc.coverage.p50*100).toFixed(1)}%</strong></td>`).join('')}</tr>
-        <tr><td>p10 Coverage</td>${details.map(sc => `<td>${(sc.coverage.p10*100).toFixed(1)}%</td>`).join('')}</tr>
-        <tr><td>p90 Coverage</td>${details.map(sc => `<td>${(sc.coverage.p90*100).toFixed(1)}%</td>`).join('')}</tr>
-        <tr><td>Prob. Adequate</td>${details.map(sc => `<td>${(sc.prob_adequate*100).toFixed(1)}%</td>`).join('')}</tr>
-        <tr><td>Risk Score</td>${details.map(sc => `<td class="sc-risk-${_riskClass(sc.risk_level)}">${sc.risk_score.toFixed(0)}</td>`).join('')}</tr>
-        <tr><td>Risk Level</td>${details.map(sc => `<td><span class="sc-risk-badge sc-risk-${_riskClass(sc.risk_level)}">${sc.risk_level}</span></td>`).join('')}</tr>
-        <tr><td colspan="${details.length+1}" class="sc-divider">Per-Skill p50 Coverage</td></tr>
-        ${skillRows}
+        ${tableBody}
       </tbody>
+      <tfoot class="sc-sticky-footer">
+        <tr>
+          <td>TOTAL</td>
+          <td>${totals.base.toFixed(1)}</td>
+          ${totals.scenarios.map(v => `<td>${v.toFixed(1)}</td>`).join('')}
+          ${totals.imbalances.map(imb => {
+              const sign = imb > 0 ? '+' : '';
+              return `<td>${sign}${imb.toFixed(1)}</td>`;
+          }).join('')}
+        </tr>
+      </tfoot>
     </table>
   `;
 }
 
+
+
 /* ── Normalize API shapes ── */
-// run endpoint returns {id, name, base_date, status, results:{coverage,histogram,...}}
-// list endpoint returns {id, name, p50_coverage, p10_coverage, risk_score, ...}
-// We normalize both to a flat shape for rendering.
 function _normalizeScenario(raw) {
   if (raw.results) {
-    // Full scenario from run/get endpoint
     const r = raw.results;
     return {
       ...raw,
       coverage: r.coverage,
-      coverage_histogram: r.histogram,
-      skill_breakdown: r.skill_breakdown,
+      monthly_risk: r.monthly_risk,
+      monthly_fte_breakdown: r.monthly_fte_breakdown,
+      comparison_data: r.comparison_data,
       risk_score: r.risk_score,
       risk_level: r.risk_level,
-      prob_adequate: r.prob_adequate,
-      prob_critical: r.prob_critical,
+      average_utilisation: r.average_utilisation,
       n_runs: r.n_runs,
-      p50: r.coverage ? r.coverage.p50 : 0,
-      p10: r.coverage ? r.coverage.p10 : 0,
+      p50: r.median_coverage || 0,
+      overall_coverage: r.overall_coverage || r.median_coverage || 0
     };
   }
-  // List summary from GET /api/scenarios
   return {
     ...raw,
     p50: raw.p50_coverage || 0,
-    p10: raw.p10_coverage || 0,
+    average_utilisation: raw.average_utilisation || 0,
     n_runs: raw.n_runs || 0,
   };
 }

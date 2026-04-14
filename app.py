@@ -1118,7 +1118,7 @@ def get_staff_for_date(date_str):
     """Return (on_duty_list, absent_list) for the given date string."""
     # Parse date_str
     d = None
-    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%b-%Y', '%d-%m-%y', '%d-%m-%Y'):
+    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%m-%Y', '%d-%m-%y', '%d-%m-%Y'):
         try:
             d = datetime.strptime(date_str.strip(), fmt)
             break
@@ -1538,7 +1538,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
     # Parse date
     d = None
-    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%b-%Y', '%d-%m-%y'):
+    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%m-%Y', '%d-%m-%y'):
         try:
             d = datetime.strptime(date_str.strip(), fmt)
             break
@@ -2081,28 +2081,18 @@ _scenario_seq = [0]      # auto-increment id counter
 
 DEFAULT_CONSTRAINTS = {
     # ── Demand-side ─────────────────────────────────────────────────────────
-    'demand_cv':            0.08,   # CV of flight-demand multiplier ~ N(1, cv)
-    'surge_probability':    0.05,   # P(surge event on this day) — match, bank holiday, etc.
-    'surge_demand_factor':  1.35,   # demand multiplier applied during a surge event
-    'airline_punctuality':  0.75,   # fraction of flights on time; lower → task bunching
-                                    #   bunching_mult = 1 + (1 − punctuality) × 0.25
+    'surge_demand_factor':  1.0,    # Demand multiplier
+    
     # ── Supply-side: staffing ────────────────────────────────────────────────
-    'absence_rate':         0.06,   # mean fraction of staff absent on any given day
+    'staff_utilisation':    0.80,   # target staff utilization
+    'absence_rate':         0.06,   # mean fraction of staff absent
     'absence_cv':           0.02,   # CV of absence rate
-    'overtime_daily_hrs':   0,      # OT hours available per staff per day (capped by min_rest)
-    'min_rest_hrs':         11,     # min rest between shifts (limits usable overtime)
-    'cross_training_rate':  0.15,   # fraction of each skill pool cross-trained in ≥1 other skill
-                                    #   creates a shared flex pool = cross_rate × total_avail
-    'new_hire_fraction':    0.00,   # fraction of workforce who are new hires (70% productive)
-    'fatigue_factor':       0.00,   # sustained fatigue penalty on capacity (0.0 – 0.20)
+    'cross_training_rate':  0.15,   # fraction of each skill pool cross-trained
+    'new_hire_fraction':    0.00,   # fraction of workforce who are new hires
     'contractor_staff':     {'GNIB': 0, 'CBP Pre-clearance': 0, 'Bussing': 0,
                              'PBZ': 0, 'Mezz Operation': 0, 'Litter Picking': 0},
-                                    # agency/contract staff per skill; attend at 85% ± 10% reliability
     'extra_staff':          {'GNIB': 0, 'CBP Pre-clearance': 0, 'Bussing': 0,
                              'PBZ': 0, 'Mezz Operation': 0, 'Litter Picking': 0},
-                                    # permanent additional hires per skill (100% reliable)
-    # ── Task-side ────────────────────────────────────────────────────────────
-    'duration_cv':          0.10,   # CV of task-duration multiplier ~ N(1, cv)
     # ── Simulation ───────────────────────────────────────────────────────────
     'n_runs':               500,
 }
@@ -2161,208 +2151,202 @@ def _extract_baseline(result):
     return dict(skill_req), dict(skill_avail)
 
 
-def run_monte_carlo(base_date, constraints, n_runs=500):
-    """
-    Monte Carlo simulation for a given date and constraint set.
+def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
+    demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
+    
+    # Filter weeks based on date range
+    try:
+        s_date = _dt.strptime(start_date, '%Y-%m-%d')
+        e_date = _dt.strptime(end_date, '%Y-%m-%d')
+    except Exception as e:
+        return {'error': f'Invalid date format: {e}'}
+    
+    if s_date > e_date:
+        return {'error': 'Invalid date range'}
 
-    Per-run stochastic model
-    ────────────────────────
-    demand_f   ~ N(1, demand_cv)                      flight demand multiplier
-    absence_f  ~ N(absence_rate, absence_cv)          fraction of staff absent
-    duration_f ~ N(1, duration_cv)                    task-duration multiplier
-    surge      ~ Bernoulli(surge_probability)         if True: demand_f *= surge_demand_factor
-    contractor_f ~ N(0.85, 0.10)                      contractor attendance rate
+    included_weeks = []
+    # Identify weeks
+    for wk_key in staff_req.keys():
+        try:
+            year_str, w_str = wk_key.split('-W')
+            wk_d = _dt.strptime(f'{year_str}-W{int(w_str):02d}-1', '%G-W%V-%u')
+        except:
+            continue
+        if s_date <= wk_d <= e_date:
+            included_weeks.append(wk_key)
 
-    For each skill pool:
-      req_sk    = base_req × demand_f × duration_f × bunching_mult
-      perm_sk   = (base_avail + extra × SHIFT + OT_mins) × (1 − absence_f)
-                                                       × new_hire_productivity × (1 − fatigue)
-      contr_sk  = contractor_staff × SHIFT × contractor_f × (1 − fatigue)
-      flex_sk   = cross_training_rate × Σ(perm_other_sk) / n_skills  [shared flex pool]
-      avail_sk  = perm_sk + contr_sk + flex_sk
+    included_weeks.sort() # Ensure chronological order for month map and charts
 
-    bunching_mult = 1 + (1 − airline_punctuality) × 0.25
-    new_hire_productivity = 1 − new_hire_fraction × 0.30
-    OT_mins = min(overtime_daily_hrs, 24 − 12 − min_rest_hrs) × 60 × n_staff_sk
-    """
-    SHIFT_MINS            = 720    # gross 12-hr shift minutes
-    NEW_HIRE_PENALTY      = 0.30   # new hires deliver 70% of a seasoned staff member
-    CONTRACTOR_RELIABILITY_MEAN = 0.85
-    CONTRACTOR_RELIABILITY_STD  = 0.10
-    BUNCHING_SENSITIVITY  = 0.25   # 1% drop in punctuality → +0.25% required staff-mins
+    if not included_weeks:
+        return {'error': 'No data found for the selected date range'}
 
-    # ── Run baseline optimiser ───────────────────────────────────────────────
-    result = optimize_day(base_date)
-    if 'error' in result:
-        return result
-
-    skill_req_base, skill_avail_base = _extract_baseline(result)
-    if not skill_req_base:
-        return {'error': 'No task data found for this date'}
-
-    skills = sorted(skill_req_base.keys())
-
-    # ── Extract constraint parameters ────────────────────────────────────────
-    extra_staff      = constraints.get('extra_staff', {})
+    surge_factor = float(constraints.get('surge_demand_factor', 1.0))
+    target_util  = float(constraints.get('staff_utilisation', 0.80))
+    absence_rate = float(constraints.get('absence_rate', 0.06))
+    absence_cv   = float(constraints.get('absence_cv', 0.02))
+    cross_rate   = float(constraints.get('cross_training_rate', 0.15))
+    new_hire_frac= float(constraints.get('new_hire_fraction', 0.00))
     contractor_staff = constraints.get('contractor_staff', {})
+    extra_staff      = constraints.get('extra_staff', {})
 
-    demand_cv       = float(constraints.get('demand_cv',           0.08))
-    absence_rate    = float(constraints.get('absence_rate',        0.06))
-    absence_cv      = float(constraints.get('absence_cv',          0.02))
-    duration_cv     = float(constraints.get('duration_cv',         0.10))
-    surge_prob      = float(constraints.get('surge_probability',   0.05))
-    surge_factor    = float(constraints.get('surge_demand_factor', 1.35))
-    punctuality     = float(constraints.get('airline_punctuality', 0.75))
-    overtime_hrs    = float(constraints.get('overtime_daily_hrs',  0))
-    min_rest        = float(constraints.get('min_rest_hrs',        11))
-    cross_rate      = float(constraints.get('cross_training_rate', 0.15))
-    new_hire_frac   = float(constraints.get('new_hire_fraction',   0.00))
-    fatigue_f       = float(constraints.get('fatigue_factor',      0.00))
+    new_hire_prod = 1.0 - max(0.0, min(1.0, new_hire_frac)) * 0.30
 
-    # ── Derived constants (computed once, outside the loop) ──────────────────
-    # Bunching multiplier: lower punctuality increases effective demand
-    bunching_mult = 1.0 + (1.0 - max(0.0, min(1.0, punctuality))) * BUNCHING_SENSITIVITY
+    skills = ['GNIB', 'CBP Pre-clearance', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking']
+    
+    # Group weeks by month
+    month_map = defaultdict(list)
+    for wk in included_weeks:
+        year_str, w_str = wk.split('-W')
+        wk_d = _dt.strptime(f'{year_str}-W{int(w_str):02d}-1', '%G-W%V-%u')
+        mk = wk_d.strftime('%b %Y')
+        month_map[mk].append(wk)
+        
+    monthly_risk = {}
+    monthly_fte_breakdown = {}
+    overall_coverage_runs = []
+    overall_util_runs = []
+    
+    comparison_data = {
+        'months': [],
+        'demand_fte': [],
+        'scenario_fte_req': [],
+        'scenario_fte_avail': [],
+        'current_fte': []
+    }
 
-    # New-hire productivity multiplier
-    new_hire_prod = 1.0 - max(0.0, min(1.0, new_hire_frac)) * NEW_HIRE_PENALTY
-
-    # Fatigue cap
-    fatigue_f = max(0.0, min(0.20, fatigue_f))
-
-    # Overtime: cap by rest constraint so shift + OT + rest ≤ 24 hrs
-    shift_hrs    = SHIFT_MINS / 60.0      # 12 hrs
-    max_ot_hrs   = max(0.0, 24.0 - shift_hrs - min_rest)
-    ot_hrs_used  = min(overtime_hrs, max_ot_hrs)
-    ot_mins_each = ot_hrs_used * 60.0     # OT minutes per staff member
-
-    # Staff count per skill (for overtime calculation)
-    staff_count_by_skill = defaultdict(int)
-    for s in result.get('staff', []):
-        staff_count_by_skill[s['skill1']] += 1
-
-    # Permanent available pool: base + extra staff + overtime capacity
-    perm_base = {}
-    for sk in skills:
-        extra_mins = extra_staff.get(sk, 0) * SHIFT_MINS
-        ot_pool    = staff_count_by_skill.get(sk, 0) * ot_mins_each
-        perm_base[sk] = skill_avail_base.get(sk, 0) + extra_mins + ot_pool
-
-    # Contractor pool (max capacity, attendance stochastic per run)
-    contr_base = {}
-    for sk in skills:
-        contr_base[sk] = contractor_staff.get(sk, 0) * SHIFT_MINS
-
-    # ── Simulation loop ──────────────────────────────────────────────────────
-    coverage_runs  = []
-    gap_fte_runs   = []
-    skill_cov_runs = defaultdict(list)
-
-    for _ in range(n_runs):
-        # Stochastic draws
-        demand_f   = max(0.5, _rnorm(1.0, demand_cv))
-        absence_f  = max(0.0, min(0.6, _rnorm(absence_rate, absence_cv)))
-        duration_f = max(0.5, _rnorm(1.0, duration_cv))
-        contr_f    = max(0.4, min(1.0, _rnorm(CONTRACTOR_RELIABILITY_MEAN,
-                                               CONTRACTOR_RELIABILITY_STD)))
-
-        # Surge event (Bernoulli)
-        if random.random() < surge_prob:
-            demand_f = min(demand_f * surge_factor, 3.0)
-
-        # Per-skill permanent available after absence, new-hire penalty, fatigue
-        sk_perm = {}
-        for sk in skills:
-            sk_perm[sk] = (perm_base[sk]
-                           * (1.0 - absence_f)
-                           * new_hire_prod
-                           * (1.0 - fatigue_f))
-
-        # Cross-training flex pool: fraction of total permanent capacity that is
-        # flexibly deployable across all skills (distributed equally)
-        total_perm = sum(sk_perm.values())
-        flex_per_skill = (total_perm * cross_rate) / len(skills) if skills else 0.0
-
-        total_req   = 0.0
-        total_avail = 0.0
-
-        for sk in skills:
-            # Required: base × demand × duration bunching
-            req_sk = skill_req_base[sk] * demand_f * duration_f * bunching_mult
-
-            # Available: permanent + contractor (stochastic) + flex cross-training
-            contr_sk = contr_base[sk] * contr_f * (1.0 - fatigue_f)
-            avail_sk = sk_perm[sk] + contr_sk + flex_per_skill
-
-            total_req   += req_sk
-            total_avail += avail_sk
-            skill_cov_runs[sk].append(
-                min(avail_sk / req_sk, 1.0) if req_sk > 0 else 1.0
-            )
-
-        cov = min(total_avail / total_req, 1.0) if total_req > 0 else 1.0
-        gap_fte = max(0, (total_req - total_avail) / SHIFT_MINS)
-        coverage_runs.append(cov)
-        gap_fte_runs.append(gap_fte)
-
-    # Statistics
     def stats(data):
         n = len(data)
-        mean = sum(data) / n
-        variance = sum((x - mean) ** 2 for x in data) / n
+        if n == 0: return {'mean': 0, 'p10': 0, 'p50': 0, 'p90': 0}
+        s = sorted(data)
         return {
-            'mean':  round(mean, 4),
-            'std':   round(math.sqrt(variance), 4),
-            'p10':   round(_percentile(data, 10), 4),
-            'p25':   round(_percentile(data, 25), 4),
-            'p50':   round(_percentile(data, 50), 4),
-            'p75':   round(_percentile(data, 75), 4),
-            'p90':   round(_percentile(data, 90), 4),
+            'mean': sum(s)/n,
+            'p10': _percentile(s, 10),
+            'p50': _percentile(s, 50),
+            'p90': _percentile(s, 90)
         }
 
-    cov_stats = stats(coverage_runs)
-    gap_stats = stats(gap_fte_runs)
+    for month_label, weeks in month_map.items():
+        month_cov_runs = []
+        month_skill_cov = defaultdict(list)
+        
+        month_base_req = 0
+        month_base_avail = 0
+        month_scen_req = 0
+        month_scen_avail = 0
 
-    prob_adequate = sum(1 for c in coverage_runs if c >= 0.80) / n_runs
-    prob_critical = sum(1 for c in coverage_runs if c < 0.50) / n_runs
+        month_sk_exp_req = {sk: 0 for sk in skills}
+        month_sk_exp_avail = {sk: 0 for sk in skills}
+        month_sk_base_req = {sk: 0 for sk in skills}
+        month_sk_base_avail = {sk: 0 for sk in skills}
 
-    # Risk score 0–100 (higher = riskier)
-    raw_risk = ((1 - cov_stats['p50']) * 40
-                + (1 - cov_stats['p10']) * 40
-                + prob_critical * 20)
+        for wk in weeks:
+            req_sk = skill_req.get(wk, {})
+            avail_sk = skill_avail.get(wk, {})
+            
+            wk_base_req = sum(req_sk.get(sk, 0) for sk in skills)
+            wk_base_avail = sum(avail_sk.get(sk, 0) for sk in skills)
+            month_base_req += wk_base_req
+            month_base_avail += wk_base_avail
+
+            for _ in range(n_runs):
+                absence_f = max(0.0, min(0.6, _rnorm(absence_rate, absence_cv)))
+                contr_f = max(0.4, min(1.0, _rnorm(0.85, 0.10)))
+                
+                run_scen_req = 0
+                run_scen_avail = 0
+                
+                sk_perm = {}
+                for sk in skills:
+                    base = avail_sk.get(sk, 0) + extra_staff.get(sk, 0)
+                    sk_perm[sk] = base * (1.0 - absence_f) * new_hire_prod * target_util
+                
+                total_perm = sum(sk_perm.values())
+                flex_per_skill = (total_perm * cross_rate) / len(skills) if skills else 0.0
+
+                for sk in skills:
+                    r = req_sk.get(sk, 0) * surge_factor
+                    c_avail = contractor_staff.get(sk, 0) * contr_f * target_util
+                    a = sk_perm[sk] + c_avail + flex_per_skill
+                    
+                    run_scen_req += r
+                    run_scen_avail += a
+                    
+                    cov = min(a / r, 1.0) if r > 0 else 1.0
+                    month_skill_cov[sk].append(cov)
+
+                wk_cov = min(run_scen_avail / run_scen_req, 1.0) if run_scen_req > 0 else 1.0
+                wk_util = min(run_scen_req / run_scen_avail, 1.0) if run_scen_avail > 0 else 1.0
+                month_cov_runs.append(wk_cov)
+                overall_coverage_runs.append(wk_cov)
+                overall_util_runs.append(wk_util)
+
+            wk_exp_req = 0
+            wk_exp_avail = 0
+            for sk in skills:
+                wk_sk_base_req = req_sk.get(sk, 0)
+                month_sk_base_req[sk] += wk_sk_base_req
+                
+                wk_sk_req = wk_sk_base_req * surge_factor
+                wk_sk_avail = ((avail_sk.get(sk, 0) + extra_staff.get(sk, 0)) * (1.0 - absence_rate) * new_hire_prod * target_util) + (contractor_staff.get(sk, 0) * 0.85 * target_util)
+                month_sk_exp_req[sk] += wk_sk_req
+                month_sk_exp_avail[sk] += wk_sk_avail
+                wk_sk_base_avail = avail_sk.get(sk, 0)
+                month_sk_base_avail[sk] += wk_sk_base_avail
+                
+                wk_exp_req += wk_sk_req
+                wk_exp_avail += wk_sk_avail
+
+            month_scen_req += wk_exp_req
+            month_scen_avail += wk_exp_avail
+            
+        wn = len(weeks)
+        if wn > 0:
+            comparison_data['months'].append(month_label)
+            comparison_data['demand_fte'].append(month_base_req / wn)
+            comparison_data['scenario_fte_req'].append(month_scen_req / wn)
+            comparison_data['scenario_fte_avail'].append(month_scen_avail / wn)
+            comparison_data['current_fte'].append(month_base_avail / wn)
+
+        monthly_risk[month_label] = {}
+        for sk in skills:
+            st = stats(month_skill_cov[sk])
+            rs = max(0, min(100, ((1 - st['p50']) * 40 + (1 - st['p10']) * 40) * 100))
+            rl = 'Low' if rs < 20 else 'Medium' if rs < 45 else 'High' if rs < 65 else 'Critical'
+            monthly_risk[month_label][sk] = {
+                'p50': st['p50'],
+                'risk_score': rs,
+                'risk_level': rl
+            }
+            
+        monthly_fte_breakdown[month_label] = {
+            'req': {sk: month_sk_exp_req[sk] / wn for sk in skills},
+            'avail': {sk: month_sk_exp_avail[sk] / wn for sk in skills},
+            'base_req': {sk: month_sk_base_req[sk] / wn for sk in skills},
+            'base_avail': {sk: month_sk_base_avail[sk] / wn for sk in skills}
+        }
+
+    overall_cov_st = stats(overall_coverage_runs)
+    avg_util = sum(overall_util_runs) / len(overall_util_runs) if overall_util_runs else 0
+    
+    prob_critical = sum(1 for c in overall_coverage_runs if c < 0.50) / len(overall_coverage_runs) if overall_coverage_runs else 0
+    raw_risk = ((1 - overall_cov_st['p50']) * 40 + (1 - overall_cov_st['p10']) * 40 + prob_critical * 20)
     risk_score = round(max(0, min(100, raw_risk * 100)), 1)
-    if   risk_score < 20: risk_level = 'Low'
+    if risk_score < 20: risk_level = 'Low'
     elif risk_score < 45: risk_level = 'Medium'
     elif risk_score < 65: risk_level = 'High'
-    else:                  risk_level = 'Critical'
-
-    # Per-skill breakdown
-    skill_breakdown = {}
-    for sk in skills:
-        sc = stats(skill_cov_runs[sk])
-        rs = round(max(0, min(100, ((1 - sc['p50']) * 40 + (1 - sc['p10']) * 40) * 100)), 1)
-        rl = 'Low' if rs < 20 else 'Medium' if rs < 45 else 'High' if rs < 65 else 'Critical'
-        skill_breakdown[sk] = {
-            'p10': sc['p10'], 'p50': sc['p50'], 'p90': sc['p90'],
-            'risk_score': rs, 'risk_level': rl,
-            'base_required_mins': round(skill_req_base.get(sk, 0), 0),
-            'base_available_mins': round(perm_base.get(sk, 0), 0),
-        }
-
+    else: risk_level = 'Critical'
+    
     return {
-        'n_runs':          n_runs,
-        'coverage':        cov_stats,
-        'gap_fte':         gap_stats,
-        'prob_adequate':   round(prob_adequate, 4),
-        'prob_critical':   round(prob_critical, 4),
-        'risk_score':      risk_score,
-        'risk_level':      risk_level,
-        'histogram':       _histogram(coverage_runs),
-        'skill_breakdown': skill_breakdown,
-        'baseline': {
-            'staff_on_duty': result['kpis']['staff_on_duty'],
-            'total_flights': result['kpis']['total_flights'],
-            'base_coverage': round(result['kpis']['coverage_pct'] / 100, 4),
-        },
+        'n_runs': n_runs,
+        'coverage': overall_cov_st,
+        'average_utilisation': avg_util,
+        'overall_coverage': overall_cov_st['mean'],
+        'median_coverage': overall_cov_st['p50'],
+        'risk_score': risk_score,
+        'risk_level': risk_level,
+        'monthly_risk': monthly_risk,
+        'monthly_fte_breakdown': monthly_fte_breakdown,
+        'comparison_data': comparison_data
     }
 
 
@@ -2379,11 +2363,12 @@ def list_scenarios():
             'status':      sc['status'],
             'created_at':  sc['created_at'],
             'base_date':   sc['base_date'],
+            'start_date':  sc.get('start_date', sc['base_date']),
+            'end_date':    sc.get('end_date', sc['base_date']),
             'risk_score':  r.get('risk_score'),
             'risk_level':  r.get('risk_level'),
-            'p50_coverage': r.get('coverage', {}).get('p50'),
-            'p10_coverage': r.get('coverage', {}).get('p10'),
-            'prob_critical': r.get('prob_critical'),
+            'p50_coverage': r.get('median_coverage'),
+            'average_utilisation': r.get('average_utilisation'),
             'n_runs':      r.get('n_runs'),
             'constraints': sc['constraints'],
         })
@@ -2394,7 +2379,9 @@ def list_scenarios():
 def run_scenario():
     body = request.get_json(force=True) or {}
     name       = body.get('name', f'Scenario {_scenario_seq[0]+1}').strip() or f'Scenario {_scenario_seq[0]+1}'
-    base_date  = body.get('base_date', datetime.now().strftime('%Y-%m-%d'))
+    start_date = body.get('start_date', _dt.now().strftime('%Y-%m-%d'))
+    end_date   = body.get('end_date', _dt.now().strftime('%Y-%m-%d'))
+    base_date  = _dt.now().strftime('%Y-%m-%d')
     constraints = {**DEFAULT_CONSTRAINTS, **body.get('constraints', {})}
     # Merge dict-valued constraints carefully so partial overrides work
     body_constraints = body.get('constraints', {})
@@ -2408,7 +2395,7 @@ def run_scenario():
     }
     n_runs = int(constraints.get('n_runs', 500))
 
-    results = run_monte_carlo(base_date, constraints, n_runs)
+    results = run_scenario_projection(start_date, end_date, constraints, n_runs)
     if 'error' in results:
         return jsonify(results), 400
 
@@ -2420,6 +2407,8 @@ def run_scenario():
         'status':      'active',
         'created_at':  _dt.now().strftime('%Y-%m-%dT%H:%M:%S'),
         'base_date':   base_date,
+        'start_date':  start_date,
+        'end_date':    end_date,
         'constraints': constraints,
         'results':     results,
     }
