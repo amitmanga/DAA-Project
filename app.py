@@ -1174,7 +1174,8 @@ def get_staff_for_date(date_str, custom_constraints=None):
     shift_duration_hrs = int(custom_constraints.get('shift_duration_hrs', 12))
     shift_duration_mins = shift_duration_hrs * 60
 
-    # Current Day
+    # Operational Window for STAFF: [04:00 Today, 04:00 Tomorrow]
+    # We assign shifts that START in this window.
     for r in day_staff:
         emp_id = r.get('EMPLOYEE NUMBER', '').strip()
         skill1 = r.get('Skill1', '').strip()
@@ -1187,55 +1188,20 @@ def get_staff_for_date(date_str, custom_constraints=None):
 
         digits = ''.join(c for c in emp_id if c.isdigit())
         if digits and int(digits) % 2 == 1:
+            # Day Shift: 04:00 to 16:00
             st, lb = 240, 'Day Shift'
         else:
+            # Night Shift: 16:00 to 04:00 next day
             st, lb = 960, 'Night Shift'
+            
         en = st + shift_duration_mins
         on_duty.append({
             'id': emp_id, 'skill1': skill1, 'skill2': skill2,
             'employment': employment, 'shift': lb.upper().replace(' SHIFT',''),
             'shift_start': st, 'shift_end': en,
-            'shift_label': f"{lb} {mins_to_time(st)}–{mins_to_time(en)}",
+            'shift_label': f"{lb} {mins_to_time(st)}–{mins_to_time(en if en < 1440 else en-1440)}",
             'assignments': [], 'breaks': [], 'utilisation_pct': 0
         })
-
-    # Previous Day Carry-over (Night shifts that cross midnight)
-    prev_d = d - timedelta(days=1)
-    prev_key = prev_d.strftime('%d-%m-%Y')
-    path_staff = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
-    with open(path_staff, encoding='utf-8-sig') as f:
-        prev_day_rows = [r for r in csv.DictReader(f) if r.get('DATE','').strip() == prev_key and r.get('EMPLOYEE NUMBER','').strip()]
-    
-    # Check absences for the previous day too
-    prev_absent = set()
-    path_abs = os.path.join(BASE_DIR, 'data', 'Staff_absence_schedule.csv')
-    with open(path_abs, encoding='utf-8-sig') as f:
-        for a in csv.DictReader(f):
-            e_id = a.get('EMPLOYEE NUMBER','').strip()
-            df, dt = parse_date(a.get('DATE FROM','')), parse_date(a.get('DATE TO',''))
-            if df and dt and df <= prev_d <= dt:
-                if a.get('LEAVE TYPE','') in leave_types_excluded: prev_absent.add(e_id)
-
-    for r in prev_day_rows:
-        emp_id = r.get('EMPLOYEE NUMBER', '').strip()
-        if emp_id in prev_absent: continue
-        
-        digits = ''.join(c for c in emp_id if c.isdigit())
-        if digits and int(digits) % 2 == 0: # Only Night shifts
-            st = 960
-            en = st + shift_duration_mins
-            if en > 1440: # crosses midnight
-                on_duty.append({
-                    'id': f"{emp_id} (Carry-over)",
-                    'skill1': r.get('Skill1','').strip(),
-                    'skill2': r.get('Skill2','').strip(),
-                    'employment': r.get('EMPLOYMENT TYPE','').strip(),
-                    'shift': 'NIGHT',
-                    'shift_start': 0, 
-                    'shift_end': en - 1440,
-                    'shift_label': f"Carry-over from prev day (Ends {mins_to_time(en-1440)})",
-                    'assignments': [], 'breaks': [], 'utilisation_pct': 0
-                })
 
     return on_duty, absent_staff
 
@@ -1595,9 +1561,24 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     iso_date_key    = d.strftime('%Y-%m-%d')    # e.g. '2026-04-11'
     date_label      = d.strftime('%A %d %b %Y')
 
-    # Load flights for this date
+    # Load flights for the 24h window starting at 04:00
     all_flights = read_csv_flights()
-    flights_raw = [f for f in all_flights if f.get('date', '') == flight_date_key]
+    d_next = d + timedelta(days=1)
+    flight_date_key_next = d_next.strftime('%d-%b-%y')
+
+    flights_raw = []
+    for f in all_flights:
+        f_date = f.get('date','')
+        f_tm = f.get('time','00:00')
+        m = parse_time(f_tm)
+        
+        if f_date == flight_date_key and m >= 240:
+            flights_raw.append(f)
+        elif f_date == flight_date_key_next and m < 240:
+            # Normalize tomorrow's early morning flights to the end of our current 24h view
+            f_aug = f.copy()
+            f_aug['_tomorrow'] = True 
+            flights_raw.append(f_aug)
 
     # Apply overrides
     cancelled_set = set()

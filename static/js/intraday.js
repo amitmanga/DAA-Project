@@ -30,6 +30,15 @@ function formatMins(mins) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
+function normIDMins(m) {
+  return m < 240 ? m + 1440 : m;
+}
+
+function idPct(m) {
+  const nm = normIDMins(m);
+  return Math.max(0, Math.min(100, (nm - 240) / 1440 * 100));
+}
+
 function getCurrentTimeMins() {
   const now = new Date();
   return now.getHours() * 60 + now.getMinutes();
@@ -39,7 +48,15 @@ function startGateTimelineTimer() {
   if (ID_SIM_TIMER) return;
   if (ID_SIM_TIME == null) ID_SIM_TIME = getCurrentTimeMins();
   ID_SIM_TIMER = setInterval(() => {
-    ID_SIM_TIME = Math.min(1440, ID_SIM_TIME + (ID_SIM_SPEED * 0.5));
+    // Range is [240, 1680] effectively. 
+    // If it hits 240 (04:00 next day aka 1680), pause or stop.
+    let next = ID_SIM_TIME + (ID_SIM_SPEED * 0.5);
+    // If we were at 03:59 (239) and moved past 04:00 (240), that's the end.
+    if (ID_SIM_TIME < 240 && next >= 240) {
+      next = 240;
+      stopGateTimelineTimer();
+    }
+    ID_SIM_TIME = next;
     renderGateTimelineNowLine();
   }, 500);
 }
@@ -78,7 +95,7 @@ function renderGateTimelineNowLine() {
   const rtLabel = document.getElementById('id-rt-now-label');
   
   if (typeof ID_SIM_TIME !== 'number') return;
-  const left = Math.max(0, Math.min(100, (ID_SIM_TIME / 1440) * 100));
+  const left = idPct(ID_SIM_TIME);
   
   if (line) line.style.left = `${left.toFixed(2)}%`;
   const label = line ? line.querySelector('.gt-now-label') : null;
@@ -602,9 +619,9 @@ function renderIDSubContent() {
 
 function renderIDGateTimeline() {
   const flights = Array.isArray(ID_DATA.flights) ? ID_DATA.flights : [];
-  const TIME_START = 0;
-  const TIME_END = 1440;
-  const RANGE = TIME_END - TIME_START;
+  const TIME_START = 240;
+  const TIME_END = 1680;
+  const RANGE = 1440;
   const LEAD_MINS = 30;
   const TRAIL_MINS = 60;
 
@@ -645,7 +662,7 @@ function renderIDGateTimeline() {
   }
 
   function pct(mins) {
-    return Math.max(0, Math.min(100, (mins - TIME_START) / RANGE * 100));
+    return idPct(mins);
   }
 
   if (ID_SIM_TIME == null) {
@@ -692,9 +709,9 @@ function renderIDGateTimeline() {
   }
 
   const axisHtml = [];
-  for (let h = 0; h <= 24; h++) {
+  for (let h = 4; h <= 28; h++) {
     axisHtml.push(`
-      <div class="gt-hour-tick" style="left:${pct(h * 60).toFixed(2)}%">
+      <div class="gt-hour-tick" style="left:${((h - 4) / 24 * 100).toFixed(2)}%">
         <span class="gt-hour-label">${String(h % 24).padStart(2, '0')}</span>
         <div class="gt-hour-line"></div>
       </div>`);
@@ -788,8 +805,9 @@ function renderIDFlightsTable(flights) {
           ? 'badge-ok'
           : 'badge-warn';
 
+    const timeSuffix = f.time_mins < 240 ? ' <small style="opacity:0.6">+1</small>' : '';
     return `<tr class="${rowCls}" data-fn="${f.flight_no}" style="cursor:pointer">
-      <td class="time-cell">${f.sta} ${delayBadge}</td>
+      <td class="time-cell">${f.sta}${timeSuffix} ${delayBadge}</td>
       <td class="fn-cell">${f.flight_no}</td>
       <td class="route-cell">${f.origin_code} ${f.origin}</td>
       <td>${f.airline_name}</td>
@@ -1348,8 +1366,8 @@ function renderIDRosterTimeline() {
   });
 
   const axisTicks = [];
-  for (let h = 0; h <= 24; h++) {
-    const left = (h * 60) / 1440 * 100;
+  for (let h = 4; h <= 28; h++) {
+    const left = (h - 4) / 24 * 100;
     axisTicks.push(`
       <div class="rt-hour-tick" style="left:${left.toFixed(2)}%">
         <span class="rt-hour-label">${String(h % 24).padStart(2, '0')}</span>
@@ -1363,10 +1381,10 @@ function renderIDRosterTimeline() {
     const shiftWidth = (shiftEnd - shiftStart) / 1440 * 100;
     const shiftLeft = shiftStart / 1440 * 100;
 
-    const shiftBg = `<div class="rt-shift-bg" style="left:${shiftLeft}%; width:${shiftWidth}%" title="${s.shift_label}"></div>`;
+    const shiftBg = `<div class="rt-shift-bg" style="left:${idPct(shiftStart)}%; width:${(shiftWidth / 1440 * 100)}%" title="${s.shift_label}"></div>`;
 
     const tasks = (s.assignments || []).map(a => {
-      const left = a.start_mins / 1440 * 100;
+      const left = idPct(a.start_mins);
       const width = (a.end_mins - a.start_mins) / 1440 * 100;
       const color = stringToColor(a.task);
       const label = width > 2 ? a.task.split(' ')[0] : '';
@@ -1376,7 +1394,7 @@ function renderIDRosterTimeline() {
     }).join('');
 
     const bks = (s.breaks || []).map(b => {
-      const left = b.start_mins / 1440 * 100;
+      const left = idPct(b.start_mins);
       const width = (b.end_mins - b.start_mins) / 1440 * 100;
       const label = width > 3 ? 'Bk' : '';
       return `<div class="rt-block break" style="left:${left}%; width:${width}%" 
