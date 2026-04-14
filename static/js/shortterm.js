@@ -89,10 +89,11 @@ function renderShortTermDay() {
     <!-- Sub-tabs -->
     <div class="sub-tabs" style="margin-top:20px">
       <button class="sub-tab ${ST_ACTIVE_TAB==='flights'?'active':''}" data-sttab="flights">✈ Flights &amp; Tasks</button>
-      <button class="sub-tab ${ST_ACTIVE_TAB==='staff'?'active':''}" data-sttab="staff">👤 Staff Roster</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='staff'?'active':''}" data-sttab="staff">👥 Staff List</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='gate-timeline'?'active':''}" data-sttab="gate-timeline">🛬 Gate Timeline</button>
-
-      <button class="sub-tab ${ST_ACTIVE_TAB==='perf'?'active':''}" data-sttab="perf">📈 Performance Analysis</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='opt'?'active':''}" data-sttab="opt">⚙ Optimization</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='perf'?'active':''}" data-sttab="perf">📈 Performance</button>
     </div>
     <div id="st-sub-content"></div>
   `;
@@ -218,10 +219,304 @@ async function applySTRecommendation(btn) {
 function renderSTSubContent() {
   const el = document.getElementById('st-sub-content');
   if (ST_ACTIVE_TAB === 'flights') renderSTFlightsTab(el);
+  else if (ST_ACTIVE_TAB === 'staff') renderSTStaffTab(el);
+  else if (ST_ACTIVE_TAB === 'staff-timeline') renderSTRosterTimeline(el);
   else if (ST_ACTIVE_TAB === 'gate-timeline') renderSTGateTimeline(el);
-
+  else if (ST_ACTIVE_TAB === 'opt') renderSTOptimization(el);
   else if (ST_ACTIVE_TAB === 'perf') renderSTPerfChart(el);
-  else renderSTStaffTab(el);
+}
+
+// ── Roster Timeline Tab ──────────────────────────────────────────
+async function renderSTRosterTimeline(container) {
+  if (!ST_DATA) return;
+  
+  container.innerHTML = `
+    <div class="panel mt-16">
+      <div class="panel-title-row">
+        <span class="panel-title">Operational Roster Timeline — ${ST_DATA.date_label}</span>
+        <div class="filter-row">
+          <input class="search-input" id="st-staff-timeline-search" placeholder="Search staff ID / skill…" style="width:200px" />
+          <select id="st-staff-timeline-shift" class="select-input">
+            <option value="">All Shifts</option>
+            <option value="00:00 - 12:00">00:00 - 12:00</option>
+            <option value="12:00 - 00:00">12:00 - 24:00</option>
+            <option value="10:00 - 22:00">10:00 - 22:00</option>
+          </select>
+        </div>
+      </div>
+      <div id="st-staff-timeline" style="margin-top:20px; overflow-x:auto;"></div>
+    </div>
+  `;
+
+  const searchInput = document.getElementById('st-staff-timeline-search');
+  const shiftSelect = document.getElementById('st-staff-timeline-shift');
+  
+  const refreshTimeline = () => {
+    const q = searchInput.value.toLowerCase() || '';
+    const shiftFilter = shiftSelect.value || '';
+    const timelineEl = document.getElementById('st-staff-timeline');
+    if (!timelineEl) return;
+
+    function stringToColor(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      const h = Math.abs(hash) % 360;
+      return `hsl(${h}, 65%, 40%)`;
+    }
+
+    const filteredStaff = (ST_DATA.staff || []).filter(s => {
+      const mq = !q || s.id.toLowerCase().includes(q) || s.skill1.toLowerCase().includes(q);
+      const ms = !shiftFilter || s.shift.toLowerCase() === shiftFilter.toLowerCase();
+      return mq && ms;
+    });
+
+    const axisTicks = [];
+    for (let h = 0; h <= 24; h++) {
+      const left = (h * 60) / 1440 * 100;
+      axisTicks.push(`
+        <div class="rt-hour-tick" style="left:${left.toFixed(2)}%">
+          <span class="rt-hour-label">${String(h % 24).padStart(2, '0')}</span>
+          <div class="rt-hour-line"></div>
+        </div>`);
+    }
+
+    const rows = filteredStaff.map(s => {
+      const shiftStart = s.shift_start;
+      const shiftEnd = s.shift_end || shiftStart + 720;
+      const shiftWidth = ((shiftEnd - shiftStart) % 1441) / 1440 * 100;
+      const shiftLeft = (shiftStart / 1440) * 100;
+
+      const shiftBg = `<div class="rt-shift-bg" style="left:${shiftLeft}%; width:${shiftWidth}%" title="${s.shift_label}"></div>`;
+
+      const tasks = (s.assignments || []).map(a => {
+        const left = (a.start_mins / 1440) * 100;
+        const width = ((a.end_mins - a.start_mins) / 1440) * 100;
+        const color = ST_SKILL_COLOR[a.skill] || stringToColor(a.task);
+        const label = width > 2 ? a.task.split(' ')[0] : '';
+        const term = a.terminal ? `[${a.terminal}] ` : '';
+        return `<div class="rt-block" style="left:${left}%; width:${width}%; background:${color}" 
+                title="${a.task} ${term}(${a.start}-${a.end})">${label}</div>`;
+      }).join('');
+
+      const bks = (s.breaks || []).map(b => {
+        const left = (b.start_mins / 1440) * 100;
+        const width = ((b.end_mins - b.start_mins) / 1440) * 100;
+        const label = width > 3 ? 'Bk' : '';
+        return `<div class="rt-block break" style="left:${left}%; width:${width}%" 
+                title="${b.type} (${b.start}-${b.end})">${label}</div>`;
+      }).join('');
+
+      return `
+        <div class="rt-row">
+          <div class="rt-staff-label">
+            <div style="text-align:right">
+              <div style="font-weight:700; color:var(--text); line-height:1.1; font-size:0.75rem">${s.id}</div>
+              <div style="font-size:0.55rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.02em">${s.skill1}</div>
+            </div>
+          </div>
+          <div class="rt-track">
+            ${shiftBg}
+            ${tasks}
+            ${bks}
+          </div>
+        </div>`;
+    }).join('');
+
+    timelineEl.innerHTML = `
+      <div class="rt-container">
+        <div class="rt-chart">
+          <div class="rt-axis-row">
+            <div class="rt-staff-label-header"></div>
+            <div class="rt-axis-track">${axisTicks.join('')}</div>
+          </div>
+          ${rows}
+        </div>
+      </div>`;
+  };
+
+  searchInput.addEventListener('input', refreshTimeline);
+  shiftSelect.addEventListener('change', refreshTimeline);
+  refreshTimeline();
+}
+
+// ── Optimization Tab ─────────────────────────────────────────────
+async function renderSTOptimization(container) {
+  container.innerHTML = `
+    <div class="panel mt-20" style="max-width:900px; margin-left:auto; margin-right:auto;">
+      <div class="loading-spinner"><div class="spinner"></div><span>Loading planning constraints…</span></div>
+    </div>
+  `;
+
+  let constraints;
+  try {
+    const res = await fetch('/api/short-term/constraints');
+    constraints = await res.json();
+  } catch (e) {
+    container.innerHTML = `<div class="panel mt-20 alert-crit">Failed to load constraints API.</div>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="panel mt-20" style="max-width:100%; margin-left:10px; margin-right:10px; border-top: 4px solid #3498DB;">
+      <div class="panel-title-row" style="margin-bottom:24px; border-bottom:1px solid rgba(0,0,0,0.05); padding-bottom:16px;">
+        <div>
+          <h2 style="margin:0; font-size:1.4rem; color:#1a2744;">⚙ Resource Optimization Engine</h2>
+          <p style="margin:4px 0 0; color:#666; font-size:0.85rem;">Configure tactical planning constraints for ${ST_DATA.date_label}</p>
+        </div>
+        <button class="btn-primary" id="st-opt-update" style="padding:10px 24px; font-size:0.95rem; display:flex; align-items:center; gap:8px;">
+           <span style="font-size:1.1rem">⚡</span> Update Schedule
+        </button>
+      </div>
+
+      <div class="opt-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:20px;">
+        
+        <!-- Shifts & Breaks -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>⏱</span> Working Hours & Breaks
+          </div>
+          <div class="input-group" style="margin-bottom:12px">
+            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Shift Duration (Hrs)</label>
+            <input type="number" id="st-opt-shift-hrs" class="select-input" style="width:100%" value="${constraints.shift_duration_hrs || 12}" min="6" max="16"/>
+          </div>
+          <div class="input-group" style="margin-bottom:12px; display:flex; gap:12px;">
+            <div style="flex:1;">
+              <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Short Break (mins)</label>
+              <input type="number" id="st-opt-b1-dur" class="select-input" style="width:100%" value="${constraints.b1_duration_mins || 30}" min="15" max="60"/>
+            </div>
+            <div style="flex:1;">
+              <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Meal Break (mins)</label>
+              <input type="number" id="st-opt-b2-dur" class="select-input" style="width:100%" value="${constraints.b2_duration_mins || 60}" min="30" max="120"/>
+            </div>
+          </div>
+        </div>
+
+        <!-- Travel Times -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>🚶</span> Travel Time Buffers (mins)
+          </div>
+          <div class="input-group" style="margin-bottom:12px">
+            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">T1 to T2 Transfer (mins)</label>
+            <input type="number" id="st-opt-tt-t1-t2" class="select-input" style="width:100%" value="${constraints.tt_t1_t2 || 15}" min="0" max="60"/>
+          </div>
+          <div class="input-group">
+            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Skill Switch Transfer (mins)</label>
+            <input type="number" id="st-opt-tt-sk" class="select-input" style="width:100%" value="${constraints.tt_skill_switch || 10}" min="0" max="60"/>
+          </div>
+        </div>
+
+        <!-- Absences -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>🚫</span> Absence Exclusions
+          </div>
+          <div class="section-hint" style="font-size:0.75rem; margin-bottom:12px; color:#666;">Staff with selected leave types will not be rostered.</div>
+          <div id="st-opt-leave-toggles" style="display:flex; flex-direction:column; gap:8px;">
+            ${["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"].map(lt => `
+              <div class="input-group" style="display:flex; align-items:center; gap:12px;">
+                <input type="checkbox" id="st-chk-lt-${lt.replace(/\s+/g,'-')}" value="${lt}" style="width:18px;height:18px;accent-color:#3498DB;" 
+                  ${(constraints.leave_types_excluded || []).includes(lt) ? 'checked' : ''} />
+                <label for="st-chk-lt-${lt.replace(/\s+/g,'-')}" style="font-size:0.85rem; color:#333;">${lt}</label>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Permitted Shifts -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>📅</span> Permitted Shift Timings
+          </div>
+          <div id="st-opt-shift-toggles" style="display:flex; flex-direction:column; gap:8px;">
+            ${[
+              {label: '00:00 - 12:00', s: 0, e: 720},
+              {label: '12:00 - 24:00', s: 720, e: 1440},
+              {label: '10:00 - 22:00', s: 600, e: 1320},
+              {label: '4:00 - 16:00', s: 240, e: 960},
+              {label: '16:00 - 4:00', s: 960, e: 240}
+            ].map((sh, idx) => {
+              const isChecked = (constraints.permitted_shifts || []).some(ps => ps[0] === sh.s && ps[1] === sh.e) || 
+                                (!constraints.permitted_shifts && idx < 3);
+              return `
+                <div class="input-group" style="display:flex; align-items:center; gap:12px;">
+                  <input type="checkbox" class="shift-chk" id="st-chk-sh-${idx}" 
+                    data-label="${sh.label}" data-start="${sh.s}" data-end="${sh.e}"
+                    style="width:18px;height:18px;accent-color:#3498DB;" 
+                    ${isChecked ? 'checked' : ''} />
+                  <label for="st-chk-sh-${idx}" style="font-size:0.85rem; color:#333;">${sh.label}</label>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- Allocation Policy -->
+        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
+          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            <span>⚖</span> Assignment Logic
+          </div>
+          <div class="input-group" style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
+            <input type="checkbox" id="st-opt-prim-first" style="width:18px;height:18px;accent-color:#3498DB;" ${constraints.use_primary_first ? 'checked' : ''} />
+            <label for="st-opt-prim-first" style="font-size:0.85rem; color:#333;">Prioritize Primary Skills First</label>
+          </div>
+          <div class="input-group" style="display:flex; align-items:center; gap:12px;">
+            <input type="checkbox" id="st-opt-overlap" style="width:18px;height:18px;accent-color:#3498DB;" ${constraints.allow_overlap ? 'checked' : ''} />
+            <label for="st-opt-overlap" style="font-size:0.85rem; color:#333;">Allow Schedule Overlap (Soft Limit)</label>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  `;
+
+  document.getElementById('st-opt-update').addEventListener('click', async (e) => {
+    const btn = e.target;
+    const oldText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;margin-right:8px;display:inline-block;vertical-align:middle;"></span>Updating...';
+    btn.disabled = true;
+
+    const leaves = Array.from(document.querySelectorAll('#st-opt-leave-toggles input:checked')).map(cb => cb.value);
+
+    const shifts = Array.from(document.querySelectorAll('#st-opt-shift-toggles input:checked')).map(cb => [
+      parseInt(cb.dataset.start, 10),
+      parseInt(cb.dataset.end, 10),
+      cb.dataset.label
+    ]);
+
+    const payload = {
+      date: ST_CURRENT_DATE,
+      tt_t1_t2: parseInt(document.getElementById('st-opt-tt-t1-t2').value, 10),
+      tt_skill_switch: parseInt(document.getElementById('st-opt-tt-sk').value, 10),
+      use_primary_first: document.getElementById('st-opt-prim-first').checked,
+      allow_overlap: document.getElementById('st-opt-overlap').checked,
+      shift_duration_hrs: parseInt(document.getElementById('st-opt-shift-hrs').value, 10),
+      b1_duration_mins: parseInt(document.getElementById('st-opt-b1-dur').value, 10),
+      b2_duration_mins: parseInt(document.getElementById('st-opt-b2-dur').value, 10),
+      leave_types_excluded: leaves,
+      permitted_shifts: shifts
+    };
+
+    try {
+      const res = await fetch('/api/short-term/constraints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error('Update failed');
+      const data = await res.json();
+      ST_DATA = data;
+      renderShortTermDay();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update schedule.');
+    } finally {
+      btn.innerHTML = oldText;
+      btn.disabled = false;
+    }
+  });
 }
 
 // ── Flights Tab ────────────────────────────────────────────────

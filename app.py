@@ -868,7 +868,15 @@ _intraday_custom_constraints = {
         (720, 1440, '12:00 - 24:00'),
         (600, 1320, '10:00 - 22:00')
     ]
-} # Live overrides from Roster_constraints.json
+} 
+
+_st_custom_constraints = {
+    'permitted_shifts': [
+        (0, 720, '00:00 - 12:00'),
+        (720, 1440, '12:00 - 24:00'),
+        (600, 1320, '10:00 - 22:00')
+    ]
+}
 
 
 # ---------------------------------------------------------------------------
@@ -2032,7 +2040,8 @@ def st_dates():
 def st_day(date_str):
     """Return full optimised schedule for a short-term day (D+1 to D+3)."""
     man = _manual_assigns.get(date_str, {})
-    result = optimize_day(date_str, manual_assigns=man)
+    result = optimize_day(date_str, manual_assigns=man, 
+                          custom_constraints=_st_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
     return jsonify(result)
@@ -2054,10 +2063,38 @@ def st_apply_rec():
         if sid not in existing:
             existing.append(sid)
     _manual_assigns[date][task_id] = existing
-    result = optimize_day(date, manual_assigns=_manual_assigns.get(date, {}))
+    result = optimize_day(date, manual_assigns=_manual_assigns.get(date, {}),
+                          custom_constraints=_st_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
     return jsonify(result)
+
+
+@app.route('/api/short-term/constraints', methods=['GET', 'POST'])
+def st_constraints():
+    """Get or update short-term planning constraints."""
+    global _st_custom_constraints
+
+    if request.method == 'POST':
+        body = request.get_json(force=True) or {}
+        date = body.get('date') # can be specific date or global
+        _st_custom_constraints.update(body)
+        if date:
+            return st_day(date)
+        return jsonify(_st_custom_constraints)
+
+    res = {
+        'tt_t1_t2': _st_custom_constraints.get('tt_t1_t2', 15),
+        'tt_skill_switch': _st_custom_constraints.get('tt_skill_switch', 10),
+        'allow_overlap': _st_custom_constraints.get('allow_overlap', False),
+        'use_primary_first': _st_custom_constraints.get('use_primary_first', True),
+        'shift_duration_hrs': _st_custom_constraints.get('shift_duration_hrs', 12),
+        'b1_duration_mins': _st_custom_constraints.get('b1_duration_mins', 30),
+        'b2_duration_mins': _st_custom_constraints.get('b2_duration_mins', 60),
+        'leave_types_excluded': _st_custom_constraints.get('leave_types_excluded', ["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"]),
+        'permitted_shifts': _st_custom_constraints.get('permitted_shifts')
+    }
+    return jsonify(res)
 
 
 @app.route('/api/intraday')
