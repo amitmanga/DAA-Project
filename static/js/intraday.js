@@ -74,11 +74,19 @@ function computeSimKPIs() {
 
 function renderGateTimelineNowLine() {
   const line = document.querySelector('.gt-now-line');
+  const rtLine = document.getElementById('id-rt-now-line');
+  const rtLabel = document.getElementById('id-rt-now-label');
+  
   if (typeof ID_SIM_TIME !== 'number') return;
   const left = Math.max(0, Math.min(100, (ID_SIM_TIME / 1440) * 100));
+  
   if (line) line.style.left = `${left.toFixed(2)}%`;
   const label = line ? line.querySelector('.gt-now-label') : null;
   if (label) label.textContent = formatMins(ID_SIM_TIME);
+  
+  if (rtLine) rtLine.style.left = `${left.toFixed(2)}%`;
+  if (rtLabel) rtLabel.textContent = formatMins(ID_SIM_TIME);
+
   const simTimeElem = document.getElementById('id-sim-time-value');
   if (simTimeElem) simTimeElem.textContent = formatMins(ID_SIM_TIME);
   if (ID_DATA && ID_DATA.kpis) renderIDKPIs(ID_DATA.kpis);
@@ -117,6 +125,7 @@ function renderIntradayPage() {
       <button class="sub-tab ${ID_ACTIVE_TAB==='staff'?'active':''}" data-idtab="staff">👤 Staff Roster</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='flights'?'active':''}" data-idtab="flights">✈ Flight Operations</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='gate-timeline'?'active':''}" data-idtab="gate-timeline">🛬 Gate Timeline</button>
+      <button class="sub-tab ${ID_ACTIVE_TAB==='staff-timeline'?'active':''}" data-idtab="staff-timeline">📅 Roster Timeline</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='map'?'active':''}" data-idtab="map">🗺 Network Map</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Optimization</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='perf'?'active':''}" data-idtab="perf">📈 Performance Analysis</button>
@@ -498,6 +507,29 @@ function renderIDSubContent() {
         <div id="id-absent-staff"></div>
       </div>`;
     renderIDStaffRoster(ID_DATA.staff, ID_DATA.absent_staff || []);
+  } else if (ID_ACTIVE_TAB === 'staff-timeline') {
+    container.innerHTML = `
+      <div class="panel mt-20">
+        <div class="panel-title-row">
+          <span class="panel-title">Staff Roster Timeline — ${ID_DATA.date_label}</span>
+          <div class="filter-row">
+            <input class="search-input" id="id-staff-timeline-search" placeholder="Search ID, skill…" />
+            <select id="id-staff-timeline-shift" class="select-input">
+              <option value="">All Shifts</option>
+              <option value="Day">Day</option>
+              <option value="Night">Night</option>
+            </select>
+            <button class="btn-delay" id="id-timeline-reset">Reset Sim</button>
+          </div>
+        </div>
+        <div class="section-hint">Visualize staff coverage and break density. Syncs with live simulation clock.</div>
+        <div id="id-staff-timeline"></div>
+      </div>`;
+    document.getElementById('id-timeline-reset').addEventListener('click', resetIntraday);
+    document.getElementById('id-staff-timeline-search').addEventListener('input', renderIDRosterTimeline);
+    document.getElementById('id-staff-timeline-shift').addEventListener('change', renderIDRosterTimeline);
+    renderIDRosterTimeline();
+    renderGateTimelineNowLine();
   } else if (ID_ACTIVE_TAB === 'perf') {
     renderIDPerfChart(container);
   } else if (ID_ACTIVE_TAB === 'opt') {
@@ -1291,4 +1323,93 @@ async function renderIDOptimization(container) {
       btn.disabled = false;
     }
   });
+}
+
+function renderIDRosterTimeline() {
+  const container = document.getElementById('id-staff-timeline');
+  if (!container || !ID_DATA) return;
+
+  function stringToColor(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const h = Math.abs(hash) % 360;
+    return `hsl(${h}, 65%, 40%)`;
+  }
+
+  const q = document.getElementById('id-staff-timeline-search')?.value.toLowerCase() || '';
+  const shiftFilter = document.getElementById('id-staff-timeline-shift')?.value || '';
+
+  const filteredStaff = (ID_DATA.staff || []).filter(s => {
+    const mq = !q || s.id.toLowerCase().includes(q) || s.skill1.toLowerCase().includes(q);
+    const ms = !shiftFilter || s.shift.toLowerCase() === shiftFilter.toLowerCase();
+    return mq && ms;
+  });
+
+  const axisTicks = [];
+  for (let h = 0; h <= 24; h++) {
+    const left = (h * 60) / 1440 * 100;
+    axisTicks.push(`
+      <div class="rt-hour-tick" style="left:${left.toFixed(2)}%">
+        <span class="rt-hour-label">${String(h % 24).padStart(2, '0')}</span>
+        <div class="rt-hour-line"></div>
+      </div>`);
+  }
+
+  const rows = filteredStaff.map(s => {
+    const shiftStart = s.shift_start;
+    const shiftEnd = s.shift_end || shiftStart + 720; // fallback if missing
+    const shiftWidth = (shiftEnd - shiftStart) / 1440 * 100;
+    const shiftLeft = shiftStart / 1440 * 100;
+
+    const shiftBg = `<div class="rt-shift-bg" style="left:${shiftLeft}%; width:${shiftWidth}%" title="${s.shift_label}"></div>`;
+
+    const tasks = (s.assignments || []).map(a => {
+      const left = a.start_mins / 1440 * 100;
+      const width = (a.end_mins - a.start_mins) / 1440 * 100;
+      const color = stringToColor(a.task);
+      const label = width > 2 ? a.task.split(' ')[0] : '';
+      const term = a.terminal ? `[${a.terminal}] ` : '';
+      return `<div class="rt-block" style="left:${left}%; width:${width}%; background:${color}" 
+              title="${a.task} ${term}(${a.start}-${a.end})">${label}</div>`;
+    }).join('');
+
+    const bks = (s.breaks || []).map(b => {
+      const left = b.start_mins / 1440 * 100;
+      const width = (b.end_mins - b.start_mins) / 1440 * 100;
+      const label = width > 3 ? 'Bk' : '';
+      return `<div class="rt-block break" style="left:${left}%; width:${width}%" 
+              title="${b.type} (${b.start}-${b.end})">${label}</div>`;
+    }).join('');
+
+    return `
+      <div class="rt-row">
+        <div class="rt-staff-label">
+          <div style="text-align:right">
+            <div style="font-weight:700; color:var(--text); line-height:1.1; font-size:0.75rem">${s.id}</div>
+            <div style="font-size:0.55rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.02em">${s.skill1}</div>
+          </div>
+        </div>
+        <div class="rt-track">
+          ${shiftBg}
+          ${tasks}
+          ${bks}
+        </div>
+      </div>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="rt-container">
+      <div class="rt-chart">
+        <div class="rt-axis-row">
+          <div class="rt-staff-label-header"></div>
+          <div class="rt-axis-track">${axisTicks.join('')}</div>
+        </div>
+        <div class="rt-now-line" id="id-rt-now-line">
+          <div class="rt-now-label" id="id-rt-now-label"></div>
+        </div>
+        ${rows}
+      </div>
+    </div>`;
 }

@@ -1170,6 +1170,11 @@ def get_staff_for_date(date_str, custom_constraints=None):
     on_duty = []
     absent_staff = []
 
+    # Shift duration in minutes
+    shift_duration_hrs = int(custom_constraints.get('shift_duration_hrs', 12))
+    shift_duration_mins = shift_duration_hrs * 60
+
+    # Current Day
     for r in day_staff:
         emp_id = r.get('EMPLOYEE NUMBER', '').strip()
         skill1 = r.get('Skill1', '').strip()
@@ -1177,40 +1182,60 @@ def get_staff_for_date(date_str, custom_constraints=None):
         employment = r.get('EMPLOYMENT TYPE', '').strip()
 
         if emp_id in absent_set:
-            absent_staff.append({
-                'id': emp_id,
-                'skill1': skill1,
-                'leave_type': absent_set[emp_id],
-                'absent': True,
-            })
+            absent_staff.append({'id': emp_id, 'skill1': skill1, 'leave_type': absent_set[emp_id], 'absent': True})
             continue
 
-        # Determine shift: extract digits from emp_id
         digits = ''.join(c for c in emp_id if c.isdigit())
         if digits and int(digits) % 2 == 1:
-            shift = 'DAY'
-            shift_start = 240   # 04:00
-            shift_end = 240 + shift_duration_mins
-            shift_label = f'Day Shift {mins_to_time(shift_start)}–{mins_to_time(shift_end)}'
+            st, lb = 240, 'Day Shift'
         else:
-            shift = 'NIGHT'
-            shift_start = 960   # 16:00
-            shift_end = 960 + shift_duration_mins
-            shift_label = f'Night Shift {mins_to_time(shift_start)}–{mins_to_time(shift_end)}'
-
+            st, lb = 960, 'Night Shift'
+        en = st + shift_duration_mins
         on_duty.append({
-            'id': emp_id,
-            'skill1': skill1,
-            'skill2': skill2,
-            'employment': employment,
-            'shift': shift,
-            'shift_start': shift_start,
-            'shift_end': shift_end,
-            'shift_label': shift_label,
-            'assignments': [],
-            'breaks': [],
-            'utilisation_pct': 0,
+            'id': emp_id, 'skill1': skill1, 'skill2': skill2,
+            'employment': employment, 'shift': lb.upper().replace(' SHIFT',''),
+            'shift_start': st, 'shift_end': en,
+            'shift_label': f"{lb} {mins_to_time(st)}–{mins_to_time(en)}",
+            'assignments': [], 'breaks': [], 'utilisation_pct': 0
         })
+
+    # Previous Day Carry-over (Night shifts that cross midnight)
+    prev_d = d - timedelta(days=1)
+    prev_key = prev_d.strftime('%d-%m-%Y')
+    path_staff = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
+    with open(path_staff, encoding='utf-8-sig') as f:
+        prev_day_rows = [r for r in csv.DictReader(f) if r.get('DATE','').strip() == prev_key and r.get('EMPLOYEE NUMBER','').strip()]
+    
+    # Check absences for the previous day too
+    prev_absent = set()
+    path_abs = os.path.join(BASE_DIR, 'data', 'Staff_absence_schedule.csv')
+    with open(path_abs, encoding='utf-8-sig') as f:
+        for a in csv.DictReader(f):
+            e_id = a.get('EMPLOYEE NUMBER','').strip()
+            df, dt = parse_date(a.get('DATE FROM','')), parse_date(a.get('DATE TO',''))
+            if df and dt and df <= prev_d <= dt:
+                if a.get('LEAVE TYPE','') in leave_types_excluded: prev_absent.add(e_id)
+
+    for r in prev_day_rows:
+        emp_id = r.get('EMPLOYEE NUMBER', '').strip()
+        if emp_id in prev_absent: continue
+        
+        digits = ''.join(c for c in emp_id if c.isdigit())
+        if digits and int(digits) % 2 == 0: # Only Night shifts
+            st = 960
+            en = st + shift_duration_mins
+            if en > 1440: # crosses midnight
+                on_duty.append({
+                    'id': f"{emp_id} (Carry-over)",
+                    'skill1': r.get('Skill1','').strip(),
+                    'skill2': r.get('Skill2','').strip(),
+                    'employment': r.get('EMPLOYMENT TYPE','').strip(),
+                    'shift': 'NIGHT',
+                    'shift_start': 0, 
+                    'shift_end': en - 1440,
+                    'shift_label': f"Carry-over from prev day (Ends {mins_to_time(en-1440)})",
+                    'assignments': [], 'breaks': [], 'utilisation_pct': 0
+                })
 
     return on_duty, absent_staff
 
@@ -1792,6 +1817,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             s['assignments'].append({
                 'task_id': task['id'],
                 'task': task['task'],
+                'terminal': task.get('terminal', 'ALL'),
                 'start': task['start'],
                 'end': task['end'],
                 'start_mins': start,
