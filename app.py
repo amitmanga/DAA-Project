@@ -26,6 +26,30 @@ def parse_date(s, fmt='%d-%m-%y'):
     return None
 
 # ---------------------------------------------------------------------------
+# Skill Normalization: Maps Staff_schedule names to Config.csv names
+# ---------------------------------------------------------------------------
+SKILL_MAP = {
+    'GNIB':                 'GNIB / Immigration',
+    'CBP Pre-clearance':    'CBP Pre-clearance',
+    'Bussing':              'Bussing',
+    'PBZ':                  'PBZ',
+    'Mezz Operation':       'Mezz Operation',
+    'Litter Picking':       'Litter Picking',
+    'Ramp / Marshalling':   'Ramp / Marshalling',
+    'Arr Customer Service': 'Arr Customer Service',
+    'Check-in/Trolleys':    'Check-in / Trolleys',
+    'Check-in / Trolleys':  'Check-in / Trolleys',
+    'Dep/Trolleys':         'Dep / Trolleys',
+    'Dep / Trolleys':       'Dep / Trolleys',
+    'T1/T2 Trolleys L/UL':  'Dep / Trolleys', # Proxy for T1 zone work
+    'Transfer Corridor':   'Transfer Corridor'
+}
+
+def normalize_skill(sk):
+    sk = sk.strip()
+    return SKILL_MAP.get(sk, sk)
+
+# ---------------------------------------------------------------------------
 # Per-movement staff-minutes derived directly from Config.csv task rules.
 # Key: (Flight_Category, Status)
 #
@@ -212,10 +236,13 @@ def weekly_staff_available():
     absences = load_absences()
     total_staff = len(staff)
 
-    # Build skill pool
+    # Build skill pool (all qualifications)
     skill_pool = defaultdict(int)
     for s in staff:
-        skill_pool[s.get('Skill1', '').strip()] += 1
+        for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
+            sk_name = s.get(sk_col, '').strip()
+            if sk_name:
+                skill_pool[sk_name] += 1
 
     # Build absence windows: {employee: [(from_date, to_date)]}
     absence_map = defaultdict(list)
@@ -251,8 +278,10 @@ def weekly_staff_available():
         for emp_id in absent_emps:
             emp_data = next((s for s in staff if s['EMPLOYEE NUMBER'] == emp_id), None)
             if emp_data:
-                sk_name = emp_data.get('Skill1', '').strip()
-                sk[sk_name] = max(0, sk.get(sk_name, 0) - 1)
+                for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
+                    sk_name = emp_data.get(sk_col, '').strip()
+                    if sk_name:
+                        sk[sk_name] = max(0, sk.get(sk_name, 0) - 1)
         skill_result[wk_key] = sk
         d += timedelta(weeks=1)
 
@@ -568,23 +597,34 @@ def lt_skill_breakdown():
         if d_from and d_to:
             absence_map[emp].append((d_from, d_to))
 
-    # Total staff by primary skill
+    # Total staff by all qualified skills
     total_by_skill = defaultdict(int)
     for s in staff:
-        total_by_skill[s.get('Skill1', '').strip()] += 1
+        for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
+            sk_name = s.get(sk_col, '').strip()
+            if sk_name:
+                total_by_skill[sk_name] += 1
 
-    # Monthly absent days per skill
+    # Monthly absent days per all qualified skills
     monthly_absent = defaultdict(lambda: defaultdict(int))
     for emp, windows in absence_map.items():
         emp_data = next((s for s in staff if s['EMPLOYEE NUMBER'] == emp), None)
         if not emp_data:
             continue
-        sk = emp_data.get('Skill1', '').strip()
+        
+        # Collect all skills for this employee
+        emp_skills = []
+        for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
+            sk_val = emp_data.get(sk_col, '').strip()
+            if sk_val:
+                emp_skills.append(normalize_skill(sk_val))
+
         for (f, t) in windows:
             d = f
             while d <= t:
                 if d.year == 2026:
-                    monthly_absent[d.strftime('%b %Y')][sk] += 1
+                    for sk in emp_skills:
+                        monthly_absent[d.strftime('%b %Y')][sk] += 1
                 d += timedelta(days=1)
 
     skills = sorted(total_by_skill.keys())
@@ -702,7 +742,7 @@ def lt_merged_gap_skill():
     for emp, windows in absence_map.items():
         emp_data = next((s for s in staff if s['EMPLOYEE NUMBER'] == emp), None)
         if not emp_data: continue
-        sk = emp_data.get('Skill1', '').strip()
+        sk = normalize_skill(emp_data.get('Skill1', '').strip())
         for (f, t) in windows:
             curr = f
             while curr <= t:
@@ -1148,8 +1188,9 @@ def get_staff_for_date(date_str, custom_constraints=None):
     if d is None:
         return [], []
 
-    # Staff CSV uses DD-MM-YYYY format (4-digit year)
-    staff_date_key = d.strftime('%d-%m-%Y')  # e.g. '11-04-2026'
+    # Staff CSV can use DD-MM-YYYY (4-digit) or DD-MM-YY (2-digit)
+    staff_date_key_full = d.strftime('%d-%m-%Y') 
+    staff_date_key_short = d.strftime('%d-%m-%y')
 
     # Load staff schedule
     path_staff = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
@@ -1178,7 +1219,7 @@ def get_staff_for_date(date_str, custom_constraints=None):
 
     # Filter staff for this date
     day_staff = [r for r in staff_rows
-                 if r.get('DATE', '').strip() == staff_date_key
+                 if (r.get('DATE', '').strip() == staff_date_key_full or r.get('DATE', '').strip() == staff_date_key_short)
                  and r.get('EMPLOYEE NUMBER', '').strip()]
 
     on_duty = []
@@ -1191,11 +1232,85 @@ def get_staff_for_date(date_str, custom_constraints=None):
     # Permitted shifts from constraints
     sh_options = custom_constraints.get('permitted_shifts')
 
+    # ── Density-based shift allocation ──────────────────────────────────────
+    # Only allocate shifts WHEN THERE ARE FLIGHTS.
+    # Empty 3-hour windows are excluded from candidates entirely.
+    # Busier windows attract proportionally more staff.
+    density_shifts = None
+    if not sh_options:
+        try:
+            flt_path     = os.path.join(BASE_DIR, 'data', 'Flights_schedule_4days.csv')
+            flt_date_key = d.strftime('%d-%b-%y')
+            flight_times = []
+            with open(flt_path, encoding='cp1252') as ff:
+                for row in csv.DictReader(ff):
+                    clean = {k: v.replace('\xa0', '').strip() for k, v in row.items()}
+                    if clean.get('date', '') == flt_date_key:
+                        t = parse_time(clean.get('sta', ''))
+                        if t is not None:
+                            flight_times.append(t)
+
+            # 3-hour blocks: 0..7  (00-03, 03-06, … 21-24)
+            block_density = [0] * 8
+            for t in flight_times:
+                block_density[min(7, int(t) // 180)] += 1
+
+            # Find the span of active blocks (first and last that have flights)
+            active_blocks = [bi for bi, cnt in enumerate(block_density) if cnt > 0]
+
+            if active_blocks:
+                first_active = active_blocks[0]
+                last_active  = active_blocks[-1]
+
+                # Build candidates ONLY for blocks that have flights.
+                # Each candidate shift starts at block_start and runs
+                # shift_duration_mins long (capped at 24:00).
+                blks_per_shift = max(1, shift_duration_mins // 180)
+                candidates = []
+                for bi in active_blocks:
+                    s_start = bi * 180
+                    s_end   = min(1440, s_start + shift_duration_mins)
+                    if s_end - s_start < 180:
+                        continue
+                    # Coverage = flights in all blocks this shift spans
+                    coverage = sum(
+                        block_density[j]
+                        for j in range(bi, min(8, bi + blks_per_shift))
+                    )
+                    if coverage == 0:
+                        continue  # skip empty shifts
+                    candidates.append({
+                        'start':   s_start,
+                        'end':     s_end,
+                        'label':   f"{mins_to_time(s_start)}\u2013{mins_to_time(s_end)}",
+                        'density': coverage,
+                    })
+
+                if candidates:
+                    total_density = sum(c['density'] for c in candidates)
+                    n_staff_count = len(day_staff)
+                    density_shifts = []
+                    for cand in sorted(candidates, key=lambda x: -x['density']):
+                        n_alloc = max(0, round(n_staff_count * cand['density'] / total_density))
+                        for _ in range(n_alloc):
+                            density_shifts.append((cand['start'], cand['end'], cand['label']))
+
+                    # Pad to exactly n_staff_count (use busiest shift)
+                    best = max(candidates, key=lambda x: x['density'])
+                    while len(density_shifts) < n_staff_count:
+                        density_shifts.append((best['start'], best['end'], best['label']))
+                    density_shifts = density_shifts[:n_staff_count]
+        except Exception:
+            density_shifts = None
+
+
     # Current Day
     for i, r in enumerate(day_staff):
         emp_id = r.get('EMPLOYEE NUMBER', '').strip()
         skill1 = r.get('Skill1', '').strip()
         skill2 = r.get('Skill2', '').strip()
+        skill3 = r.get('Skill3', '').strip()
+        skill4 = r.get('Skill4', '').strip()
         employment = r.get('EMPLOYMENT TYPE', '').strip()
 
         if emp_id in absent_set:
@@ -1205,17 +1320,23 @@ def get_staff_for_date(date_str, custom_constraints=None):
         if sh_options and len(sh_options) > 0:
             sh_data = sh_options[i % len(sh_options)]
             st, en, lb = sh_data[0], sh_data[1], sh_data[2]
+        elif density_shifts:
+            # Use the density-optimised shift for this staff member's position
+            idx = min(i, len(density_shifts) - 1)
+            st, en, lb = density_shifts[idx]
         else:
-            # New default fallback: Round-robin across 00-12, 12-00, 10-22
+            # Hard fallback: round-robin across three standard shifts
             sys_defaults = [
-                (0, 720, '00:00 - 12:00'),
-                (720, 1440, '12:00 - 24:00'),
-                (600, 1320, '10:00 - 22:00')
+                (0,   720,  '00:00–12:00'),
+                (720, 1440, '12:00–24:00'),
+                (600, 1320, '10:00–22:00'),
             ]
             st, en, lb = sys_defaults[i % len(sys_defaults)]
 
+
         on_duty.append({
-            'id': emp_id, 'skill1': skill1, 'skill2': skill2,
+            'id': emp_id, 
+            'skill1': skill1, 'skill2': skill2, 'skill3': skill3, 'skill4': skill4,
             'employment': employment, 'shift': lb.upper().replace(' SHIFT',''),
             'shift_start': st, 'shift_end': en,
             'shift_label': f"{lb} {mins_to_time(st)}–{mins_to_time(en)}",
@@ -1252,6 +1373,8 @@ def get_staff_for_date(date_str, custom_constraints=None):
                     'id': f"{emp_id} (Carry-over)",
                     'skill1': r.get('Skill1','').strip(),
                     'skill2': r.get('Skill2','').strip(),
+                    'skill3': r.get('Skill3','').strip(),
+                    'skill4': r.get('Skill4','').strip(),
                     'employment': r.get('EMPLOYMENT TYPE','').strip(),
                     'shift': 'NIGHT',
                     'shift_start': 0, 
@@ -1264,38 +1387,41 @@ def get_staff_for_date(date_str, custom_constraints=None):
 
 
 def schedule_breaks(staff, assigned_windows, custom_constraints=None):
-    """Schedule two mandatory breaks for a staff member.
+    """Schedule mandatory rest breaks respecting these exact rules:
 
-    Break 1 (Short Break, 30 min):
-        Preferred window: [shift_start+120, shift_start+360]
-        Fallback:         [shift_start+60,  shift_end-30]   (anywhere in shift)
-
-    Break 2 (Meal Break, 60 min):
-        Preferred window: [b1_end+120, shift_end-60]  (at least 2 hrs after B1)
-        Fallback:         [shift_start+120, shift_end-60]   (anywhere after first hr)
-
-    Breaks are inserted outside busy task windows; if no gap exists in preferred
-    window we fall back to the widest possible window so every staff member
-    always receives both breaks.
+      1. A break MUST occur after every 3 hours (180 min) of continuous work.
+      2. The gap between the END of break-1 and the START of break-2 must
+         be at least 3 hours (180 min).
+      3. Maximum 2 breaks per shift.
+      4. Break durations: Break-1 = b1_duration_mins (default 30),
+                          Break-2 = b2_duration_mins (default 60).
+      5. Breaks are placed in the first free gap at or after the mandatory
+         trigger; fall back to anywhere in the shift if no ideal spot exists.
     """
     shift_start = staff['shift_start']
     shift_end   = staff['shift_end']
-    breaks = []
-    
-    if custom_constraints is None: custom_constraints = {}
-    b1_dur = int(custom_constraints.get('b1_duration_mins', 30))
-    b2_dur = int(custom_constraints.get('b2_duration_mins', 60))
 
-    def find_free_slot(duration, search_start, search_end, busy):
-        """Return start of first free slot of `duration` mins, or None."""
-        t = max(search_start, shift_start)
+    if custom_constraints is None:
+        custom_constraints = {}
+    b1_dur          = int(custom_constraints.get('b1_duration_mins', 30))
+    b2_dur          = int(custom_constraints.get('b2_duration_mins', 60))
+    break_durations = [b1_dur, b2_dur]
+    break_types     = ['Short Break', 'Meal Break']
+    MAX_BREAKS      = 2
+    WORK_LIMIT      = 180   # continuous work limit before break is mandatory
+    BREAK_GAP       = 180   # minimum gap between end of one break and start of next
+
+    # ─ Helper ───────────────────────────────────────────────────
+    def find_free_slot(duration, search_start, search_end, busy_sorted):
+        """Return start of first contiguous free window of `duration` mins, or None."""
+        t       = max(search_start, shift_start)
         end_cap = min(search_end, shift_end - duration)
         while t + duration <= end_cap:
             conflict = False
-            for (ws, we) in busy:
+            for (ws, we) in busy_sorted:
                 if t < we and t + duration > ws:
                     conflict = True
-                    t = we
+                    t = max(t + 1, we)
                     break
             if not conflict:
                 return t
@@ -1303,41 +1429,73 @@ def schedule_breaks(staff, assigned_windows, custom_constraints=None):
 
     busy = sorted(assigned_windows)
 
-    # ── Break 1: Short break ──────────────────────────────
-    b1_start = (
-        find_free_slot(b1_dur, shift_start + 120, shift_start + 360, busy)
-        or find_free_slot(b1_dur, shift_start + 60, shift_end - b1_dur,  busy)
-    )
-    b1_end = None
-    if b1_start is not None:
-        b1_end = b1_start + b1_dur
-        breaks.append({
-            'start_mins': b1_start,
-            'end_mins':   b1_end,
-            'start': mins_to_time(b1_start),
-            'end':   mins_to_time(b1_end),
-            'type':  'Short Break',
-        })
+    # ─ Step 1: Detect trigger points from continuous-work analysis ──────────
+    # Walk the sorted busy windows; accumulate work time and record a trigger
+    # each time we cross WORK_LIMIT minutes of uninterrupted work.
+    trigger_points = []
+    cum_work   = 0
+    last_event = shift_start
 
-    # ── Break 2: Meal break ───────────────────────────────
-    busy2 = sorted(busy + ([(b1_start, b1_end)] if b1_end else []))
-    # Preferred: at least 2 hrs after short break (or 6 hrs into shift)
-    b2_pref_start = max(b1_end + 120 if b1_end else 0, shift_start + 360)
-    b2_start = (
-        find_free_slot(b2_dur, b2_pref_start,        shift_end - b2_dur, busy2)
-        or find_free_slot(b2_dur, shift_start + 120, shift_end - b2_dur, busy2)
-    )
-    if b2_start is not None:
-        b2_end = b2_start + b2_dur
-        breaks.append({
-            'start_mins': b2_start,
-            'end_mins':   b2_end,
-            'start': mins_to_time(b2_start),
-            'end':   mins_to_time(b2_end),
-            'type':  'Meal Break',
-        })
+    for (ws, we) in busy:
+        ws = max(ws, shift_start)
+        we = min(we, shift_end)
+        if we <= ws:
+            continue
+        if ws > last_event:          # idle gap → reset continuous counter
+            cum_work = 0
+        cum_work  += we - ws
+        if cum_work >= WORK_LIMIT:
+            trigger_points.append(we)
+            cum_work = 0
+        last_event = we
 
-    return breaks
+    # Fallback: no triggers but shift is long → place one midshift trigger
+    shift_dur = (shift_end - shift_start) % 1440 or 1440
+    if not trigger_points and shift_dur >= WORK_LIMIT:
+        trigger_points.append(shift_start + WORK_LIMIT)
+
+    trigger_points = trigger_points[:MAX_BREAKS]
+
+    # ─ Step 2: Place breaks, enforcing the 3-hour inter-break gap ──────────
+    breaks       = []
+    earliest_b2  = None   # will be set to break1_end + BREAK_GAP after B1
+
+    for i, trigger in enumerate(trigger_points):
+        if len(breaks) >= MAX_BREAKS:
+            break
+
+        dur   = break_durations[i] if i < len(break_durations) else b1_dur
+        btype = break_types[i]     if i < len(break_types)     else 'Break'
+
+        # Include previously placed breaks in busy list so we avoid overlap
+        cur_busy = sorted(busy + [(b['start_mins'], b['end_mins']) for b in breaks])
+
+        # For break-2 onwards, the search must not start before earliest_b2
+        search_from = trigger
+        if i > 0 and earliest_b2 is not None:
+            search_from = max(trigger, earliest_b2)
+
+        # Try right after trigger (within 90-min window), then anywhere in shift
+        b_start = (
+            find_free_slot(dur, search_from, search_from + 90, cur_busy)
+            or find_free_slot(dur, search_from, shift_end - dur, cur_busy)
+            or (find_free_slot(dur, shift_start, shift_end - dur, cur_busy) if i == 0 else None)
+        )
+
+        if b_start is not None:
+            b_end = b_start + dur
+            breaks.append({
+                'start_mins': b_start,
+                'end_mins':   b_end,
+                'start':      mins_to_time(b_start),
+                'end':        mins_to_time(b_end),
+                'type':       btype,
+            })
+            # Next break may not start before break_end + BREAK_GAP
+            earliest_b2 = b_end + BREAK_GAP
+
+    return sorted(breaks, key=lambda b: b['start_mins'])
+
 
 
 # ---------------------------------------------------------------------------
@@ -1373,65 +1531,100 @@ def _partial_staff_count(total_pax: int) -> int:
 
 def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
                         window_mins: int = SHARING_WINDOW_MINS) -> list:
-    """Generate all per-day tasks applying the three-tier sharing model.
+    """Generate all per-day tasks with four distinct processing paths:
 
-    Parameters
-    ----------
-    processed_flights : list of dicts, each containing:
-        flight_no, time_mins, status, haul, gate, icao_cat
-    rules             : loaded Config.csv rules (from load_config_rules)
-    stands_map        : loaded Stands.csv map   (from get_stands_map)
-    window_mins       : width of the time-bucket used to group concurrent flights
+    1. BLOCK tasks  — GNIB / Immigration and all Trolley variants.
+       These are fully decoupled from individual flights.
+       Per terminal (T1 / T2), per 3-hour window (00-03 / 03-06 … 21-24),
+       per movement direction (ARR / DEP):
+         • Aggregate pax capacity of every flight in that window.
+         • GNIB blocks   → 1 staff per 300 arr-pax,  min 2 (GNIB skill)
+         • Trolley-ARR   → 1 staff per 500 arr-pax,  min 1 (GNIB skill)
+         • Trolley-DEP   → 1 staff per 500 dep-pax,  min 1 (Bussing skill)
 
-    Returns
-    -------
-    list of task dicts, each with a 'flights_covered' list and
-    'terminal'/'pier'/'sharing_mode' fields in addition to the standard task keys.
+    2. DEDICATED tasks (Ramp / Marshalling, Bussing) — one task per flight.
 
-    Sharing model
-    -------------
-    DEDICATED tasks (Ramp / Marshalling, Bussing):
-        One task per flight, unchanged from the original logic.
+    3. SHARED tasks (Arr Customer Service, Transfer Corridor, Mezz …) —
+       flights sharing (terminal, pier, 30-min bucket) get ONE pooled task.
 
-    SHARED tasks (GNIB / Immigration, Arr Customer Service, etc.):
-        Flights sharing the same (terminal, pier, time-bucket) get a SINGLE
-        pooled task.  The task window spans the earliest start to latest end
-        of all individual per-flight windows for that task type.
-        Staff count comes from the Config.csv rule (the pool serves everyone).
+    4. PARTIALLY SHARED tasks (PBZ …) — same grouping but headcount
+       scales with combined pax volume.
 
-    PARTIALLY SHARED tasks (Check-in / Trolleys, Dep / Trolleys, PBZ):
-        Flights are grouped the same way, but the staff count scales with
-        combined estimated passenger volume (PARTIAL_SHARE_PAX_THRESHOLDS).
+    The block-task names are intentionally excluded from TASK_SHARED /
+    TASK_PARTIALLY_SHARED so there is zero overlap.
     """
-    dedicated_tasks = []
 
-    # Accumulate shared/partially-shared entries before collapsing into tasks.
-    # Key: (terminal, pier, time_bucket, task_name)
-    # Value: list of {flight_no, start_mins, end_mins, pax, rule}
+    # ── BLOCK tasks are completely separate from the rule loop ─────────────
+    # These are the task names we categorise as 3-hour blocks:
+    BLOCK_TASK_NAMES = frozenset({
+        'GNIB / Immigration',
+        'Check-in / Trolleys',
+        'Dep / Trolleys',
+        'T1/T2 Trolleys L/UL',
+        'Ramp / Marshalling',   # pier-block level, not per-flight
+    })
+
+    # block_data key: (terminal, block_idx, direction, group)
+    block_data = defaultdict(lambda: {'pax': 0, 'flights': []})
+
+    # ramp_block_data key: (terminal, pier, block_idx, direction)
+    # value: {'pax': int, 'count': int, 'flights': [str]}
+    ramp_block_data = defaultdict(lambda: {'pax': 0, 'count': 0, 'flights': []})
+
+    dedicated_tasks = []
     shared_entries:  dict = defaultdict(list)
     partial_entries: dict = defaultdict(list)
 
     for flight in processed_flights:
-        fn       = flight['flight_no']
-        t_mins   = flight['time_mins']
-        status   = flight['status']
-        haul     = flight['haul']
-        gate     = flight['gate']
-        icao_cat = flight['icao_cat']
+        fn        = flight['flight_no']
+        t_mins    = flight['time_mins']
+        status    = flight['status']      # 'Arrival' | 'Departure'
+        haul      = flight['haul']
+        gate      = flight['gate']
+        icao_cat  = flight['icao_cat']
 
-        si       = _stand_info(gate, stands_map)
-        terminal = si['terminal']
-        pier     = si['pier']
+        si         = _stand_info(gate, stands_map)
+        terminal   = si['terminal']
+        pier       = si['pier']
         stand_type = si['type']
 
-        # Time-bucket: floor to nearest window_mins boundary
+        # 30-minute bucket for shared/partial grouping
         bucket = (t_mins // window_mins) * window_mins
+
+        # 3-hour block index for terminal blocks
+        block_idx = t_mins // 180
 
         pax = _pax_for_icao(icao_cat)
 
-        applicable = get_applicable_task_rules(status, haul, rules)
+        # ── Step 1: Accumulate BLOCK-group entries ─────────────────────────
+        direction = 'ARR' if status == 'Arrival' else 'DEP'
 
-        # Remote-stand bussing (handled as DEDICATED regardless of sharing class)
+        # GNIB block — arrivals only (immigration is inbound)
+        if status == 'Arrival':
+            key = (terminal, block_idx, 'ARR', 'GNIB')
+            block_data[key]['pax'] += pax
+            if fn not in block_data[key]['flights']:
+                block_data[key]['flights'].append(fn)
+
+        # Trolley block — both directions separately
+        key_trl = (terminal, block_idx, direction, 'TROLLEY')
+        block_data[key_trl]['pax'] += pax
+        if fn not in block_data[key_trl]['flights']:
+            block_data[key_trl]['flights'].append(fn)
+
+        # Ramp/Marshalling block — per pier, per direction
+        ramp_key = (terminal, pier, block_idx, direction)
+        ramp_block_data[ramp_key]['pax']   += pax
+        ramp_block_data[ramp_key]['count'] += 1
+        if fn not in ramp_block_data[ramp_key]['flights']:
+            ramp_block_data[ramp_key]['flights'].append(fn)
+
+        # ── Step 2: Get applicable per-flight rules (excl. block tasks) ───
+        applicable = get_applicable_task_rules(status, haul, rules)
+        # Strip out block-task names — they are handled above
+        applicable = [r for r in applicable if r['task'] not in BLOCK_TASK_NAMES]
+
+        # Remote-stand bussing (always DEDICATED)
         if stand_type == 'Remote':
             for rule in rules:
                 if rule['task'] == 'Bussing' and rule['haul_subtype'] == 'Remote stand':
@@ -1441,143 +1634,220 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
                         applicable.append(rule)
 
         for rule in applicable:
-            task_name = rule['task']
+            task_name  = rule['task']
             start_mins, end_mins = compute_task_window(t_mins, rule)
+            skill      = TASK_SKILL.get(task_name, 'GNIB')
 
             if task_name in TASK_DEDICATED:
-                # ── DEDICATED: one task per flight ──────────────────────────
-                skill   = TASK_SKILL.get(task_name, 'GNIB')
+                # ── DEDICATED ──────────────────────────────────────────────
                 task_id = f"{fn}_{task_name[:8].replace(' ', '')}_{start_mins}"
                 dedicated_tasks.append({
-                    'id':            task_id,
-                    'flight_no':     fn,
-                    'task':          task_name,
-                    'skill':         skill,
-                    'priority':      rule['priority'],
-                    'start_mins':    start_mins,
-                    'end_mins':      end_mins,
-                    'start':         mins_to_time(start_mins),
-                    'end':           mins_to_time(end_mins),
-                    'staff_needed':  rule['staff_count'],
-                    'assigned':      [],
-                    'alert':         None,
-                    'time_mins':     t_mins,
+                    'id':             task_id,
+                    'flight_no':      fn,
+                    'task':           task_name,
+                    'skill':          skill,
+                    'priority':       rule['priority'],
+                    'start_mins':     start_mins,
+                    'end_mins':       end_mins,
+                    'start':          mins_to_time(start_mins),
+                    'end':            mins_to_time(end_mins),
+                    'staff_needed':   rule['staff_count'],
+                    'assigned':       [],
+                    'alert':          None,
+                    'time_mins':      t_mins,
                     'flights_covered': [fn],
-                    'terminal':      terminal,
-                    'pier':          pier,
-                    'sharing_mode':  'dedicated',
+                    'terminal':       terminal,
+                    'pier':           pier,
+                    'sharing_mode':   'dedicated',
                 })
 
-            elif task_name in TASK_SHARED:
-                # ── SHARED: accumulate for group collapse ────────────────────
-                shared_entries[(terminal, pier, bucket, task_name)].append({
-                    'flight_no':  fn,
-                    'start_mins': start_mins,
-                    'end_mins':   end_mins,
-                    'rule':       rule,
-                })
-
-            elif task_name in TASK_PARTIALLY_SHARED:
-                # ── PARTIALLY SHARED: accumulate with pax info ───────────────
-                partial_entries[(terminal, pier, bucket, task_name)].append({
+            elif task_name in TASK_SHARED or task_name in TASK_PARTIALLY_SHARED:
+                # ── PIER BLOCK (3-hour window, per pier, per direction) ────
+                # All area-shared tasks now accumulate into pier-level 3-hour
+                # blocks; the old 30-min bucket grouping is retired.
+                shared_entries[(pier, direction, block_idx, task_name)].append({
                     'flight_no':  fn,
                     'start_mins': start_mins,
                     'end_mins':   end_mins,
                     'pax':        pax,
                     'rule':       rule,
+                    'terminal':   terminal,
                 })
-            # Tasks that are neither DEDICATED, SHARED nor PARTIALLY_SHARED
-            # are treated as dedicated to preserve correctness.
+
             else:
-                skill   = TASK_SKILL.get(task_name, 'GNIB')
+                # Unknown sharing class — treat as dedicated for safety
                 task_id = f"{fn}_{task_name[:8].replace(' ', '')}_{start_mins}"
                 dedicated_tasks.append({
-                    'id':            task_id,
-                    'flight_no':     fn,
-                    'task':          task_name,
-                    'skill':         skill,
-                    'priority':      rule['priority'],
-                    'start_mins':    start_mins,
-                    'end_mins':      end_mins,
-                    'start':         mins_to_time(start_mins),
-                    'end':           mins_to_time(end_mins),
-                    'staff_needed':  rule['staff_count'],
-                    'assigned':      [],
-                    'alert':         None,
-                    'time_mins':     t_mins,
+                    'id':             task_id,
+                    'flight_no':      fn,
+                    'task':           task_name,
+                    'skill':          skill,
+                    'priority':       rule['priority'],
+                    'start_mins':     start_mins,
+                    'end_mins':       end_mins,
+                    'start':          mins_to_time(start_mins),
+                    'end':            mins_to_time(end_mins),
+                    'staff_needed':   rule['staff_count'],
+                    'assigned':       [],
+                    'alert':          None,
+                    'time_mins':      t_mins,
                     'flights_covered': [fn],
-                    'terminal':      terminal,
-                    'pier':          pier,
-                    'sharing_mode':  'dedicated',
+                    'terminal':       terminal,
+                    'pier':           pier,
+                    'sharing_mode':   'dedicated',
                 })
 
-    # ── Collapse shared groups into single pooled tasks ──────────────────────
-    shared_tasks = []
-    for (terminal, pier, bucket, task_name), entries in shared_entries.items():
-        rule       = entries[0]['rule']          # use first rule for config fields
-        start_mins = min(e['start_mins'] for e in entries)
-        end_mins   = max(e['end_mins']   for e in entries)
-        fns        = [e['flight_no'] for e in entries]
-        skill      = TASK_SKILL.get(task_name, 'GNIB')
-        # ID encodes the group so it is stable across re-runs
-        safe_name  = task_name[:8].replace(' ', '').replace('/', '')
-        task_id    = f"SHARED_{terminal}_{pier}_{bucket}_{safe_name}"
-        shared_tasks.append({
-            'id':            task_id,
-            'flight_no':     fns[0],            # lead flight for backward compat
-            'task':          task_name,
-            'skill':         skill,
-            'priority':      rule['priority'],
-            'start_mins':    start_mins,
-            'end_mins':      end_mins,
-            'start':         mins_to_time(start_mins),
-            'end':           mins_to_time(end_mins),
-            'staff_needed':  rule['staff_count'],
-            'assigned':      [],
-            'alert':         None,
-            'time_mins':     bucket,
-            'flights_covered': fns,
-            'terminal':      terminal,
-            'pier':          pier,
-            'sharing_mode':  'shared',
-            # UI-friendly label showing which flights share this task
-            'time_window':   f"{mins_to_time(bucket)}–{mins_to_time(bucket + window_mins)}",
-        })
+    # ── Collapse PIER BLOCK groups (3-hour windows per pier per direction) ───
+    # Staffing ratios for pier-level area tasks:
+    #   Arr Customer Service : 1 per 400 pax, min 1  (GNIB skill)
+    #   Transfer Corridor    : 1 per 500 pax, min 1  (GNIB skill)
+    #   Mezz Operation       : 1 per 600 pax, min 1  (Mezz Operation skill)
+    #   Litter Picking       : 1 per 800 pax, min 1  (Litter Picking skill)
+    #   PBZ                  : 1 per 400 pax, min 1  (PBZ skill)
+    #   Others               : use Config.csv staff_count
+    PAX_PER_STAFF = {
+        'Arr Customer Service': 400,
+        'Transfer Corridor':    500,
+        'Mezz Operation':       600,
+        'Litter Picking':       800,
+        'PBZ':                  400,
+        'CBP Pre-clearance':    300,
+    }
+    MIN_STAFF = 1
 
-    # ── Collapse partially-shared groups with pax-scaled headcount ───────────
+    shared_tasks  = []
     partial_tasks = []
-    for (terminal, pier, bucket, task_name), entries in partial_entries.items():
+    for (pier, direction, block_idx, task_name), entries in shared_entries.items():
         rule       = entries[0]['rule']
-        start_mins = min(e['start_mins'] for e in entries)
-        end_mins   = max(e['end_mins']   for e in entries)
         total_pax  = sum(e['pax'] for e in entries)
-        fns        = [e['flight_no'] for e in entries]
+        fns        = list(dict.fromkeys(e['flight_no'] for e in entries))  # dedup, order-preserving
+        terminal   = entries[0]['terminal']          # all in same pier → same terminal
         skill      = TASK_SKILL.get(task_name, 'GNIB')
         safe_name  = task_name[:8].replace(' ', '').replace('/', '')
-        task_id    = f"PSHARED_{terminal}_{pier}_{bucket}_{safe_name}"
-        partial_tasks.append({
-            'id':            task_id,
-            'flight_no':     fns[0],
-            'task':          task_name,
-            'skill':         skill,
-            'priority':      rule['priority'],
-            'start_mins':    start_mins,
-            'end_mins':      end_mins,
-            'start':         mins_to_time(start_mins),
-            'end':           mins_to_time(end_mins),
-            'staff_needed':  _partial_staff_count(total_pax),
-            'assigned':      [],
-            'alert':         None,
-            'time_mins':     bucket,
+        blk_start  = block_idx * 180
+        blk_end    = min(1440, blk_start + 180)
+        task_id    = f"PBLK_{pier}_{direction}_{block_idx}_{safe_name}"
+
+        # Pax-scaled staffing, falling back to Config.csv staff_count
+        if task_name in PAX_PER_STAFF and total_pax > 0:
+            needed = max(MIN_STAFF, math.ceil(total_pax / PAX_PER_STAFF[task_name]))
+        else:
+            needed = rule['staff_count']
+
+        task_label = f"{task_name} — {pier} {direction}"
+        shared_tasks.append({
+            'id':             task_id,
+            'flight_no':      fns[0],
+            'task':           task_label,
+            'skill':          skill,
+            'priority':       rule['priority'],
+            'start_mins':     blk_start,
+            'end_mins':       blk_end,
+            'start':          mins_to_time(blk_start),
+            'end':            mins_to_time(blk_end),
+            'staff_needed':   needed,
+            'assigned':       [],
+            'alert':          None,
+            'time_mins':      blk_start,
             'flights_covered': fns,
-            'terminal':      terminal,
-            'pier':          pier,
-            'sharing_mode':  'partially_shared',
-            'total_pax':     total_pax,
-            'time_window':   f"{mins_to_time(bucket)}–{mins_to_time(bucket + window_mins)}",
+            'terminal':       terminal,
+            'pier':           pier,
+            'sharing_mode':   'pier_block',
+            'total_pax':      total_pax,
+            'time_window':    f"{mins_to_time(blk_start)}–{mins_to_time(blk_end)}",
         })
 
-    return dedicated_tasks + shared_tasks + partial_tasks
+    # ── Build 3-Hour BLOCK tasks ─────────────────────────────────────────────
+    # Staffing ratios:
+    #   GNIB  : 1 staff per 300 pax, min 2  (GNIB skill   — arrival-only)
+    #   Trolley ARR: 1 staff per 500 pax, min 1 (GNIB skill)
+    #   Trolley DEP: 1 staff per 500 pax, min 1 (Bussing skill)
+    block_tasks = []
+    for (terminal, block_idx, direction, group), data in block_data.items():
+        total_pax = data['pax']
+        fns       = data['flights']
+        if not fns:
+            continue   # no flights → skip, don't pad ghost tasks
+
+        blk_start = block_idx * 180
+        blk_end   = min(1440, blk_start + 180)
+
+        if group == 'GNIB':
+            # GNIB is strictly Arrival; direction is always 'ARR' here
+            task_label = f"GNIB Immigration — {terminal} ARR"
+            skill      = 'GNIB'
+            needed     = max(2, math.ceil(total_pax / 300))
+            priority   = 'Critical'
+        else:  # TROLLEY
+            if direction == 'ARR':
+                task_label = f"Trolleys — {terminal} ARR"
+                skill      = 'GNIB'
+            else:
+                task_label = f"Trolleys — {terminal} DEP"
+                skill      = 'Bussing'
+            needed   = max(1, math.ceil(total_pax / 500))
+            priority = 'High'
+
+        task_id = f"BLOCK_{terminal}_{block_idx}_{direction}_{group}"
+        block_tasks.append({
+            'id':             task_id,
+            'flight_no':      fns[0],
+            'task':           task_label,
+            'skill':          skill,
+            'priority':       priority,
+            'start_mins':     blk_start,
+            'end_mins':       blk_end,
+            'start':          mins_to_time(blk_start),
+            'end':            mins_to_time(blk_end),
+            'staff_needed':   needed,
+            'assigned':       [],
+            'alert':          None,
+            'time_mins':      blk_start,
+            'flights_covered': fns,
+            'terminal':       terminal,
+            'pier':           'ALL',
+            'sharing_mode':   'block_shared',
+            'total_pax':      total_pax,
+            'time_window':    f"{mins_to_time(blk_start)}–{mins_to_time(blk_end)}",
+        })
+    # ── Build Ramp/Marshalling 3-Hour Pier Block tasks ───────────────────────
+    # Staffing ratio: 1 marshal per 3 aircraft in the 3-hour window (min 1).
+    ramp_tasks = []
+    for (terminal, pier, block_idx, direction), data in ramp_block_data.items():
+        fns          = data['flights']
+        flight_count = data['count']
+        total_pax    = data['pax']
+        if not fns:
+            continue
+        blk_start  = block_idx * 180
+        blk_end    = min(1440, blk_start + 180)
+        needed     = max(1, math.ceil(flight_count / 3))
+        task_label = f"Ramp Marshalling \u2014 {pier} {direction}"
+        task_id    = f"RAMP_{terminal}_{pier}_{block_idx}_{direction}"
+        ramp_tasks.append({
+            'id':             task_id,
+            'flight_no':      fns[0],
+            'task':           task_label,
+            'skill':          'GNIB',
+            'priority':       'High',
+            'start_mins':     blk_start,
+            'end_mins':       blk_end,
+            'start':          mins_to_time(blk_start),
+            'end':            mins_to_time(blk_end),
+            'staff_needed':   needed,
+            'assigned':       [],
+            'alert':          None,
+            'time_mins':      blk_start,
+            'flights_covered': fns,
+            'terminal':       terminal,
+            'pier':           pier,
+            'sharing_mode':   'ramp_block',
+            'total_pax':      total_pax,
+            'flight_count':   flight_count,
+            'time_window':    f"{mins_to_time(blk_start)}\u2013{mins_to_time(blk_end)}",
+        })
+
+    return dedicated_tasks + shared_tasks + partial_tasks + block_tasks + ramp_tasks
 
 
 # ---------------------------------------------------------------------------
@@ -1598,7 +1868,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         
     tt_t1_t2 = int(custom_constraints.get('tt_t1_t2', 15))
     tt_skill_switch = int(custom_constraints.get('tt_skill_switch', 10))
-    allow_overlap = custom_constraints.get('allow_overlap', False)
+    # Support both singular/plural naming from different JS files
+    allow_overlap = custom_constraints.get('allow_overlap') or custom_constraints.get('allow_overlaps') or False
+    use_primary_first = custom_constraints.get('use_primary_first', True)
 
     if current_time_mins is not None:
         current_time_mins = int(current_time_mins)
@@ -1620,7 +1892,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
     # Load flights for this date
     all_flights = read_csv_flights()
-    flights_raw = [f for f in all_flights if f.get('date', '') == flight_date_key]
+    # Case-insensitive date lookup
+    flights_raw = [f for f in all_flights if (f.get('date') or f.get('DATE', '')).strip() == flight_date_key]
 
     # Apply overrides
     cancelled_set = set()
@@ -1635,15 +1908,22 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     rules = load_config_rules()
     stands_map = get_stands_map()
     on_duty, absent_staff = get_staff_for_date(date_str, custom_constraints)
+    print(f"[DEBUG] On-duty: {len(on_duty)}, Absent: {len(absent_staff)}")
 
     # Build skill lookup dicts
     staff_by_prim = defaultdict(list)   # skill1 → [staff_dict]
-    staff_by_any  = defaultdict(list)   # skill1 or skill2 → [staff_dict]
+    staff_by_any  = defaultdict(list)   # unique staff per skill across slots 1-4
     for s in on_duty:
-        staff_by_prim[s['skill1']].append(s)
-        staff_by_any[s['skill1']].append(s)
-        if s['skill2']:
-            staff_by_any[s['skill2']].append(s)
+        if s.get('skill1'):
+            staff_by_prim[s['skill1']].append(s)
+            staff_by_any[s['skill1']].append(s)
+        
+        # Deduplicate: only add to other skills if not already added
+        seen_for_emp = { s['skill1'] }
+        for sk in [s.get('skill2'), s.get('skill3'), s.get('skill4')]:
+            if sk and sk not in seen_for_emp:
+                staff_by_any[sk].append(s)
+                seen_for_emp.add(sk)
 
     # busy_map: emp_id → [(start, end, terminal, skill)]
     busy_map = defaultdict(list)
@@ -1823,6 +2103,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         all_tasks.sort(key=lambda t: (priority_order.get(t['priority'], 2), t['start_mins'], t['flight_no']))
 
     # Greedy assignment
+    print(f"[DEBUG] Assigning {len(all_tasks)} tasks...")
     for task in all_tasks:
         needed = task['staff_needed'] - len(task['assigned'])
         if needed <= 0:
@@ -1832,45 +2113,42 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         start = task['start_mins']
         end   = task['end_mins']
 
-        # Try primary skill first
-        candidates = [s for s in staff_by_prim.get(skill, [])
-                      if s['id'] not in task['assigned'] and available(s, start, end, task.get('terminal','ALL'), task.get('skill','GNIB'))]
+        # Optimization: Lazy evaluation of candidates.
+        # Instead of pre-filtering all staff (which calls expensive available() for everyone),
+        # we iterate and stop as soon as we meet the 'needed' headcount.
         assigned_count = 0
-        for s in candidates:
+
+        candidate_pools = []
+        if use_primary_first:
+            candidate_pools = [staff_by_prim.get(skill, []), staff_by_any.get(skill, [])]
+        else:
+            candidate_pools = [staff_by_any.get(skill, [])]
+
+        for pool_index, pool in enumerate(candidate_pools):
             if assigned_count >= needed:
                 break
-            task['assigned'].append(s['id'])
-            s['assignments'].append({
-                'task_id': task['id'],
-                'task': task['task'],
-                'terminal': task.get('terminal', 'ALL'),
-                'start': task['start'],
-                'end': task['end'],
-                'start_mins': start,
-                'end_mins': end,
-            })
-            busy_map[s['id']].append((start, end, task.get('terminal','ALL'), task.get('skill','GNIB')))
-            assigned_count += 1
-
-        use_primary_first = bool(custom_constraints.get('use_primary_first', True))
-        if assigned_count < needed and (not use_primary_first or True): # True because if needed is not met, we always fallback to sec if possible. Wait, if use_primary_first is false, we should mix them. But let's just use secondary if needed.
-            sec_candidates = [s for s in staff_by_any.get(skill, [])
-                              if s['id'] not in task['assigned']
-                              and s['skill1'] != skill  # secondary only
-                              and available(s, start, end, task.get('terminal','ALL'), task.get('skill','GNIB'))]
-            for s in sec_candidates:
+            for s in pool:
                 if assigned_count >= needed:
                     break
-                task['assigned'].append(s['id'])
-                s['assignments'].append({
+                if s['id'] in task['assigned']:
+                    continue
+                if not available(s, start, end, task.get('terminal', 'ALL'), task.get('skill', 'GNIB')):
+                    continue
+
+                assignment = {
                     'task_id': task['id'],
                     'task': task['task'],
                     'start': task['start'],
                     'end': task['end'],
                     'start_mins': start,
                     'end_mins': end,
-                })
-                busy_map[s['id']].append((start, end, task.get('terminal','ALL'), task.get('skill','GNIB')))
+                }
+                if pool_index == 0 and use_primary_first:
+                    assignment['terminal'] = task.get('terminal', 'ALL')
+
+                task['assigned'].append(s['id'])
+                s['assignments'].append(assignment)
+                busy_map[s['id']].append((start, end, task.get('terminal', 'ALL'), task.get('skill', 'GNIB')))
                 assigned_count += 1
 
         if assigned_count < needed:
@@ -1879,6 +2157,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 task['alert'] = f'Under-staffed: need {needed}, assigned {assigned_count} (gap {gap})'
 
     # Schedule breaks and compute utilisation
+    print(f"[DEBUG] Scheduling breaks for staff...")
     for s in on_duty:
         windows = [(ws, we) for (ws, we, t, sk) in busy_map[s['id']]]
         s['breaks'] = schedule_breaks(s, windows, custom_constraints)
@@ -2009,6 +2288,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         },
         'flights':       flights_sorted,
         'staff':         on_duty,
+        'tasks':         all_tasks,
         'absent_staff':  absent_staff,
         'alerts':        alerts,
         'overrides':     overrides,
@@ -2036,12 +2316,26 @@ def st_dates():
     return jsonify(available_dates)
 
 
+def _get_short_term_schedule(date_str, preserve_manual_assigns=True):
+    """Return short-term schedule using the same optimizer mode as intraday.
+
+    Short-term does not use live overrides or a simulation clock, but it should
+    share the same early-first assignment ordering so shift/task allocation is
+    optimized consistently with the intraday view.
+    """
+    man = _manual_assigns.get(date_str, {}) if preserve_manual_assigns else {}
+    return optimize_day(
+        date_str,
+        manual_assigns=man,
+        prefer_early=True,
+        custom_constraints=_st_custom_constraints,
+    )
+
+
 @app.route('/api/short-term/<date_str>')
 def st_day(date_str):
     """Return full optimised schedule for a short-term day (D+1 to D+3)."""
-    man = _manual_assigns.get(date_str, {})
-    result = optimize_day(date_str, manual_assigns=man, 
-                          custom_constraints=_st_custom_constraints)
+    result = _get_short_term_schedule(date_str)
     if 'error' in result:
         return jsonify(result), 404
     return jsonify(result)
@@ -2063,8 +2357,7 @@ def st_apply_rec():
         if sid not in existing:
             existing.append(sid)
     _manual_assigns[date][task_id] = existing
-    result = optimize_day(date, manual_assigns=_manual_assigns.get(date, {}),
-                          custom_constraints=_st_custom_constraints)
+    result = _get_short_term_schedule(date)
     if 'error' in result:
         return jsonify(result), 404
     return jsonify(result)
@@ -2078,15 +2371,23 @@ def st_constraints():
     if request.method == 'POST':
         body = request.get_json(force=True) or {}
         date = body.get('date') # can be specific date or global
-        _st_custom_constraints.update(body)
+        next_constraints = {k: v for k, v in body.items() if k != 'date'}
+        _st_custom_constraints.update(next_constraints)
         if date:
-            return st_day(date)
+            # Re-optimise from the current constraints, not from previously pinned
+            # recommendation overrides, so "Update Schedule" performs a full reallocation.
+            _manual_assigns.pop(date, None)
+            result = _get_short_term_schedule(date, preserve_manual_assigns=False)
+            if 'error' in result:
+                return jsonify(result), 404
+            return jsonify(result)
         return jsonify(_st_custom_constraints)
 
     res = {
         'tt_t1_t2': _st_custom_constraints.get('tt_t1_t2', 15),
         'tt_skill_switch': _st_custom_constraints.get('tt_skill_switch', 10),
         'allow_overlap': _st_custom_constraints.get('allow_overlap', False),
+        'allow_overlaps': _st_custom_constraints.get('allow_overlaps', _st_custom_constraints.get('allow_overlap', False)),
         'use_primary_first': _st_custom_constraints.get('use_primary_first', True),
         'shift_duration_hrs': _st_custom_constraints.get('shift_duration_hrs', 12),
         'b1_duration_mins': _st_custom_constraints.get('b1_duration_mins', 30),

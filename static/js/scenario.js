@@ -14,6 +14,13 @@ let _compChart  = null;
 let _histChart  = null;
 let _skillChart = null;
 
+/* -- Theme Support -- */
+window.addEventListener('themeChanged', () => {
+    if (_initialized && _currentRenderedScenario) {
+        _renderMonthlyRisk(_currentRenderedScenario);
+    }
+});
+
 /* ── Init ── */
 let _initialized = false;
 function initScenario() {
@@ -440,7 +447,7 @@ function _renderMonthlyRisk(sc) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: '#8BA5C0', font: { size: 10 }, boxWidth: 10 }, position: 'top' },
+        legend: { labels: { color: (window.getCurrentTheme && window.getCurrentTheme() === 'dark' ? '#ffffff' : '#000000'), font: { size: 10 }, boxWidth: 10 }, position: 'top' },
         tooltip: {
             callbacks: {
                 title: (ctx) => ctx[0].label + ' FTE',
@@ -450,13 +457,13 @@ function _renderMonthlyRisk(sc) {
       },
       scales: {
         x: { 
-            ticks: { color: '#8BA5C0', font: { size: 10 } }, 
-            grid: { color: 'rgba(255,255,255,0.04)' } 
+            ticks: { color: (window.getCurrentTheme && window.getCurrentTheme() === 'dark' ? '#ffffff' : '#000000'), font: { size: 10 } }, 
+            grid: { color: (window.getCurrentTheme && window.getCurrentTheme() === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.04)') } 
         },
         y: { 
-          ticks: { color: '#8BA5C0', font: { size: 10 } }, 
-          grid: { color: 'rgba(255,255,255,0.07)' },
-          title: { display: true, text: 'FTE', color: '#8BA5C0', font: {size: 10}},
+          ticks: { color: (window.getCurrentTheme && window.getCurrentTheme() === 'dark' ? '#ffffff' : '#000000'), font: { size: 10 } }, 
+          grid: { color: (window.getCurrentTheme && window.getCurrentTheme() === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.07)') },
+          title: { display: true, text: 'FTE', color: (window.getCurrentTheme && window.getCurrentTheme() === 'dark' ? '#ffffff' : '#000000'), font: {size: 10}},
           min: 0
         }
       }
@@ -605,14 +612,11 @@ function _renderCompareTable(details) {
   const totals = { base: 0, scenarios: details.map(() => 0), imbalances: details.map(() => 0) };
 
   sortedMonths.forEach(m => {
-      // Find base plan value (Base Available FTE)
       let baseVal = 0;
       details.forEach(sc => {
           if (!sc.comparison_data) return;
           const idx = sc.comparison_data.months.indexOf(m);
-          if (idx !== -1) {
-              baseVal = sc.comparison_data.current_fte[idx];
-          }
+          if (idx !== -1) baseVal = sc.comparison_data.current_fte[idx];
       });
 
       const scValues = details.map(sc => {
@@ -622,15 +626,10 @@ function _renderCompareTable(details) {
       });
 
       const imbalances = scValues.map(v => v - baseVal);
-
-      // Check if any scenario differs from base plan
       const differs = imbalances.some(imb => Math.abs(imb) > 0.01);
       
       if (differs) {
-          const row = { month: m, base: baseVal, values: scValues, imbalances: imbalances };
-          rows.push(row);
-          
-          // Update totals
+          rows.push({ month: m, base: baseVal, values: scValues, imbalances: imbalances });
           totals.base += baseVal;
           scValues.forEach((v, i) => totals.scenarios[i] += v);
           imbalances.forEach((imb, i) => totals.imbalances[i] += imb);
@@ -652,14 +651,9 @@ function _renderCompareTable(details) {
       <td>${r.base.toFixed(1)}</td>
       ${r.values.map(v => `<td>${v.toFixed(1)}</td>`).join('')}
       ${r.imbalances.map(imb => {
-          const cls = imb > 0 ? 'sc-imbalance-neg' : (imb < 0 ? 'sc-imbalance-pos' : ''); // Swapped colors: extra availability is green (neg), loss is red (pos) - wait.
-          // Actually if Scen > Base, Imbalance is positive. For Available FTE, more is usually good (Green).
-          const cls_fixed = imb > 0 ? 'sc-imbalance-neg' : (imb < 0 ? 'sc-imbalance-pos' : '');
-          // Wait, let's stick to: Positive difference = green, Negative difference = red for Available FTE.
-          // Previously: pos imb = red (more required).
-          // Now: pos imb = green (more available).
           const sign = imb > 0 ? '+' : '';
-          return `<td class="${imb > 0 ? 'sc-imbalance-neg' : (imb < 0 ? 'sc-imbalance-pos' : '')}">${sign}${imb.toFixed(1)}</td>`;
+          const cls = imb > 0 ? 'sc-imbalance-neg' : (imb < 0 ? 'sc-imbalance-pos' : '');
+          return `<td class="${cls}">${sign}${imb.toFixed(1)}</td>`;
       }).join('')}
     </tr>
   `).join('');

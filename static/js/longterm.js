@@ -6,7 +6,9 @@ const DAA = {
   accent:  '#f97316', accentL: '#fb923c',
   navy:    '#1a2744', navy2:   '#243156', navy3: '#2e3f6e',
   ok:      '#10b981', warn:    '#f59e0b', high: '#f97316', crit: '#ef4444',
-  info:    '#3b82f6', muted:   '#6b7280', white: '#1a2744',
+  info:    '#3b82f6', muted:   '#6b7280', 
+  isDark:  () => (window.getCurrentTheme && window.getCurrentTheme() === 'dark'),
+  white:   () => (DAA.isDark() ? '#ffffff' : '#000000'),
 };
 
 const SKILL_COLOR = {
@@ -29,9 +31,46 @@ const CAT_COLOR = {
   'Cargo':                    '#f59e0b',
 };
 
-Chart.defaults.color         = '#6b7280';
-Chart.defaults.borderColor   = '#e5e7eb';
-Chart.defaults.font.family   = "'Inter', 'Segoe UI', system-ui, sans-serif";
+function updateChartDefaults() {
+  const isDark = DAA.isDark();
+  Chart.defaults.color       = isDark ? '#ffffff' : '#000000';
+  Chart.defaults.borderColor = isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb';
+  Chart.defaults.font.family = "'Inter', 'Segoe UI', system-ui, sans-serif";
+}
+updateChartDefaults();
+
+// Listen for theme changes
+window.addEventListener('themeChanged', () => {
+  updateChartDefaults();
+  refreshAllCharts();
+});
+
+function refreshAllCharts() {
+  // 1. Re-render global long-term charts
+  loadFlightTrendChart();
+  loadStaffReqAvailChart();
+  loadImbalanceChart();
+
+  // 2. Re-render drilldown if active
+  if (SELECTED_WEEK) {
+    api(`/api/long-term/week/${SELECTED_WEEK}`).then(wk => {
+      showDrilldown(wk);
+    });
+  }
+
+  // 3. Re-render sub-view specific charts
+  const activeSub = document.querySelector('.sub-tab.active')?.dataset.sub;
+  if (activeSub === 'allocation') {
+    loadAllocationTable(); // Re-renders table and skill bar chart
+    loadSkillBarChart();
+  } else if (activeSub === 'gap-skill') {
+    initGapSkillAnalysis(); // Re-renders merged charts
+  } else if (activeSub === 'skills') {
+    loadSkillCharts();
+  } else if (activeSub === 'perf') {
+    renderLongTermPerfChart();
+  }
+}
 
 // ── Global state ──────────────────────────────────────────────
 let ALL_WEEKS      = [];   // full heatmap data
@@ -59,14 +98,23 @@ function destroyChart(id) {
   if (CHARTS[id]) { CHARTS[id].destroy(); delete CHARTS[id]; }
 }
 
-// ── Navigation ────────────────────────────────────────────────
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     if (btn.disabled) return;
+    const view = btn.dataset.view;
+
+    // View switching
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     btn.classList.add('active');
-    document.getElementById(`view-${btn.dataset.view}`).classList.add('active');
+    document.getElementById(`view-${view}`).classList.add('active');
+
+    // Data initialization
+    if (view === 'short-term' && typeof initShortTerm === 'function') initShortTerm();
+    if (view === 'intraday'   && typeof initIntraday   === 'function') initIntraday();
+    
+    // Refresh charts if needed (e.g. for theme-aware colors)
+    if (view === 'long-term') refreshAllCharts();
   });
 });
 
@@ -222,6 +270,7 @@ function showDrilldown(wk) {
 }
 
 function renderDDSkillBar(skills) {
+  const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   destroyChart('dd-skill-bar');
   const labels = Object.keys(skills);
   const data   = Object.values(skills);
@@ -248,14 +297,22 @@ function renderDDSkillBar(skills) {
         },
       },
       scales: {
-        x: { grid: { color: '#e5e7eb' }, title: { display:true, text:'FTE', color: DAA.muted } },
-        y: { grid: { display: false } },
+        x: { 
+          grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }, 
+          ticks: { color: DAA.white() },
+          title: { display:true, text:'FTE', color: DAA.white() } 
+        },
+        y: { 
+          grid: { display: false },
+          ticks: { color: DAA.white() }
+        },
       },
     },
   });
 }
 
 function renderDDCatChart(categories) {
+  const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   destroyChart('dd-cat-chart');
   const labels = Object.keys(categories);
   const data   = Object.values(categories);
@@ -273,12 +330,16 @@ function renderDDCatChart(categories) {
     options: {
       responsive: true, cutout: '55%',
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true, boxWidth: 10 }, position: 'right' },
+        legend: { labels: { color: DAA.white(), usePointStyle: true, boxWidth: 10 }, position: 'right' },
         tooltip: {
           backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1,
           callbacks: { label: ctx => ` ${fmt(ctx.parsed)} movements` },
         },
       },
+      scales: {
+        x: { grid: { color: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }, ticks: { color: DAA.white() } },
+        y: { grid: { color: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }, ticks: { color: DAA.white() } }
+      }
     },
   });
 }
@@ -434,6 +495,7 @@ function renderHeatmap() {
 
 // ── Flight Trend Chart ────────────────────────────────────────
 async function loadFlightTrendChart() {
+  const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   const data = await api('/api/long-term/flight-trend');
   destroyChart('flight-trend');
   const ctx = document.getElementById('flight-trend-chart').getContext('2d');
@@ -463,12 +525,15 @@ async function loadFlightTrendChart() {
     options: {
       responsive: true,
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true } },
+        legend: { labels: { color: DAA.white(), usePointStyle: true } },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 },
       },
       scales: {
-        x: { grid: { color: '#e5e7eb' } },
-        y: { grid: { color: '#e5e7eb' }, ticks: { callback: v => fmt(v) } },
+        x: { grid: { color: isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb' }, ticks: { color: DAA.white() } },
+        y: { 
+          grid: { color: isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb' }, 
+          ticks: { color: DAA.white(), callback: v => fmt(v) } 
+        },
       },
     },
   });
@@ -476,6 +541,7 @@ async function loadFlightTrendChart() {
 
 // ── Staff Required vs Available Chart ────────────────────────
 async function loadStaffReqAvailChart() {
+  const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   const monthly = {};
   ALL_WEEKS.forEach(w => {
     if (!monthly[w.month]) monthly[w.month] = { req: [], avail: [] };
@@ -513,12 +579,12 @@ async function loadStaffReqAvailChart() {
     options: {
       responsive: true,
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true } },
+        legend: { labels: { color: DAA.white(), usePointStyle: true } },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 },
       },
       scales: {
-        x: { grid: { color: '#e5e7eb' } },
-        y: { grid: { color: '#e5e7eb' } },
+        x: { grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }, ticks: { color: DAA.white() } },
+        y: { grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }, ticks: { color: DAA.white() } },
       },
     },
   });
@@ -554,6 +620,7 @@ async function loadImbalanceChart() {
 }
 
 function renderImbalanceChart(selectedWeek) {
+  const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   destroyChart('imbalance');
   const ctx = document.getElementById('imbalance-chart').getContext('2d');
   CHARTS['imbalance'] = new Chart(ctx, {
@@ -607,9 +674,11 @@ function renderImbalanceChart(selectedWeek) {
         },
       },
       scales: {
-        x: { grid: { display: false }, ticks: { maxTicksLimit: 12, maxRotation: 45 } },
-        y: { grid: { color: '#e5e7eb' },
-             title: { display: true, text: 'FTE Gap', color: DAA.muted } },
+        x: { grid: { display: false }, ticks: { color: DAA.white() } },
+        y: { 
+          grid: { color: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' },
+          ticks: { color: DAA.white() }
+        }
       },
     },
   });
@@ -643,7 +712,7 @@ function renderGapDonut() {
     options: {
       responsive: true, cutout: '65%',
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
+        legend: { labels: { color: DAA.white(), usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 },
       },
     },
@@ -816,6 +885,7 @@ function renderGateAllocationTable(allocData) {
 }
 
 async function loadSkillBarChart() {
+  const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   const { months, skills } = await api('/api/long-term/staff-allocation');
   destroyChart('skill-bar');
   const ctx = document.getElementById('skill-bar-chart').getContext('2d');
@@ -825,21 +895,21 @@ async function loadSkillBarChart() {
       labels: months.map(m => m.month),
       datasets: skills.map(sk => ({
         label: sk,
-        data: months.map(m => +(m[sk] || 0).toFixed(1)),
-        backgroundColor: SKILL_COLOR[sk] || '#888',
-        stack: 'stack', borderRadius: 2,
-      })),
+        data: months.map(m => (m[sk] || 0)),
+        backgroundColor: SKILL_COLOR[sk] || DAA.muted,
+      }))
     },
     options: {
       responsive: true,
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true, boxWidth: 10 }, position: 'right' },
+        legend: { labels: { color: DAA.white(), usePointStyle: true, boxWidth: 10 }, position: 'right' },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1, mode: 'index' },
       },
       scales: {
-        x: { stacked: true, grid: { color: '#e5e7eb' } },
-        y: { stacked: true, grid: { color: '#e5e7eb' },
-             title: { display: true, text: 'FTE Required', color: DAA.muted } },
+        x: { stacked: true, grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }, ticks: { color: DAA.white() } },
+        y: { stacked: true, grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' },
+             title: { display: true, text: 'FTE Required', color: DAA.white() },
+             ticks: { color: DAA.white() } },
       },
     },
   });
@@ -847,6 +917,7 @@ async function loadSkillBarChart() {
 
 // ── Skill Distribution ────────────────────────────────────────
 async function loadSkillCharts() {
+  const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   const d = await api('/api/long-term/skill-breakdown');
 
   destroyChart('skill-donut');
@@ -865,7 +936,7 @@ async function loadSkillCharts() {
     options: {
       responsive: true, cutout: '60%',
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'bottom' },
+        legend: { labels: { color: DAA.white(), usePointStyle: true }, position: 'bottom' },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 },
       },
     },
@@ -887,13 +958,14 @@ async function loadSkillCharts() {
     options: {
       responsive: true,
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true, boxWidth: 10 }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
+        legend: { labels: { color: DAA.white(), usePointStyle: true, boxWidth: 10 }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
         tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1, mode: 'index' },
       },
       scales: {
-        x: { stacked: true, grid: { display: false } },
-        y: { stacked: true, grid: { color: '#e5e7eb' },
-             title: { display: true, text: 'Absence Days', color: DAA.muted } },
+        x: { stacked: true, grid: { display: false }, ticks: { color: DAA.white() } },
+        y: { stacked: true, grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' },
+             title: { display: true, text: 'Absence Days', color: DAA.white() },
+             ticks: { color: DAA.white() } },
       },
     },
   });
@@ -1020,6 +1092,7 @@ async function initGapSkillAnalysis() {
 }
 
 function renderSkillGapBarChart(data) {
+  const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   destroyChart('skill-gap-bar');
   const ctx = document.getElementById('skill-gap-bar-chart').getContext('2d');
   
@@ -1041,12 +1114,12 @@ function renderSkillGapBarChart(data) {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { position: 'right', labels: { color: DAA.white, boxWidth: 8, font: {size: 10}, usePointStyle: true } },
+        legend: { position: 'right', labels: { color: DAA.white(), boxWidth: 8, font: {size: 10}, usePointStyle: true } },
         tooltip: { mode: 'index', backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 }
       },
       scales: {
-        x: { stacked: true, grid: { display: false } },
-        y: { stacked: true, grid: { color: '#e5e7eb' }, title: { display: true, text: 'FTE Gap (Shortfall > 0)', color: DAA.muted } }
+        x: { stacked: true, grid: { display: false }, ticks: { color: DAA.white() } },
+        y: { stacked: true, grid: { color: isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb' }, title: { display: true, text: 'FTE Gap (Shortfall > 0)', color: DAA.white() }, ticks: { color: DAA.white() } }
       }
     }
   });
@@ -1075,7 +1148,7 @@ function renderMergedGapDonut(weekly) {
     options: {
       responsive: true, cutout: '75%',
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
+        legend: { labels: { color: DAA.white(), usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
       },
     },
   });
@@ -1099,7 +1172,7 @@ function renderMergedSkillDonut(pool) {
     options: {
       responsive: true, cutout: '75%',
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
+        legend: { labels: { color: DAA.white(), usePointStyle: true }, position: 'right', labels: { boxWidth: 8, font: {size: 10} } },
       },
     },
   });
@@ -1135,7 +1208,7 @@ function renderWeeklyGapTable(data) {
 
 function renderSkillSummaryTable(summary) {
   const body = document.getElementById('skill-summary-body');
-  body.innerHTML = summary.map(s => {
+  body.innerHTML = (summary || []).map(s => {
     const avgCol = s.avg_gap > 5 ? 'var(--crit)' : s.avg_gap > 0 ? 'var(--warn)' : 'var(--ok)';
     const peakCol = s.peak_gap > 8 ? 'var(--crit)' : s.peak_gap > 0 ? 'var(--warn)' : 'var(--ok)';
     
@@ -1153,15 +1226,17 @@ function renderSkillSummaryTable(summary) {
   }).join('');
 }
 
+
 function renderMergedAbsenceBar(d) {
+  const isDark = DAA.isDark();
   destroyChart('merged-absence');
   const months = ['Jan 2026','Feb 2026','Mar 2026','Apr 2026','May 2026','Jun 2026',
                   'Jul 2026','Aug 2026','Sep 2026','Oct 2026','Nov 2026','Dec 2026'];
   const labels = months.map(m => m.replace(' 2026',''));
-  const datasets = d.skills.map(sk => ({
+  const datasets = (d.skills || []).map(sk => ({
     label: sk,
     data: months.map(m => (d.monthly_absent[m] || {})[sk] || 0),
-    backgroundColor: SKILL_COLOR[sk] || '#888',
+    backgroundColor: SKILL_COLOR[sk] || DAA.muted,
     stack: 'abs', borderRadius: 2,
   }));
   const ctx = document.getElementById('merged-absence-bar').getContext('2d');
@@ -1171,11 +1246,13 @@ function renderMergedAbsenceBar(d) {
     options: {
       responsive: true,
       plugins: {
-        legend: { labels: { color: DAA.white, usePointStyle: true, boxWidth: 10 }, position: 'right' },
+        legend: { labels: { color: DAA.white(), usePointStyle: true, boxWidth: 10 }, position: 'right' },
       },
       scales: {
-        x: { stacked: true, grid: { display: false } },
-        y: { stacked: true, grid: { color: '#e5e7eb' }, title: { display: true, text: 'Absence Days', color: DAA.muted } }
+        x: { stacked: true, grid: { display: false }, ticks: { color: DAA.white() } },
+        y: { stacked: true, grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }, 
+             title: { display: true, text: 'Absence Days', color: DAA.white() },
+             ticks: { color: DAA.white() } }
       }
     }
   });

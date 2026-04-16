@@ -4,7 +4,8 @@
 
 const ID = {
   accent: '#E8850A', ok: '#2ECC71', warn: '#F39C12', crit: '#E74C3C',
-  info: '#3498DB', muted: '#6b7280', white: '#1a2744',
+  info: '#3498DB', muted: '#6b7280', 
+  white: () => (window.getCurrentTheme && window.getCurrentTheme() === 'dark' ? '#ffffff' : '#1a2744'),
 };
 
 const ID_SKILL_COLOR = {
@@ -22,6 +23,14 @@ let ID_AUTO_REFRESH = null;
 let ID_SIM_TIMER = null;
 let ID_SIM_TIME = null;
 let ID_SIM_SPEED = 1;
+
+// Listen for theme changes
+window.addEventListener('themeChanged', () => {
+  if (ID_ACTIVE_TAB === 'perf') {
+    const el = document.getElementById('id-sub-content');
+    if (el) renderIDPerfChart(el);
+  }
+});
 
 function formatMins(mins) {
   mins = Math.round(mins || 0);
@@ -1109,7 +1118,8 @@ function renderIDPerfChart(container) {
     if (!ctx) return;
     if (window.ID_CHARTS && window.ID_CHARTS['perf-radar']) window.ID_CHARTS['perf-radar'].destroy();
 
-    Chart.defaults.color = window.DAA ? DAA.text : '#1a2744';
+    const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
+    Chart.defaults.color = isDark ? '#ffffff' : '#000000';
     Chart.defaults.font.family = 'Inter, sans-serif';
 
     if (!window.ID_CHARTS) window.ID_CHARTS = {};
@@ -1123,7 +1133,7 @@ function renderIDPerfChart(container) {
           backgroundColor: 'rgba(34, 114, 180, 0.4)',
           borderColor: '#2b8ad5',
           pointBackgroundColor: '#2b8ad5',
-          pointBorderColor: window.DAA ? (DAA.bg || '#fff') : '#fff',
+          pointBorderColor: isDark ? '#1e293b' : '#fff',
           pointHoverBackgroundColor: '#fff',
           pointHoverBorderColor: '#2b8ad5',
           borderWidth: 2,
@@ -1144,16 +1154,16 @@ function renderIDPerfChart(container) {
         maintainAspectRatio: false,
         scales: {
           r: {
-            angleLines: { color: 'rgba(0, 0, 0, 0.1)' },
-            grid: { color: 'rgba(0, 0, 0, 0.1)' },
-            pointLabels: { color: window.DAA ? DAA.text : '#1a2744', font: { size: 11, weight: '500' } },
+            angleLines: { color: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0, 0, 0, 0.1)' },
+            grid: { color: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0, 0, 0, 0.1)' },
+            pointLabels: { color: isDark ? '#ffffff' : '#1a2744', font: { size: 11, weight: '500' } },
             ticks: { display: false, min: 0, max: 100 }
           }
         },
         plugins: {
           legend: {
             position: 'bottom', align: 'end',
-            labels: { color: window.DAA ? DAA.muted : '#6b7280', boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle' }
+            labels: { color: isDark ? '#ffffff' : '#000000', boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle' }
           },
           tooltip: {
             backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 13 }, bodyFont: { size: 13 },
@@ -1190,74 +1200,79 @@ async function renderIDOptimization(container) {
   }
 
   container.innerHTML = `
-    <div class="panel mt-20">
-      <div class="panel-title-row">
-        <span class="panel-title">Optimization Constraints & Buffer Rules</span>
-        <button class="btn-primary" id="id-opt-update" style="padding:4px 16px; font-weight:600;">🔄 Update Schedule</button>
+    <div class="panel mt-20" style="border-top: 4px solid var(--info);">
+      <div class="panel-title-row" style="margin-bottom:24px; border-bottom:1px solid var(--border); padding-bottom:16px;">
+        <div>
+          <h2 class="panel-title" style="margin:0; font-size:1.4rem; color:var(--text); text-transform:none;">⚙ Operational Optimization Constraints</h2>
+          <p class="section-hint" style="margin:6px 0 0; color:var(--muted); font-size:0.88rem;">Adjust real-time planning parameters for live re-allocation.</p>
+        </div>
+        <button class="btn-update-fluid" id="id-opt-update">
+          🔄 Update Schedule
+        </button>
       </div>
-      <div class="section-hint mb-16" style="color:#444;">Adjust the default parameters loaded from Roster_constraints.json for the live Intraday session. Modifying these limits will immediately trigger a re-allocation of staff.</div>
-      
-      <div class="opt-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px;">
+
+      <div class="opt-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:24px;">
         
         <!-- Shifts & Breaks -->
-        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
-          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
-            <span>⏱</span> Working Hours & Breaks
+        <div class="opt-card">
+          <div class="opt-card-title">
+            <span style="color:var(--info)">⏱</span> Working Hours & Breaks
           </div>
-          <div class="input-group" style="margin-bottom:12px">
-            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Shift Duration (Hrs)</label>
+          <div class="input-group" style="margin-bottom:16px">
+            <label class="opt-label">Shift Duration (Hrs)</label>
             <input type="number" id="opt-shift-hrs" class="select-input" style="width:100%" value="${constraints.shift_duration_hrs || 12}" min="6" max="16"/>
           </div>
-          <div class="input-group" style="margin-bottom:12px; display:flex; gap:12px;">
+          <div class="input-group" style="margin-bottom:16px; display:flex; gap:16px;">
             <div style="flex:1;">
-              <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Short Break (mins)</label>
+              <label class="opt-label">Short Break (mins)</label>
               <input type="number" id="opt-b1-dur" class="select-input" style="width:100%" value="${constraints.b1_duration_mins || 30}" min="15" max="60"/>
             </div>
             <div style="flex:1;">
-              <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Meal Break (mins)</label>
+              <label class="opt-label">Meal Break (mins)</label>
               <input type="number" id="opt-b2-dur" class="select-input" style="width:100%" value="${constraints.b2_duration_mins || 60}" min="30" max="120"/>
             </div>
           </div>
         </div>
 
         <!-- Travel Times -->
-        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
-          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
-            <span>🚶</span> Travel Time Buffers (mins)
+        <div class="opt-card">
+          <div class="opt-card-title">
+            <span style="color:var(--accent)">🚶</span> Travel Time Buffers (mins)
           </div>
-          <div class="input-group" style="margin-bottom:12px">
-            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">T1 to T2 Transfer (mins)</label>
+          <div class="input-group" style="margin-bottom:16px">
+            <label class="opt-label">T1 to T2 Transfer (mins)</label>
             <input type="number" id="opt-tt-t1-t2" class="select-input" style="width:100%" value="${constraints.tt_t1_t2 || 15}" min="0" max="60"/>
           </div>
           <div class="input-group">
-            <label style="display:block; font-size:0.8rem; color:#555; margin-bottom:4px;">Skill Switch Transfer (mins)</label>
+            <label class="opt-label">Skill Switch Transfer (mins)</label>
             <input type="number" id="opt-tt-sk" class="select-input" style="width:100%" value="${constraints.tt_skill_switch || 10}" min="0" max="60"/>
           </div>
         </div>
 
         <!-- Absences -->
-        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
-          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
-            <span>🚫</span> Absence Exclusions
+        <div class="opt-card">
+          <div class="opt-card-title">
+            <span style="color:var(--crit)">🚫</span> Absence Exclusions
           </div>
-          <div class="section-hint" style="font-size:0.75rem; margin-bottom:12px; color:#666;">Staff with selected leave types will not be rostered.</div>
-          <div id="opt-leave-toggles" style="display:flex; flex-direction:column; gap:8px;">
+          <p class="opt-hint">Staff with selected leave types will not be considered for live task assignment.</p>
+          <div id="opt-leave-toggles" style="display:flex; flex-direction:column; gap:12px;">
             ${["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"].map(lt => `
-              <div class="input-group" style="display:flex; align-items:center; gap:12px;">
-                <input type="checkbox" id="chk-lt-${lt.replace(/\s+/g,'-')}" value="${lt}" style="width:18px;height:18px;accent-color:#3498DB;" 
+              <div class="input-group" style="display:flex; align-items:center; gap:14px;">
+                <input type="checkbox" id="chk-lt-${lt.replace(/\s+/g,'-')}" value="${lt}" style="width:20px;height:20px;accent-color:var(--info); cursor:pointer" 
                   ${(constraints.leave_types_excluded || []).includes(lt) ? 'checked' : ''} />
-                <label for="chk-lt-${lt.replace(/\s+/g,'-')}" style="font-size:0.85rem; color:#333;">${lt}</label>
+                <label for="chk-lt-${lt.replace(/\s+/g,'-')}" class="opt-label" style="margin-bottom:0; cursor:pointer">${lt}</label>
               </div>
             `).join('')}
           </div>
         </div>
 
         <!-- Permitted Shifts -->
-        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
-          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
-            <span>📅</span> Permitted Shift Timings
+        <div class="opt-card">
+          <div class="opt-card-title">
+            <span style="color:var(--ok)">📅</span> Permitted Shift Timings
           </div>
-          <div id="opt-shift-toggles" style="display:flex; flex-direction:column; gap:8px;">
+          <p class="opt-hint">Standard operational shifts available for live re-allocation.</p>
+          <div id="opt-shift-toggles" style="display:flex; flex-direction:column; gap:12px;">
             ${[
               {label: '00:00 - 12:00', s: 0, e: 720},
               {label: '12:00 - 24:00', s: 720, e: 1440},
@@ -1268,33 +1283,33 @@ async function renderIDOptimization(container) {
               const isChecked = (constraints.permitted_shifts || []).some(ps => ps[0] === sh.s && ps[1] === sh.e) || 
                                 (!constraints.permitted_shifts && idx < 3);
               return `
-                <div class="input-group" style="display:flex; align-items:center; gap:12px;">
+                <div class="input-group" style="display:flex; align-items:center; gap:14px;">
                   <input type="checkbox" class="shift-chk" id="chk-sh-${idx}" 
                     data-label="${sh.label}" data-start="${sh.s}" data-end="${sh.e}"
-                    style="width:18px;height:18px;accent-color:#3498DB;" 
+                    style="width:20px;height:20px;accent-color:var(--info); cursor:pointer" 
                     ${isChecked ? 'checked' : ''} />
-                  <label for="chk-sh-${idx}" style="font-size:0.85rem; color:#333;">${sh.label}</label>
+                  <label for="chk-sh-${idx}" class="opt-label" style="margin-bottom:0; cursor:pointer">${sh.label}</label>
                 </div>
               `;
             }).join('')}
           </div>
         </div>
 
-        <!-- Allocation Policy -->
-        <div class="opt-card" style="background:rgba(0,0,0,0.02); padding:16px; border-radius:6px; border:1px solid rgba(0,0,0,0.1);">
-          <div style="font-size:0.95rem; font-weight:600; color:#1a2744; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
-            <span>⚖</span> Assignment Logic
+        <!-- Assignment Logic -->
+        <div class="opt-card">
+          <div class="opt-card-title">
+            <span style="color:var(--purple)">⚖</span> Assignment Logic
           </div>
-          <div class="input-group" style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
-            <input type="checkbox" id="opt-prim-first" style="width:18px;height:18px;accent-color:#3498DB;" ${constraints.use_primary_first ? 'checked' : ''} />
-            <label for="opt-prim-first" style="font-size:0.85rem; color:#333;">Prioritize Primary Skills First</label>
+          <p class="opt-hint">Configure how the optimization engine prioritizes tasks and handles overlaps.</p>
+          <div class="input-group" style="margin-bottom:12px; display:flex; align-items:center; gap:14px;">
+            <input type="checkbox" id="opt-prim-first" style="width:20px;height:20px;accent-color:var(--info); cursor:pointer" ${constraints.use_primary_first ? 'checked' : ''} />
+            <label for="opt-prim-first" class="opt-label" style="margin-bottom:0; cursor:pointer">Prioritize Primary Skills First</label>
           </div>
-          <div class="input-group" style="display:flex; align-items:center; gap:12px;">
-            <input type="checkbox" id="opt-overlap" style="width:18px;height:18px;accent-color:#3498DB;" ${constraints.allow_overlap ? 'checked' : ''} />
-            <label for="opt-overlap" style="font-size:0.85rem; color:#333;">Allow Schedule Overlap (Soft Limit)</label>
+          <div class="input-group" style="display:flex; align-items:center; gap:14px;">
+            <input type="checkbox" id="opt-allow-overlap" style="width:20px;height:20px;accent-color:var(--info); cursor:pointer" ${(constraints.allow_overlaps ?? constraints.allow_overlap) ? 'checked' : ''} />
+            <label for="opt-allow-overlap" class="opt-label" style="margin-bottom:0; cursor:pointer">Allow Schedule Overlaps (Beta)</label>
           </div>
         </div>
-
       </div>
     </div>
   `;
@@ -1317,7 +1332,7 @@ async function renderIDOptimization(container) {
       tt_t1_t2: parseInt(document.getElementById('opt-tt-t1-t2').value, 10),
       tt_skill_switch: parseInt(document.getElementById('opt-tt-sk').value, 10),
       use_primary_first: document.getElementById('opt-prim-first').checked,
-      allow_overlap: document.getElementById('opt-overlap').checked,
+      allow_overlap: document.getElementById('opt-allow-overlap').checked,
       shift_duration_hrs: parseInt(document.getElementById('opt-shift-hrs').value, 10),
       b1_duration_mins: parseInt(document.getElementById('opt-b1-dur').value, 10),
       b2_duration_mins: parseInt(document.getElementById('opt-b2-dur').value, 10),
@@ -1334,11 +1349,15 @@ async function renderIDOptimization(container) {
       if (!res.ok) throw new Error('Update failed');
       const data = await res.json();
       ID_DATA = data;
+      
+      // Reset UI state before starting potentially heavy render
+      btn.innerHTML = oldText;
+      btn.disabled = false;
+      
       renderIntradayPage();
     } catch (err) {
       console.error(err);
       alert('Failed to update constraints.');
-    } finally {
       btn.innerHTML = oldText;
       btn.disabled = false;
     }
@@ -1362,7 +1381,8 @@ function renderIDRosterTimeline() {
   const shiftFilter = document.getElementById('id-staff-timeline-shift')?.value || '';
 
   const filteredStaff = (ID_DATA.staff || []).filter(s => {
-    const mq = !q || s.id.toLowerCase().includes(q) || s.skill1.toLowerCase().includes(q);
+    const skillsMatch = [s.skill1, s.skill2, s.skill3, s.skill4].some(sk => (sk || '').toLowerCase().includes(q));
+    const mq = !q || s.id.toLowerCase().includes(q) || skillsMatch;
     const ms = !shiftFilter || s.shift.toLowerCase() === shiftFilter.toLowerCase();
     return mq && ms;
   });
@@ -1433,3 +1453,5 @@ function renderIDRosterTimeline() {
       </div>
     </div>`;
 }
+
+window.initIntraday = initIntraday;
