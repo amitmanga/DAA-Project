@@ -206,6 +206,156 @@ function renderSTAlerts(alerts, date) {
   });
 }
 
+function _getSTAlertOverlay() {
+  let overlay = document.getElementById('st-alert-detail-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'st-alert-detail-overlay';
+    overlay.className = 'modal-overlay hidden';
+    overlay.innerHTML = `<div class="modal-box modal-box-wide" id="st-alert-detail-box"></div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) closeSTAlertDetail();
+    });
+  }
+  return overlay;
+}
+
+function showSTAlertDetail(alert) {
+  const overlay = _getSTAlertOverlay();
+  const box = document.getElementById('st-alert-detail-box');
+  if (!box || !alert) return;
+  const flights = alert.covered_flights || [];
+  box.innerHTML = `
+    <div class="modal-header">
+      <div style="flex:1">
+        <div class="modal-title">Alert Detail · ${alert.task}</div>
+        <div class="fd-meta" style="margin-top:4px;color:rgba(255,255,255,0.75)">
+          ${alert.priority} · ${alert.start}–${alert.end} · ${alert.terminal || 'ALL'} / ${alert.pier || 'ALL'}
+        </div>
+      </div>
+      <button class="fd-close" onclick="closeSTAlertDetail()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="staff-detail-kpis">
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${alert.staff_needed}</div><div class="staff-detail-kpi-lbl">Staff Needed</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${alert.assigned_count}</div><div class="staff-detail-kpi-lbl">Assigned</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${alert.gap}</div><div class="staff-detail-kpi-lbl">Gap</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${flights.length}</div><div class="staff-detail-kpi-lbl">Flights Impacted</div></div>
+      </div>
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Issue Summary</div>
+        <div class="fd-task-row">
+          <div class="fd-task-name">${alert.message}</div>
+          <div class="fd-task-time">Task type: ${alert.task} · Skill: ${alert.skill} · Mode: ${alert.sharing_mode}</div>
+        </div>
+      </div>
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Recommended Staff</div>
+        ${alert.rec_staff && alert.rec_staff.length
+          ? `<div class="staff-breaks">${alert.rec_staff.map(s => `<span class="break-chip">${s}</span>`).join('')}</div>`
+          : '<div class="muted small">No available recommendation for this alert.</div>'}
+      </div>
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Assigned Staff</div>
+        ${alert.assigned_staff && alert.assigned_staff.length
+          ? `<div class="staff-breaks">${alert.assigned_staff.map(s => `<span class="break-chip">${s}</span>`).join('')}</div>`
+          : '<div class="muted small">No staff currently assigned.</div>'}
+      </div>
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Affected Flights</div>
+        ${flights.length
+          ? flights.map(f => `
+            <div class="staff-flight-row">
+              <span class="fn-cell">${f.flight_no}</span>
+              <span>${f.origin_code} ${f.origin}</span>
+              <span class="muted">${f.status} · ${f.sta} · Gate ${f.gate}</span>
+              <span class="status-badge ${f.status === 'Arrival' ? 'badge-info' : 'badge-accent'}">${f.status}</span>
+            </div>`).join('')
+          : '<div class="muted small">No linked flight details available.</div>'}
+      </div>
+    </div>`;
+  overlay.classList.remove('hidden');
+}
+
+function closeSTAlertDetail() {
+  const overlay = document.getElementById('st-alert-detail-overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+window.showSTAlertDetail = showSTAlertDetail;
+window.closeSTAlertDetail = closeSTAlertDetail;
+
+renderSTAlerts = function(alerts, date) {
+  const panel = document.getElementById('st-alerts-panel');
+  if (!alerts || alerts.length === 0) {
+    panel.innerHTML = `<div class="alert-panel alert-ok"><span>âœ…</span> All tasks fully covered â€” no staffing gaps.</div>`;
+    return;
+  }
+  const crit = alerts.filter(a => a.priority === 'Critical');
+  const high = alerts.filter(a => a.priority !== 'Critical');
+  panel.innerHTML = `
+    <div class="alerts-container">
+      <div class="alerts-header">
+        <span class="alerts-title">âš  Staffing Alerts &amp; Recommendations</span>
+        <span class="alerts-count">
+          ${crit.length ? `<span class="badge badge-crit">${crit.length} Critical</span>` : ''}
+          ${high.length ? `<span class="badge badge-warn">${high.length} High</span>` : ''}
+        </span>
+        <button class="btn-ghost" id="st-alerts-toggle">Show top 10 â–¾</button>
+      </div>
+      <div id="st-alerts-list"></div>
+    </div>`;
+
+  const shown = alerts.slice(0, 10);
+  let expanded = false;
+  const list = document.getElementById('st-alerts-list');
+
+  function renderAlertsList(items) {
+    list.innerHTML = items.map((a, idx) => {
+      const flights = a.covered_flights || [];
+      const flightLabel = flights.length
+        ? flights.slice(0, 2).map(f => f.flight_no).join(', ') + (flights.length > 2 ? ` +${flights.length - 2}` : '')
+        : (a.flight_no || 'No linked flight');
+      return `
+        <div class="alert-row alert-${a.priority === 'Critical' ? 'crit' : 'warn'} alert-row-clickable" data-alert-idx="${idx}">
+          <div class="alert-row-left alert-row-detail">
+            <span class="badge ${a.priority === 'Critical' ? 'badge-crit' : 'badge-warn'}">${a.priority}</span>
+            <div class="alert-msg">
+              <div class="alert-msg-title">${flightLabel} · ${a.task}</div>
+              <div class="alert-msg-sub">${a.start}–${a.end} · ${a.terminal || 'ALL'} / ${a.pier || 'ALL'} · Need ${a.staff_needed}, assigned ${a.assigned_count}, gap ${a.gap}</div>
+              <div class="alert-msg-body">${a.message}</div>
+            </div>
+          </div>
+          <div class="alert-row-right">
+            ${a.rec_staff && a.rec_staff.length
+              ? `<span class="alert-rec">Rec: ${a.rec_staff.join(', ')}</span>
+                 <button class="btn-apply-rec"
+                   data-date="${date}"
+                   data-task="${a.task_id}"
+                   data-staff='${JSON.stringify(a.rec_staff)}'>Apply â–¶</button>`
+              : '<span class="alert-rec muted">No available staff</span>'}
+          </div>
+        </div>`;
+    }).join('');
+
+    list.querySelectorAll('.btn-apply-rec').forEach(btn =>
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        applySTRecommendation(btn);
+      }));
+    list.querySelectorAll('.alert-row[data-alert-idx]').forEach(row =>
+      row.addEventListener('click', () => showSTAlertDetail(items[Number(row.dataset.alertIdx)])));
+  }
+
+  renderAlertsList(shown);
+
+  document.getElementById('st-alerts-toggle').addEventListener('click', function() {
+    expanded = !expanded;
+    renderAlertsList(expanded ? alerts : shown);
+    this.textContent = expanded ? `Show top 10 â–´` : `Show top 10 â–¾`;
+  });
+};
+
 async function applySTRecommendation(btn) {
   const date = btn.dataset.date;
   const taskId = btn.dataset.task;
@@ -1139,5 +1289,76 @@ function renderSTPerfChart(el) {
 }
 
 // ── Expose to global ───────────────────────────────────────────
+// Final clean override to avoid mojibake in the alerts header/toggle text.
+renderSTAlerts = function(alerts, date) {
+  const panel = document.getElementById('st-alerts-panel');
+  if (!alerts || alerts.length === 0) {
+    panel.innerHTML = `<div class="alert-panel alert-ok"><span>OK</span> All tasks fully covered - no staffing gaps.</div>`;
+    return;
+  }
+
+  const crit = alerts.filter(a => a.priority === 'Critical');
+  const high = alerts.filter(a => a.priority !== 'Critical');
+  panel.innerHTML = `
+    <div class="alerts-container">
+      <div class="alerts-header">
+        <span class="alerts-title">Staffing Alerts &amp; Recommendations</span>
+        <span class="alerts-count">
+          ${crit.length ? `<span class="badge badge-crit">${crit.length} Critical</span>` : ''}
+          ${high.length ? `<span class="badge badge-warn">${high.length} High</span>` : ''}
+        </span>
+        <button class="btn-ghost" id="st-alerts-toggle">Show top 10 v</button>
+      </div>
+      <div id="st-alerts-list"></div>
+    </div>`;
+
+  const shown = alerts.slice(0, 10);
+  let expanded = false;
+  const list = document.getElementById('st-alerts-list');
+
+  function renderAlertsList(items) {
+    list.innerHTML = items.map((a, idx) => {
+      const flights = a.covered_flights || [];
+      const flightLabel = flights.length
+        ? flights.slice(0, 2).map(f => f.flight_no).join(', ') + (flights.length > 2 ? ` +${flights.length - 2}` : '')
+        : (a.flight_no || 'No linked flight');
+      return `
+        <div class="alert-row alert-${a.priority === 'Critical' ? 'crit' : 'warn'} alert-row-clickable" data-alert-idx="${idx}">
+          <div class="alert-row-left alert-row-detail">
+            <span class="badge ${a.priority === 'Critical' ? 'badge-crit' : 'badge-warn'}">${a.priority}</span>
+            <div class="alert-msg">
+              <div class="alert-msg-title">${flightLabel} - ${a.task} - ${a.start}-${a.end} - ${a.terminal || 'ALL'} / ${a.pier || 'ALL'} - Need ${a.staff_needed}, assigned ${a.assigned_count}, gap ${a.gap} - ${a.message}</div>
+            </div>
+          </div>
+          <div class="alert-row-right">
+            ${a.rec_staff && a.rec_staff.length
+              ? `<span class="alert-rec">Rec: ${a.rec_staff.join(', ')}</span>
+                 <button class="btn-apply-rec"
+                   data-date="${date}"
+                   data-task="${a.task_id}"
+                   data-staff='${JSON.stringify(a.rec_staff)}'>Apply</button>`
+              : '<span class="alert-rec muted">No available staff</span>'}
+          </div>
+        </div>`;
+    }).join('');
+
+    list.querySelectorAll('.btn-apply-rec').forEach(btn =>
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        applySTRecommendation(btn);
+      }));
+    list.querySelectorAll('.alert-row[data-alert-idx]').forEach(row =>
+      row.addEventListener('click', () => showSTAlertDetail(items[Number(row.dataset.alertIdx)])));
+  }
+
+  renderAlertsList(shown);
+
+  document.getElementById('st-alerts-toggle').addEventListener('click', function() {
+    expanded = !expanded;
+    renderAlertsList(expanded ? alerts : shown);
+    this.textContent = expanded ? `Show top 10 ^` : `Show top 10 v`;
+  });
+};
+
 window.initShortTerm = initShortTerm;
 

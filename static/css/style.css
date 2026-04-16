@@ -1195,6 +1195,19 @@ canvas { display: block; }
 .alert-warn .alert-dot { background: var(--warn); }
 .alert-ok   .alert-dot { background: var(--ok); }
 .alert-msg { flex: 1; color: var(--text-2); line-height: 1.4; }
+.alert-row-clickable { cursor: pointer; transition: background 0.15s ease; }
+.alert-row-clickable:hover { background: var(--surface-2); }
+.alert-row-detail { align-items: center; gap: 10px; min-width: 0; }
+.alert-msg { min-width: 0; }
+.alert-msg-title {
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.alert-msg-sub { display: none; }
+.alert-msg-body { display: none; }
 .btn-apply-rec {
   background: var(--navy);
   color: white;

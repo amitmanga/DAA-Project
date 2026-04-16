@@ -2247,15 +2247,36 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             rec_candidates = [s for s in staff_by_any.get(skill, [])
                                if s['id'] not in task['assigned'] and available(s, start, end, task.get('terminal', 'ALL'), task.get('skill', 'GNIB'))]
             rec_staff = [s['id'] for s in rec_candidates[:gap]]
+            covered_flights = []
+            for fn in task.get('flights_covered', []):
+                flight = flights_map.get(fn)
+                if not flight:
+                    continue
+                covered_flights.append({
+                    'flight_no': flight.get('flight_no', ''),
+                    'origin': flight.get('origin', ''),
+                    'origin_code': flight.get('origin_code', ''),
+                    'airline_name': flight.get('airline_name', ''),
+                    'sta': flight.get('sta', ''),
+                    'status': flight.get('status', ''),
+                    'gate': flight.get('gate', ''),
+                    'terminal': flight.get('terminal', ''),
+                    'pier': flight.get('pier', ''),
+                    'haul': flight.get('haul', ''),
+                })
             alerts.append({
                 'task_id':         task['id'],
                 'flight_no':       task.get('flight_no', ''),
                 'flights_covered': task.get('flights_covered', []),
+                'covered_flights': covered_flights,
                 'task':            task['task'],
                 'skill':           skill,
                 'priority':        task['priority'],
                 'start':           task['start'],
                 'end':             task['end'],
+                'staff_needed':    needed,
+                'assigned_count':  assigned_count,
+                'assigned_staff':  task['assigned'],
                 'gap':             gap,
                 'message':         task['alert'],
                 'rec_staff':       rec_staff,

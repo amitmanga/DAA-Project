@@ -289,6 +289,131 @@ function renderIDAlerts(alerts) {
     </div>`;
 }
 
+function _getIDAlertOverlay() {
+  let overlay = document.getElementById('id-alert-detail-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'id-alert-detail-overlay';
+    overlay.className = 'modal-overlay hidden';
+    overlay.innerHTML = `<div class="modal-box modal-box-wide" id="id-alert-detail-box"></div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) closeIDAlertDetail();
+    });
+  }
+  return overlay;
+}
+
+function showIDAlertDetail(alert) {
+  const overlay = _getIDAlertOverlay();
+  const box = document.getElementById('id-alert-detail-box');
+  if (!box || !alert) return;
+  const flights = alert.covered_flights || [];
+  box.innerHTML = `
+    <div class="modal-header">
+      <div style="flex:1">
+        <div class="modal-title">Live Alert · ${alert.task}</div>
+        <div class="fd-meta" style="margin-top:4px;color:rgba(255,255,255,0.75)">
+          ${alert.priority} · ${alert.start}–${alert.end} · ${alert.terminal || 'ALL'} / ${alert.pier || 'ALL'}
+        </div>
+      </div>
+      <button class="fd-close" onclick="closeIDAlertDetail()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="staff-detail-kpis">
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${alert.staff_needed}</div><div class="staff-detail-kpi-lbl">Staff Needed</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${alert.assigned_count}</div><div class="staff-detail-kpi-lbl">Assigned</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${alert.gap}</div><div class="staff-detail-kpi-lbl">Gap</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${flights.length}</div><div class="staff-detail-kpi-lbl">Flights Impacted</div></div>
+      </div>
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Live Alert Summary</div>
+        <div class="fd-task-row">
+          <div class="fd-task-name">${alert.message}</div>
+          <div class="fd-task-time">Task type: ${alert.task} · Skill: ${alert.skill} · Mode: ${alert.sharing_mode}</div>
+        </div>
+      </div>
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Recommended Staff</div>
+        ${alert.rec_staff && alert.rec_staff.length
+          ? `<div class="staff-breaks">${alert.rec_staff.map(s => `<span class="break-chip">${s}</span>`).join('')}</div>`
+          : '<div class="muted small">No available recommendation for this alert.</div>'}
+      </div>
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Assigned Staff</div>
+        ${alert.assigned_staff && alert.assigned_staff.length
+          ? `<div class="staff-breaks">${alert.assigned_staff.map(s => `<span class="break-chip">${s}</span>`).join('')}</div>`
+          : '<div class="muted small">No staff currently assigned.</div>'}
+      </div>
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Affected Flights</div>
+        ${flights.length
+          ? flights.map(f => `
+            <div class="staff-flight-row">
+              <span class="fn-cell">${f.flight_no}</span>
+              <span>${f.origin_code} ${f.origin}</span>
+              <span class="muted">${f.status} · ${f.sta} · Gate ${f.gate}</span>
+              <span class="status-badge ${f.status === 'Arrival' ? 'badge-info' : 'badge-accent'}">${f.status}</span>
+            </div>`).join('')
+          : '<div class="muted small">No linked flight details available.</div>'}
+      </div>
+    </div>`;
+  overlay.classList.remove('hidden');
+}
+
+function closeIDAlertDetail() {
+  const overlay = document.getElementById('id-alert-detail-overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+window.showIDAlertDetail = showIDAlertDetail;
+window.closeIDAlertDetail = closeIDAlertDetail;
+
+renderIDAlerts = function(alerts) {
+  const panel = document.getElementById('id-alerts-panel');
+  if (!alerts || !alerts.length) {
+    panel.innerHTML = '<div class="alert-panel alert-ok"><span>✅</span> All tasks fully covered.</div>';
+    return;
+  }
+  const shown = alerts.slice(0, 5);
+  panel.innerHTML = `
+    <div class="alerts-container">
+      <div class="alerts-header">
+        <span class="alerts-title">⚠ Live Alerts</span>
+        <span class="alerts-count">
+          ${alerts.filter(a=>a.priority==='Critical').length
+            ? `<span class="badge badge-crit">${alerts.filter(a=>a.priority==='Critical').length} Critical</span>` : ''}
+        </span>
+      </div>
+      <div id="id-alerts-list">
+        ${shown.map((a, idx) => {
+          const flights = a.covered_flights || [];
+          const flightLabel = flights.length
+            ? flights.slice(0, 2).map(f => f.flight_no).join(', ') + (flights.length > 2 ? ` +${flights.length - 2}` : '')
+            : (a.flight_no || 'No linked flight');
+          return `
+            <div class="alert-row alert-${a.priority==='Critical'?'crit':'warn'} alert-row-clickable" data-alert-idx="${idx}">
+              <div class="alert-row-left alert-row-detail">
+                <span class="badge ${a.priority==='Critical'?'badge-crit':'badge-warn'}">${a.priority}</span>
+                <div class="alert-msg">
+                  <div class="alert-msg-title">${flightLabel} · ${a.task}</div>
+                  <div class="alert-msg-sub">${a.start}–${a.end} · ${a.terminal || 'ALL'} / ${a.pier || 'ALL'} · Need ${a.staff_needed}, assigned ${a.assigned_count}, gap ${a.gap}</div>
+                  <div class="alert-msg-body">${a.message}</div>
+                </div>
+              </div>
+              <div class="alert-row-right">
+                ${a.rec_staff && a.rec_staff.length
+                  ? `<span class="alert-rec">Rec: ${a.rec_staff.slice(0,2).join(', ')}</span>` : ''}
+              </div>
+            </div>`;
+        }).join('')}
+        ${alerts.length > 5 ? `<div class="muted small" style="padding:6px 12px">+${alerts.length - 5} more alerts</div>` : ''}
+      </div>
+    </div>`;
+
+  panel.querySelectorAll('.alert-row[data-alert-idx]').forEach(row =>
+    row.addEventListener('click', () => showIDAlertDetail(shown[Number(row.dataset.alertIdx)])));
+};
+
 function renderIDStaffRoster(staff, absent) {
   const grid = document.getElementById('id-staff-grid');
   const absentContainer = document.getElementById('id-absent-staff');
@@ -1176,6 +1301,67 @@ function renderIDPerfChart(container) {
 }
 
 // ── Expose ──────────────────────────────────────────────────────
+renderIDAlerts = function(alerts) {
+  const panel = document.getElementById('id-alerts-panel');
+  if (!alerts || !alerts.length) {
+    panel.innerHTML = '<div class="alert-panel alert-ok"><span>OK</span> All tasks fully covered.</div>';
+    return;
+  }
+
+  const critCount = alerts.filter(a => a.priority === 'Critical').length;
+  const shown = alerts.slice(0, 10);
+  let expanded = false;
+
+  panel.innerHTML = `
+    <div class="alerts-container">
+      <div class="alerts-header">
+        <span class="alerts-title">Live Alerts</span>
+        <span class="alerts-count">
+          ${critCount ? `<span class="badge badge-crit">${critCount} Critical</span>` : ''}
+        </span>
+        <button class="btn-ghost" id="id-alerts-toggle">Show top 10 v</button>
+      </div>
+      <div id="id-alerts-list"></div>
+    </div>`;
+
+  const list = document.getElementById('id-alerts-list');
+
+  function renderAlertsList(items) {
+    list.innerHTML = `
+      ${items.map((a, idx) => {
+        const flights = a.covered_flights || [];
+        const flightLabel = flights.length
+          ? flights.slice(0, 2).map(f => f.flight_no).join(', ') + (flights.length > 2 ? ` +${flights.length - 2}` : '')
+          : (a.flight_no || 'No linked flight');
+        return `
+          <div class="alert-row alert-${a.priority === 'Critical' ? 'crit' : 'warn'} alert-row-clickable" data-alert-idx="${idx}">
+            <div class="alert-row-left alert-row-detail">
+              <span class="badge ${a.priority === 'Critical' ? 'badge-crit' : 'badge-warn'}">${a.priority}</span>
+              <div class="alert-msg">
+                <div class="alert-msg-title">${flightLabel} - ${a.task} - ${a.start}-${a.end} - ${a.terminal || 'ALL'} / ${a.pier || 'ALL'} - Need ${a.staff_needed}, assigned ${a.assigned_count}, gap ${a.gap} - ${a.message}</div>
+              </div>
+            </div>
+            <div class="alert-row-right">
+              ${a.rec_staff && a.rec_staff.length
+                ? `<span class="alert-rec">Rec: ${a.rec_staff.slice(0, 2).join(', ')}</span>` : ''}
+            </div>
+          </div>`;
+      }).join('')}
+      ${!expanded && alerts.length > 10 ? `<div class="muted small" style="padding:6px 12px">+${alerts.length - 10} more alerts</div>` : ''}`;
+
+    list.querySelectorAll('.alert-row[data-alert-idx]').forEach(row =>
+      row.addEventListener('click', () => showIDAlertDetail(items[Number(row.dataset.alertIdx)])));
+  }
+
+  renderAlertsList(shown);
+
+  document.getElementById('id-alerts-toggle').addEventListener('click', function() {
+    expanded = !expanded;
+    renderAlertsList(expanded ? alerts : shown);
+    this.textContent = expanded ? `Show top 10 ^` : `Show top 10 v`;
+  });
+};
+
 window.initIntraday = initIntraday;
 window.applyDelay = applyDelay;
 window.applyCustomDelay = applyCustomDelay;
