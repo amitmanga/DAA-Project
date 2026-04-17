@@ -1220,21 +1220,24 @@ function renderSkillSummaryTable(summary) {
   body.innerHTML = (summary || []).map(s => {
     const avgCol = gapColor(s.avg_gap);
     const peakCol = gapColor(s.peak_gap);
-    
+
     return `
       <tr>
         <td style="font-weight:600; color:${avgCol}">
           <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${SKILL_COLOR[s.skill]||'#888'};margin-right:8px;"></span>
           ${s.skill}
         </td>
-        <td style="font-weight:700; color:${avgCol}">${s.avg_gap > 0 ? '+' : ''}${s.avg_gap}</td>
-        <td style="font-weight:700; color:${peakCol}">${s.peak_gap > 0 ? '+' : ''}${s.peak_gap}</td>
+        <td>${s.avg_avail}</td>
+        <td>${s.avg_req}</td>
+        <td style="color:${avgCol}">${s.avg_gap > 0 ? '+' : ''}${s.avg_gap}</td>
+        <td>${s.peak_avail}</td>
+        <td>${s.peak_req}</td>
+        <td style="color:${peakCol}">${s.peak_gap > 0 ? '+' : ''}${s.peak_gap}</td>
         <td><span class="badge badge-${s.status === 'critical' ? 'crit' : (s.status === 'warning' ? 'warn' : 'ok')}">${s.status === 'ok' ? 'Surplus' : (s.status === 'warning' ? 'Balanced' : 'Shortfall')}</span></td>
       </tr>
     `;
   }).join('');
 }
-
 
 function renderMergedAbsenceBar(d) {
   const isDark = DAA.isDark();

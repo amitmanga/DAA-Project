@@ -694,10 +694,14 @@ def lt_merged_gap_skill():
         gap_total = round(avail_total - req_total, 1)
 
         sk_gaps = {}
+        sk_reqs = {}
+        sk_avails = {}
         for sk in all_skills:
             s_req = skill_req.get(wk_key, {}).get(sk, 0)
             s_avail = skill_avail.get(wk_key, {}).get(sk, 0)
             sk_gaps[sk] = round(s_avail - s_req, 1)
+            sk_reqs[sk] = round(s_req, 1)
+            sk_avails[sk] = round(s_avail, 1)
 
         weekly_data.append({
             'week': wk_key,
@@ -707,6 +711,8 @@ def lt_merged_gap_skill():
             'available': avail_total,
             'gap': gap_total,
             'skill_gaps': sk_gaps,
+            'skill_reqs': sk_reqs,
+            'skill_avails': sk_avails,
             'status': 'ok' if gap_total > 0 else ('warning' if gap_total == 0 else 'critical')
         })
 
@@ -714,14 +720,27 @@ def lt_merged_gap_skill():
     skill_summary = []
     for sk in all_skills:
         gaps = [w['skill_gaps'].get(sk, 0) for w in weekly_data]
+        reqs = [w['skill_reqs'].get(sk, 0) for w in weekly_data]
+        avails = [w['skill_avails'].get(sk, 0) for w in weekly_data]
+        
         avg_gap = round(sum(gaps) / len(gaps), 1) if gaps else 0
         peak_gap = round(max(gaps), 1) if gaps else 0
         min_gap = round(min(gaps), 1) if gaps else 0
+        
+        avg_req = round(sum(reqs) / len(reqs), 1) if reqs else 0
+        avg_avail = round(sum(avails) / len(avails), 1) if avails else 0
+        peak_req = round(max(reqs), 1) if reqs else 0
+        peak_avail = round(max(avails), 1) if avails else 0
+
         skill_summary.append({
             'skill': sk,
             'avg_gap': avg_gap,
             'peak_gap': peak_gap,
             'min_gap': min_gap,
+            'avg_req': avg_req,
+            'avg_avail': avg_avail,
+            'peak_req': peak_req,
+            'peak_avail': peak_avail,
             'status': 'ok' if avg_gap > 0 else ('warning' if avg_gap == 0 else 'critical')
         })
 

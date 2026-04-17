@@ -276,7 +276,16 @@
             <div class="table-container scrollable-10" style="height: 400px;">
               <table class="data-table compact-table" id="skill-summary-table">
                 <thead>
-                  <tr><th>Role</th><th>Avg</th><th>Peak</th><th>Status</th></tr>
+                  <tr>
+                    <th rowspan="2">Role</th>
+                    <th colspan="3" style="text-align: center; border-bottom: 1px solid var(--border);">Avg</th>
+                    <th colspan="3" style="text-align: center; border-bottom: 1px solid var(--border);">Peak</th>
+                    <th rowspan="2">Status</th>
+                  </tr>
+                  <tr>
+                    <th>Avail</th><th>Req</th><th>Gap</th>
+                    <th>Avail</th><th>Req</th><th>Gap</th>
+                  </tr>
                 </thead>
                 <tbody id="skill-summary-body"></tbody>
               </table>
