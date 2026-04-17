@@ -776,6 +776,9 @@ async function loadAllocationTable() {
   ALLOC_DATA = await api('/api/long-term/staff-allocation');
   const { months, skills } = ALLOC_DATA;
 
+  // Render heatmap
+  loadDailyHeatmap();
+
   const maxReq = Math.max(...months.map(m => m.total_required));
   const minReq = Math.min(...months.map(m => m.total_required));
 
@@ -891,6 +894,78 @@ function renderGateAllocationTable(allocData) {
       return `<td class="${cls}">${v.toFixed(1)}</td>`;
     }).join('');
   gtbody.appendChild(trTot);
+}
+
+/**
+ * Renders the daily resolution heatmap for the entire planning year.
+ */
+async function loadDailyHeatmap() {
+  const data = await api('/api/long-term/daily-heatmap');
+  if (!data || !data.days) return;
+
+  const { skills, days } = data;
+  const head = document.getElementById('lt-heatmap-head');
+  const body = document.getElementById('lt-heatmap-body');
+
+  // 1. Build Header
+  let headHtml = `<tr class="hm-header-row"><th class="skill-col">Role / Task</th>`;
+  days.forEach(d => {
+    headHtml += `<th class="${d.is_today ? 'is-today' : ''}" data-date="${d.date}">${d.label}</th>`;
+  });
+  headHtml += `</tr>`;
+  head.innerHTML = headHtml;
+
+  // 2. Build Body Rows
+  let bodyHtml = '';
+  skills.forEach(sk => {
+    bodyHtml += `<tr><td class="skill-label">${sk}</td>`;
+    days.forEach(d => {
+      const v = d.values[sk];
+      const cls = v ? `cell-${v.status}` : '';
+      const todayCls = d.is_today ? 'is-today' : '';
+      const valText = v ? Math.round(v.req) : '—';
+      
+      const tooltip = v 
+        ? `T: ${sk}\nD: ${d.date}\nReq: ${v.req} FTE\nAvail: ${v.avail} FTE\nStatus: ${v.status.toUpperCase()}`
+        : '';
+
+      bodyHtml += `<td class="${cls} ${todayCls}" title="${tooltip}">${valText}</td>`;
+    });
+    bodyHtml += `</tr>`;
+  });
+  body.innerHTML = bodyHtml;
+
+  // 3. Build Footer Rows (Summary Totals)
+  let footerHtml = '';
+  const footerRows = [
+    { label: 'Total FTE Required', key: 'req', fmt: v => v.toFixed(1), border: true },
+    { label: 'Total Staff Available', key: 'avail', fmt: v => v.toFixed(1), color: '#3498DB' },
+    { label: 'Staff Gap (FTE)', key: 'gap', fmt: v => (v > 0 ? '+' : '') + v.toFixed(1), color: v => gapColor(v) }
+  ];
+
+  footerRows.forEach(row => {
+    let trHtml = `<tr class="total-row ${row.border ? 'with-border' : ''}">`;
+    trHtml += `<td class="skill-label">${row.label}</td>`;
+    days.forEach(d => {
+      const val = d.totals[row.key];
+      const color = typeof row.color === 'function' ? row.color(val) : (row.color || 'inherit');
+      const todayCls = d.is_today ? 'is-today' : '';
+      trHtml += `<td class="${todayCls}" style="color:${color}; font-weight:700;">${row.fmt(val)}</td>`;
+    });
+    trHtml += `</tr>`;
+    footerHtml += trHtml;
+  });
+  body.innerHTML += footerHtml;
+
+  // 4. Scroll to Today
+  setTimeout(() => {
+    const todayCol = document.querySelector('.heatmap-table th.is-today');
+    const wrapper  = document.getElementById('lt-coverage-heatmap-wrapper');
+    if (todayCol && wrapper) {
+      const scrollPos = todayCol.offsetLeft - (wrapper.offsetWidth / 2) + (todayCol.offsetWidth / 2);
+      wrapper.scrollTo({ left: scrollPos, behavior: 'smooth' });
+    }
+  }, 300);
 }
 
 async function loadSkillBarChart() {

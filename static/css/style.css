@@ -2594,3 +2594,121 @@ canvas { display: block; }
   color: var(--text);
 }
 
+/* ── Long-Term Daily Heatmap ── */
+.heatmap-wrapper {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 600px;
+  position: relative;
+}
+
+.heatmap-table {
+  width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8rem;
+}
+
+.heatmap-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--navy);
+  color: white;
+  padding: 8px 4px;
+  text-align: center;
+  min-width: 45px;
+  border-bottom: 2px solid var(--accent);
+  border-right: 1px solid rgba(255,255,255,0.1);
+}
+
+.heatmap-table thead th.skill-col {
+  left: 0;
+  z-index: 20;
+  min-width: 160px;
+  text-align: left;
+  padding-left: 12px;
+}
+
+.heatmap-table tbody td {
+  padding: 6px 4px;
+  text-align: center;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  color: #fff;
+}
+
+.heatmap-table tbody td.skill-label {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 5;
+  text-align: left;
+  padding-left: 12px;
+  color: var(--text);
+  font-weight: 700;
+  border-right: 2px solid var(--accent);
+}
+
+/* Status color variables (Light theme: soft pastel tones) */
+.heatmap-table td.cell-gap, .leg.gap           { background: #fee2e2 !important; color: #991b1b !important; }
+.heatmap-table td.cell-warning, .leg.warning   { background: #fef3c7 !important; color: #92400e !important; }
+.heatmap-table td.cell-adequate, .leg.adequate { background: #dcfce7 !important; color: #166534 !important; }
+.heatmap-table td.cell-surplus, .leg.surplus   { background: #bbf7d0 !important; color: #166534 !important; }
+
+/* Dark mode overrides (Bold high-contrast colors) */
+[data-theme="dark"] .heatmap-table td.cell-gap, [data-theme="dark"] .leg.gap           { background: #e63946 !important; color: #ffffff !important; }
+[data-theme="dark"] .heatmap-table td.cell-warning, [data-theme="dark"] .leg.warning   { background: #f9c74f !important; color: #1a2744 !important; }
+[data-theme="dark"] .heatmap-table td.cell-adequate, [data-theme="dark"] .leg.adequate { background: #40916c !important; color: #ffffff !important; }
+[data-theme="dark"] .heatmap-table td.cell-surplus, [data-theme="dark"] .leg.surplus   { background: #2d6a4f !important; color: #ffffff !important; }
+
+/* Today highlighting */
+.heatmap-table th.is-today {
+  background: var(--accent) !important;
+  color: #fff;
+  font-weight: 800;
+}
+
+.heatmap-table td.is-today {
+  border-left: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+}
+
+/* Total Rows Styling */
+.heatmap-table tr.total-row td {
+  background: var(--surface-2);
+  font-weight: 700;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  border-top: 1px solid var(--border);
+}
+
+.heatmap-table tr.total-row.with-border td {
+  border-top: 2px solid var(--accent);
+}
+
+/* Ensure skill-label in total rows stays sticky for both left and bottom */
+.heatmap-table tr.total-row td.skill-label {
+  left: 0;
+  z-index: 25;
+}
+
+/* Specific offsets for stacked sticky bottom rows */
+.heatmap-table tr.total-row:nth-last-child(3) td { bottom: 64px; } /* Gap row is usually last, Available 2nd last, Required 3rd last */
+/* Wait, I rendered them as Req, Avail, Gap. So Gap is bottom: 0. */
+.heatmap-table tr.total-row:nth-last-child(1) td { bottom: 0; }
+.heatmap-table tr.total-row:nth-last-child(2) td { bottom: 32px; }
+.heatmap-table tr.total-row:nth-last-child(3) td { bottom: 64px; }
+
+.heatmap-table th.is-today::after {
+  content: "TODAY";
+  display: block;
+  font-size: 0.55rem;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+

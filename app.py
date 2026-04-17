@@ -558,6 +558,78 @@ def lt_staff_allocation():
     return jsonify({'months': result, 'skills': skills, 'by_gate': by_gate, 'gate_rows': GATE_ROWS})
 
 
+@app.route('/api/long-term/daily-heatmap')
+def lt_daily_heatmap():
+    """Daily heatmap data for the entire 2026 planning year."""
+    demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
+    
+    skills = ['GNIB', 'CBP Pre-clearance', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking', 'Ramp / Marshalling']
+    
+    # Generate all days for 2026
+    start_date = datetime(2026, 1, 1)
+    end_date = datetime(2026, 12, 31)
+    
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    days = []
+    curr = start_date
+    while curr <= end_date:
+        # ISO week key
+        wk_key = curr.strftime('%Y-W%V')
+        iso_str = curr.strftime('%Y-%m-%d')
+        
+        day_data = {
+            'date': iso_str,
+            'label': curr.strftime('%d %b'),
+            'is_today': iso_str == today_str,
+            'values': {}
+        }
+        
+        wk_sk_req = skill_req.get(wk_key, {})
+        wk_sk_avail = skill_avail.get(wk_key, {})
+        
+        day_total_req = 0
+        day_total_avail = 0
+        
+        for sk in skills:
+            req = wk_sk_req.get(sk, 0)
+            avail = wk_sk_avail.get(sk, 0)
+            
+            day_total_req += req
+            day_total_avail += avail
+            
+            gap = avail - req
+            
+            # Status Logic
+            if gap < -2.0:
+                status = 'gap'
+            elif gap < 0:
+                status = 'warning'
+            elif gap > 1.0:
+                status = 'surplus'
+            else:
+                status = 'adequate'
+                
+            day_data['values'][sk] = {
+                'req': round(req, 1),
+                'avail': round(avail, 1),
+                'status': status
+            }
+            
+        day_data['totals'] = {
+            'req': round(day_total_req, 1),
+            'avail': round(day_total_avail, 1),
+            'gap': round(day_total_avail - day_total_req, 1)
+        }
+        
+        days.append(day_data)
+        curr += timedelta(days=1)
+        
+    return jsonify({
+        'skills': skills,
+        'days': days
+    })
+
+
 @app.route('/api/long-term/imbalance')
 def lt_imbalance():
     demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
