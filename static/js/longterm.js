@@ -31,6 +31,20 @@ const CAT_COLOR = {
   'Cargo':                    '#f59e0b',
 };
 
+function gapClass(v) {
+  return v > 0 ? 'ok' : v === 0 ? 'warn' : 'crit';
+}
+
+function gapColor(v) {
+  return v > 0 ? DAA.ok : v === 0 ? DAA.warn : DAA.crit;
+}
+
+function gapBadge(v) {
+  if (v > 0) return { text: 'Surplus', cls: 'badge-ok' };
+  if (v === 0) return { text: 'Balanced', cls: 'badge-warn' };
+  return { text: 'Shortfall', cls: 'badge-crit' };
+}
+
 function updateChartDefaults() {
   const isDark = DAA.isDark();
   Chart.defaults.color       = isDark ? '#ffffff' : '#000000';
@@ -181,11 +195,11 @@ function showWeekBanner(wk) {
   document.getElementById('wb-title').textContent = `${wk.week} — ${wk.week_start} to ${wk.week_end}`;
   document.getElementById('wb-sub').textContent   = `${wk.month} 2026 · Click another week to compare, or reset to annual view`;
 
-  const gapColor = wk.gap > 0 ? 'crit' : 'ok';
+  const gapColorCls = gapClass(wk.gap);
   const chips = [
     { label: `FTE Required: ${fmtFte(wk.required)}`, cls: 'warn' },
     { label: `Available: ${wk.available}`,            cls: 'ok' },
-    { label: `Gap: ${wk.gap > 0 ? '+' : ''}${fmtFte(wk.gap)}`, cls: gapColor },
+    { label: `Gap: ${wk.gap > 0 ? '+' : ''}${fmtFte(wk.gap)}`, cls: gapColorCls },
     { label: `Utilisation: ${wk.utilisation}%`,       cls: wk.utilisation > 110 ? 'crit' : wk.utilisation > 90 ? 'warn' : 'ok' },
     { label: `Absent: ${wk.absent_count}`,            cls: wk.absent_count > 3 ? 'warn' : 'ok' },
   ];
@@ -235,15 +249,15 @@ function showDrilldown(wk) {
     `${wk.week} · ${wk.week_start} – ${wk.week_end}`;
 
   const statusBadge = document.getElementById('dd-status-badge');
-  if (wk.gap > 10) {
-    statusBadge.textContent   = 'Critical Gap';
-    statusBadge.className     = 'dd-badge badge-crit';
-  } else if (wk.gap > 0) {
-    statusBadge.textContent   = 'Shortfall';
+  if (wk.gap > 0) {
+    statusBadge.textContent   = 'Surplus';
+    statusBadge.className     = 'dd-badge badge-ok';
+  } else if (wk.gap === 0) {
+    statusBadge.textContent   = 'Balanced';
     statusBadge.className     = 'dd-badge badge-warn';
   } else {
-    statusBadge.textContent   = 'Balanced';
-    statusBadge.className     = 'dd-badge badge-ok';
+    statusBadge.textContent   = 'Shortfall';
+    statusBadge.className     = 'dd-badge badge-crit';
   }
 
   document.getElementById('dd-required').textContent  = fmtFte(wk.required);
@@ -251,7 +265,7 @@ function showDrilldown(wk) {
 
   const gapEl = document.getElementById('dd-gap');
   gapEl.textContent  = (wk.gap > 0 ? '+' : '') + fmtFte(wk.gap);
-  gapEl.style.color  = wk.gap > 0 ? DAA.crit : DAA.ok;
+  gapEl.style.color  = gapColor(wk.gap);
 
   const utilEl = document.getElementById('dd-util');
   utilEl.textContent = wk.utilisation + '%';
@@ -633,15 +647,14 @@ function renderImbalanceChart(selectedWeek) {
         backgroundColor: ALL_IMBALANCE.map(d => {
           const isSelected = selectedWeek && d.week === selectedWeek;
           const alpha = selectedWeek && !isSelected ? '.2' : '.75';
-          if (isSelected) return d.gap > 10 ? '#e74c3c' : d.gap > 0 ? '#f39c12' : '#2ecc71';
-          return d.gap > 10 ? `rgba(231,76,60,${alpha})` :
-                 d.gap > 0  ? `rgba(243,156,18,${alpha})` :
-                              `rgba(46,204,113,${alpha})`;
+          if (d.gap > 0) return isSelected ? '#2ecc71' : `rgba(46,204,113,${alpha})`;
+          if (d.gap === 0) return isSelected ? '#f39c12' : `rgba(243,156,18,${alpha})`;
+          return isSelected ? '#e74c3c' : `rgba(231,76,60,${alpha})`;
         }),
         borderColor: ALL_IMBALANCE.map(d =>
           selectedWeek && d.week === selectedWeek
             ? '#fff'
-            : d.gap > 10 ? '#E74C3C' : d.gap > 0 ? '#F39C12' : '#2ECC71'
+            : d.gap > 0 ? '#2ECC71' : d.gap === 0 ? '#F39C12' : '#E74C3C'
         ),
         borderWidth: ALL_IMBALANCE.map(d => selectedWeek && d.week === selectedWeek ? 2 : 1),
         borderRadius: 2,
@@ -693,15 +706,15 @@ function renderGapDonut() {
   destroyChart('gap-donut');
   let ok = 0, warn = 0, crit = 0;
   ALL_IMBALANCE.forEach(d => {
-    if (d.gap <= 0) ok++;
-    else if (d.gap <= 10) warn++;
+    if (d.gap > 0) ok++;
+    else if (d.gap === 0) warn++;
     else crit++;
   });
   const ctx = document.getElementById('gap-donut-chart').getContext('2d');
   CHARTS['gap-donut'] = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: ['Balanced / Surplus', 'Moderate Gap (≤10)', 'Critical Gap (>10)'],
+      labels: ['Surplus', 'Balanced', 'Shortfall'],
       datasets: [{
         data: [ok, warn, crit],
         backgroundColor: ['rgba(46,204,113,.7)', 'rgba(243,156,18,.7)', 'rgba(231,76,60,.7)'],
@@ -728,18 +741,14 @@ function renderGapTable(selectedWeek) {
     if (isSelected) {
       tr.style.cssText = `background:rgba(232,133,10,.12); outline:1px solid ${DAA.accent};`;
     }
-    const badge = d.status === 'ok'
-      ? '<span class="badge badge-ok">Balanced</span>'
-      : d.status === 'warning'
-        ? '<span class="badge badge-warn">Gap</span>'
-        : '<span class="badge badge-crit">Critical</span>';
-    const gapCol = d.gap > 0 ? '#E74C3C' : '#2ECC71';
+    const badgeMeta = gapBadge(d.gap);
+    const gapCol = gapColor(d.gap);
     tr.innerHTML = `
       <td>${isSelected ? '▶ ' : ''}${d.week}</td>
       <td>${d.date}</td><td>${d.month}</td>
       <td>${d.required}</td><td>${d.available}</td>
       <td style="color:${gapCol};font-weight:700">${d.gap>0?'+':''}${d.gap}</td>
-      <td>${badge}</td>`;
+      <td><span class="badge ${badgeMeta.cls}">${badgeMeta.text}</span></td>`;
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', () => {
       document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
@@ -813,7 +822,7 @@ async function loadAllocationTable() {
       fmt: v => v.toFixed(1), style: () => '', color: '#3498DB', border: false },
     { label: 'Gap (FTE)', key: 'gap',
       fmt: v => (v > 0 ? '+' : '') + v.toFixed(1),
-      style: () => '', color: m => m.gap > 5 ? '#E74C3C' : m.gap > 0 ? '#F39C12' : '#2ECC71',
+      style: () => '', color: m => gapColor(m.gap),
       border: false },
   ].forEach(row => {
     const tr = document.createElement('tr');
@@ -1119,7 +1128,7 @@ function renderSkillGapBarChart(data) {
       },
       scales: {
         x: { stacked: true, grid: { display: false }, ticks: { color: DAA.white() } },
-        y: { stacked: true, grid: { color: isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb' }, title: { display: true, text: 'FTE Gap (Shortfall > 0)', color: DAA.white() }, ticks: { color: DAA.white() } }
+        y: { stacked: true, grid: { color: isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb' }, title: { display: true, text: 'FTE Gap (Available - Required)', color: DAA.white() }, ticks: { color: DAA.white() } }
       }
     }
   });
@@ -1129,15 +1138,15 @@ function renderMergedGapDonut(weekly) {
   destroyChart('merged-gap-donut');
   let ok = 0, warn = 0, crit = 0;
   weekly.forEach(d => {
-    if (d.gap <= 0) ok++;
-    else if (d.gap <= 10) warn++;
+    if (d.gap > 0) ok++;
+    else if (d.gap === 0) warn++;
     else crit++;
   });
   const ctx = document.getElementById('merged-gap-donut').getContext('2d');
   CHARTS['merged-gap-donut'] = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: ['Balanced / Surplus', 'Moderate Gap', 'Critical Gap'],
+      labels: ['Surplus', 'Balanced', 'Shortfall'],
       datasets: [{
         data: [ok, warn, crit],
         backgroundColor: ['rgba(46,204,113,.7)', 'rgba(243,156,18,.7)', 'rgba(231,76,60,.7)'],
@@ -1193,11 +1202,11 @@ function renderWeeklyGapTable(data) {
   body.innerHTML = data.weekly.map(w => {
     let row = `<tr>
       <td><span style="font-weight:700">${w.week}</span> <span style="font-size:0.7rem;color:var(--muted)">(${w.date})</span></td>
-      <td style="font-weight:700; color:${w.gap > 0 ? 'var(--crit)' : 'var(--ok)'}">${w.gap > 0 ? '+' : ''}${w.gap}</td>
+      <td style="font-weight:700; color:${gapColor(w.gap)}">${w.gap > 0 ? '+' : ''}${w.gap}</td>
     `;
     data.skills.forEach(sk => {
       const g = w.skill_gaps[sk] || 0;
-      const col = g > 1 ? 'var(--crit)' : g > 0 ? 'var(--warn)' : 'var(--ok)';
+      const col = gapColor(g);
       row += `<td style="color:${col}">${g > 0 ? '+' : ''}${g}</td>`;
     });
     row += `</tr>`;
@@ -1209,8 +1218,8 @@ function renderWeeklyGapTable(data) {
 function renderSkillSummaryTable(summary) {
   const body = document.getElementById('skill-summary-body');
   body.innerHTML = (summary || []).map(s => {
-    const avgCol = s.avg_gap > 5 ? 'var(--crit)' : s.avg_gap > 0 ? 'var(--warn)' : 'var(--ok)';
-    const peakCol = s.peak_gap > 8 ? 'var(--crit)' : s.peak_gap > 0 ? 'var(--warn)' : 'var(--ok)';
+    const avgCol = gapColor(s.avg_gap);
+    const peakCol = gapColor(s.peak_gap);
     
     return `
       <tr>
@@ -1220,7 +1229,7 @@ function renderSkillSummaryTable(summary) {
         </td>
         <td style="font-weight:700; color:${avgCol}">${s.avg_gap > 0 ? '+' : ''}${s.avg_gap}</td>
         <td style="font-weight:700; color:${peakCol}">${s.peak_gap > 0 ? '+' : ''}${s.peak_gap}</td>
-        <td><span class="badge badge-${s.status === 'critical' ? 'crit' : (s.status === 'warning' ? 'warn' : 'ok')}">${s.status === 'ok' ? 'Balanced' : (s.status === 'warning' ? 'Warning' : 'Critical')}</span></td>
+        <td><span class="badge badge-${s.status === 'critical' ? 'crit' : (s.status === 'warning' ? 'warn' : 'ok')}">${s.status === 'ok' ? 'Surplus' : (s.status === 'warning' ? 'Balanced' : 'Shortfall')}</span></td>
       </tr>
     `;
   }).join('');

@@ -609,52 +609,66 @@ function _renderCompareTable(details) {
 
   // 2. Build row data
   const rows = [];
-  const totals = { base: 0, scenarios: details.map(() => 0), imbalances: details.map(() => 0) };
+  const totals = { baseAvail: 0, baseGap: 0, scenarios: details.map(() => 0), imbalances: details.map(() => 0) };
 
   sortedMonths.forEach(m => {
-      let baseVal = 0;
+      let baseAvail = 0;
+      let baseReq = 0;
       details.forEach(sc => {
           if (!sc.comparison_data) return;
           const idx = sc.comparison_data.months.indexOf(m);
-          if (idx !== -1) baseVal = sc.comparison_data.current_fte[idx];
+          if (idx !== -1) {
+              baseAvail = sc.comparison_data.current_fte[idx];
+              baseReq = sc.comparison_data.demand_fte[idx];
+          }
       });
 
       const scValues = details.map(sc => {
-          if (!sc.comparison_data) return baseVal;
+          if (!sc.comparison_data) return baseAvail;
           const idx = sc.comparison_data.months.indexOf(m);
-          return idx !== -1 ? sc.comparison_data.scenario_fte_avail[idx] : baseVal;
+          return idx !== -1 ? sc.comparison_data.scenario_fte_avail[idx] : baseAvail;
       });
 
-      const imbalances = scValues.map(v => v - baseVal);
-      const differs = imbalances.some(imb => Math.abs(imb) > 0.01);
+      const imbalances = details.map(sc => {
+          if (!sc.comparison_data) return baseAvail - baseReq;
+          const idx = sc.comparison_data.months.indexOf(m);
+          if (idx === -1) return baseAvail - baseReq;
+          return sc.comparison_data.scenario_fte_avail[idx] - sc.comparison_data.scenario_fte_req[idx];
+      });
+      const baseGap = baseAvail - baseReq;
+      const differs = imbalances.some(imb => Math.abs(imb - baseGap) > 0.01);
       
       if (differs) {
-          rows.push({ month: m, base: baseVal, values: scValues, imbalances: imbalances });
-          totals.base += baseVal;
+          rows.push({ month: m, baseAvail: baseAvail, baseGap: baseGap, values: scValues, imbalances: imbalances });
+          totals.baseAvail += baseAvail;
+          totals.baseGap += baseGap;
           scValues.forEach((v, i) => totals.scenarios[i] += v);
           imbalances.forEach((imb, i) => totals.imbalances[i] += imb);
       }
   });
 
   if (rows.length === 0) {
-      container.innerHTML = `<div class="empty-state">No differences in Available FTE found across the selected date ranges.</div>`;
+      container.innerHTML = `<div class="empty-state">No gap differences found across the selected date ranges.</div>`;
       return;
   }
 
   // 3. Render Table
   const scenarioHeaders = details.map(sc => `<th>${sc.name} (Avail)</th>`).join('');
-  const imbalanceHeaders = details.map(sc => `<th>${sc.name} Adj</th>`).join('');
+  const imbalanceHeaders = details.map(sc => `<th>${sc.name} Gap</th>`).join('');
+
+  const gapCell = (v) => {
+      const sign = v > 0 ? '+' : '';
+      const cls = v > 0 ? 'sc-imbalance-neg' : (v < 0 ? 'sc-imbalance-pos' : '');
+      return `<td class="${cls}">${sign}${v.toFixed(1)}</td>`;
+  };
 
   const tableBody = rows.map(r => `
     <tr>
       <td>${r.month}</td>
-      <td>${r.base.toFixed(1)}</td>
+      <td>${r.baseAvail.toFixed(1)}</td>
       ${r.values.map(v => `<td>${v.toFixed(1)}</td>`).join('')}
-      ${r.imbalances.map(imb => {
-          const sign = imb > 0 ? '+' : '';
-          const cls = imb > 0 ? 'sc-imbalance-neg' : (imb < 0 ? 'sc-imbalance-pos' : '');
-          return `<td class="${cls}">${sign}${imb.toFixed(1)}</td>`;
-      }).join('')}
+      ${gapCell(r.baseGap)}
+      ${r.imbalances.map(imb => gapCell(imb)).join('')}
     </tr>
   `).join('');
 
@@ -665,6 +679,7 @@ function _renderCompareTable(details) {
           <th>Month</th>
           <th>Base Available</th>
           ${scenarioHeaders}
+          <th>Base Gap</th>
           ${imbalanceHeaders}
         </tr>
       </thead>
@@ -674,12 +689,10 @@ function _renderCompareTable(details) {
       <tfoot class="sc-sticky-footer">
         <tr>
           <td>TOTAL</td>
-          <td>${totals.base.toFixed(1)}</td>
+          <td>${totals.baseAvail.toFixed(1)}</td>
           ${totals.scenarios.map(v => `<td>${v.toFixed(1)}</td>`).join('')}
-          ${totals.imbalances.map(imb => {
-              const sign = imb > 0 ? '+' : '';
-              return `<td>${sign}${imb.toFixed(1)}</td>`;
-          }).join('')}
+          ${gapCell(totals.baseGap)}
+          ${totals.imbalances.map(imb => gapCell(imb)).join('')}
         </tr>
       </tfoot>
     </table>

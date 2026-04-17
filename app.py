@@ -388,7 +388,7 @@ def _build_heatmap_row(wk_key, staff_req, skill_req, staff_avail, demand):
         return None
     req   = staff_req.get(wk_key, 0)
     avail = staff_avail.get(wk_key, 50)
-    gap   = round(req - avail, 1)
+    gap   = round(avail - req, 1)
     util  = round(min(req / avail * 100, 150) if avail > 0 else 100, 1)
 
     # Per-skill FTE for the week
@@ -535,7 +535,7 @@ def lt_staff_allocation():
             row[sk] = round(avg(vals), 1)
         row['total_required'] = round(avg(monthly_total_req.get(mk, [])), 1)
         row['total_available'] = round(avg(monthly_total_avail.get(mk, [])), 1)
-        row['gap'] = round(row['total_required'] - row['total_available'], 1)
+        row['gap'] = round(row['total_available'] - row['total_required'], 1)
         result.append(row)
 
         # Gate headcount: split non-bussing FTE across contact piers by stand ratio
@@ -571,7 +571,7 @@ def lt_imbalance():
             continue
         req = staff_req[wk_key]
         avail = staff_avail.get(wk_key, 50)
-        gap = round(req - avail, 1)
+        gap = round(avail - req, 1)
         result.append({
             'week': wk_key,
             'date': d.strftime('%d %b %Y'),
@@ -579,7 +579,7 @@ def lt_imbalance():
             'required': req,
             'available': avail,
             'gap': gap,
-            'status': 'critical' if gap > 10 else ('warning' if gap > 0 else 'ok'),
+            'status': 'ok' if gap > 0 else ('warning' if gap == 0 else 'critical'),
         })
 
     return jsonify(result)
@@ -691,13 +691,13 @@ def lt_merged_gap_skill():
         
         req_total = staff_req[wk_key]
         avail_total = staff_avail.get(wk_key, 50)
-        gap_total = round(req_total - avail_total, 1)
+        gap_total = round(avail_total - req_total, 1)
 
         sk_gaps = {}
         for sk in all_skills:
             s_req = skill_req.get(wk_key, {}).get(sk, 0)
             s_avail = skill_avail.get(wk_key, {}).get(sk, 0)
-            sk_gaps[sk] = round(s_req - s_avail, 1)
+            sk_gaps[sk] = round(s_avail - s_req, 1)
 
         weekly_data.append({
             'week': wk_key,
@@ -707,7 +707,7 @@ def lt_merged_gap_skill():
             'available': avail_total,
             'gap': gap_total,
             'skill_gaps': sk_gaps,
-            'status': 'critical' if gap_total > 10 else ('warning' if gap_total > 0 else 'ok')
+            'status': 'ok' if gap_total > 0 else ('warning' if gap_total == 0 else 'critical')
         })
 
     # Summary by skill (average across all weeks)
@@ -716,11 +716,13 @@ def lt_merged_gap_skill():
         gaps = [w['skill_gaps'].get(sk, 0) for w in weekly_data]
         avg_gap = round(sum(gaps) / len(gaps), 1) if gaps else 0
         peak_gap = round(max(gaps), 1) if gaps else 0
+        min_gap = round(min(gaps), 1) if gaps else 0
         skill_summary.append({
             'skill': sk,
             'avg_gap': avg_gap,
             'peak_gap': peak_gap,
-            'status': 'critical' if avg_gap > 5 else ('warning' if avg_gap > 0 else 'ok')
+            'min_gap': min_gap,
+            'status': 'ok' if avg_gap > 0 else ('warning' if avg_gap == 0 else 'critical')
         })
 
     # Historical monthly absences (from original skills API)
