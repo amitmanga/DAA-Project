@@ -2383,6 +2383,106 @@ def st_day(date_str):
     return jsonify(result)
 
 
+@app.route('/api/short-term/roster-board')
+def st_roster_board():
+    """Returns combined roster data for all short-term dates (D+1 to D+3)."""
+    today = datetime.now()
+    flight_dates = set(f['date'] for f in read_csv_flights())
+    
+    dates = []
+    days_data = []
+    
+    # We look for D+1, D+2, D+3
+    for i in [1, 2, 3]:
+        d = today + timedelta(days=i)
+        date_iso = d.strftime('%Y-%m-%d')
+        date_csv = d.strftime('%d-%b-%y')
+        if date_csv in flight_dates:
+            dates.append({
+                'date': date_iso,
+                'label': d.strftime('%a %d')
+            })
+            days_data.append(_get_short_term_schedule(date_iso))
+            
+    if not days_data:
+        return jsonify({'error': 'No data available for short-term dates'}), 404
+        
+    # Aggregate by employee
+    emp_map = {}
+    for i, day in enumerate(days_data):
+        date_key = dates[i]['date']
+        # Regular staff
+        for s in day.get('staff', []):
+            eid = s['id']
+            if eid not in emp_map:
+                emp_map[eid] = {
+                    'id': eid,
+                    'name': eid, # Using ID as name for now as the image shows names/IDs
+                    'skill': s.get('skill1', ''),
+                    'shifts': {}
+                }
+            
+            # Extract shift type (E, L, N) based on start time
+            start = s.get('shift_start', 0)
+            if 240 <= start < 600: # 4am to 10am
+                stype = 'EARLY'
+                code = 'E'
+            elif 600 <= start < 1080: # 10am to 6pm
+                stype = 'LATE'
+                code = 'L'
+            elif start >= 1080 or start < 240: # 6pm to 4am
+                stype = 'NIGHT'
+                code = 'N'
+            else:
+                stype = 'OTHER'
+                code = 'O'
+                
+            timings = f"{mins_to_time(s['shift_start'])}-{mins_to_time(s['shift_end'])}"
+            emp_map[eid]['shifts'][date_key] = {
+                'label': f"{code} {timings}",
+                'type': stype,
+                'timings': timings,
+                'is_absent': False
+            }
+            
+        # Absent staff
+        for s in day.get('absent_staff', []):
+            eid = s['id']
+            if eid not in emp_map:
+                emp_map[eid] = {
+                    'id': eid,
+                    'name': eid,
+                    'skill': s.get('skill1', ''),
+                    'shifts': {}
+                }
+            emp_map[eid]['shifts'][date_key] = {
+                'label': 'LEAVE',
+                'type': 'LEAVE',
+                'timings': s.get('leave_type', 'Absent'),
+                'is_absent': True
+            }
+            
+    # For employees who are "OFF" on some days, fill in the blanks
+    for eid in emp_map:
+        for d in dates:
+            dk = d['date']
+            if dk not in emp_map[eid]['shifts']:
+                emp_map[eid]['shifts'][dk] = {
+                    'label': 'OFF',
+                    'type': 'OFF',
+                    'timings': '',
+                    'is_absent': False
+                }
+            
+    # Convert to sorted list
+    employees = sorted(emp_map.values(), key=lambda x: x['id'])
+    
+    return jsonify({
+        'dates': dates,
+        'employees': employees
+    })
+
+
 @app.route('/api/short-term/apply-rec', methods=['POST'])
 def st_apply_rec():
     """Accept a recommendation: add staff_ids to task_id for a date, re-optimise."""

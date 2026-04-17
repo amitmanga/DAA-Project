@@ -101,6 +101,7 @@ function renderShortTermDay() {
       <button class="sub-tab ${ST_ACTIVE_TAB==='flights'?'active':''}" data-sttab="flights">✈ Flights &amp; Tasks</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff'?'active':''}" data-sttab="staff">👥 Staff List</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Roster Timeline</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='roster-board'?'active':''}" data-sttab="roster-board">📋 Roster Board</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='gate-timeline'?'active':''}" data-sttab="gate-timeline">🛬 Gate Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='opt'?'active':''}" data-sttab="opt">⚙ Optimization</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='perf'?'active':''}" data-sttab="perf">📈 Performance</button>
@@ -381,6 +382,7 @@ function renderSTSubContent() {
   if (ST_ACTIVE_TAB === 'flights') renderSTFlightsTab(el);
   else if (ST_ACTIVE_TAB === 'staff') renderSTStaffTab(el);
   else if (ST_ACTIVE_TAB === 'staff-timeline') renderSTRosterTimeline(el);
+  else if (ST_ACTIVE_TAB === 'roster-board') renderSTRosterBoard(el);
   else if (ST_ACTIVE_TAB === 'gate-timeline') renderSTGateTimeline(el);
   else if (ST_ACTIVE_TAB === 'opt') renderSTOptimization(el);
   else if (ST_ACTIVE_TAB === 'perf') renderSTPerfChart(el);
@@ -499,6 +501,86 @@ async function renderSTRosterTimeline(container) {
   searchInput.addEventListener('input', refreshTimeline);
   shiftSelect.addEventListener('change', refreshTimeline);
   refreshTimeline();
+}
+
+// ── Roster Board Tab ─────────────────────────────────────────────
+async function renderSTRosterBoard(container) {
+  container.innerHTML = `
+    <div class="panel mt-16" style="min-height:200px">
+      <div class="loading-spinner"><div class="spinner"></div><span>Loading multi-day roster board…</span></div>
+    </div>
+  `;
+
+  try {
+    const data = await fetch('/api/short-term/roster-board').then(r => r.json());
+    if (data.error) throw new Error(data.error);
+
+    const dates = data.dates;
+    const employees = data.employees;
+
+    container.innerHTML = `
+      <div class="panel mt-16">
+        <div class="panel-title-row" style="margin-bottom:24px; border-bottom:1px solid var(--border); padding-bottom:16px;">
+          <div>
+            <h2 class="panel-title" style="margin:0; font-size:1.4rem; color:var(--text); text-transform:none;">📋 Individual Roster Board — Short-Term Overview</h2>
+            <p class="section-hint" style="margin:6px 0 0; color:var(--muted); font-size:0.88rem;">Weekly shift patterns for all rostered staff across the next 3 days</p>
+          </div>
+        </div>
+        
+        <div class="roster-board-container">
+          <table class="rb-table">
+            <thead>
+              <tr>
+                <th class="rb-staff-cell">Employee / Role</th>
+                ${dates.map(d => `<th>${d.label}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${employees.map(emp => `
+                <tr>
+                  <td class="rb-staff-cell">
+                    <div class="rb-staff-name">${emp.id}</div>
+                    <div class="rb-staff-skill">${emp.skill}</div>
+                  </td>
+                  ${dates.map(d => {
+                    const shift = emp.shifts[d.date];
+                    const cls = `rb-${shift.type.toLowerCase()}`;
+                    const label = shift.label.split(' ')[0];
+                    return `
+                      <td>
+                        <div class="rb-shift-block ${cls}" title="${shift.timings || shift.label}">
+                          <div class="rb-shift-label">${label}</div>
+                          <div class="rb-shift-time">${shift.timings}</div>
+                        </div>
+                      </td>
+                    `;
+                  }).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="rb-legend">
+          <div class="rb-leg-item"><div class="rb-leg-swatch rb-early"></div><span>Early shift (E)</span></div>
+          <div class="rb-leg-item"><div class="rb-leg-swatch rb-late"></div><span>Late shift (L)</span></div>
+          <div class="rb-leg-item"><div class="rb-leg-swatch rb-night"></div><span>Night shift (N)</span></div>
+          <div class="rb-leg-item"><div class="rb-leg-swatch rb-leave"></div><span>Annual leave</span></div>
+          <div class="rb-leg-item"><div class="rb-leg-swatch rb-off"></div><span>Off duty</span></div>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `
+      <div class="panel mt-16" style="border-top:4px solid var(--crit);">
+        <h2 class="panel-title">Roster Board Error</h2>
+        <div class="alert-crit" style="border-radius:6px; padding:16px;">
+          ${err.message}
+        </div>
+        <p class="muted small mt-12">This may happen if data for the requested dates is not yet available or the optimizer failed.</p>
+      </div>
+    `;
+  }
 }
 
 // ── Optimization Tab ─────────────────────────────────────────────
