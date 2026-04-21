@@ -37,8 +37,7 @@ SKILL_MAP = {
     'Litter Picking':       'Litter Picking',
     'Ramp / Marshalling':   'Ramp / Marshalling',
     'Arr Customer Service': 'Arr Customer Service',
-    'Check-in/Trolleys':    'Check-in / Trolleys',
-    'Check-in / Trolleys':  'Check-in / Trolleys',
+    'Check-in/Trolleys':    'Check-in/Trolleys',
     'Dep/Trolleys':         'Dep / Trolleys',
     'Dep / Trolleys':       'Dep / Trolleys',
     'T1/T2 Trolleys L/UL':  'Dep / Trolleys', # Proxy for T1 zone work
@@ -85,7 +84,7 @@ STAFF_MINS_PER_MOVEMENT = {
 # Skill share of each (category, status) task bundle — must sum to 1.0
 SKILL_SPLIT = {
     ('International Short-Haul', 'Departure'): {'GNIB': 0.76, 'Ramp / Marshalling': 0.19, 'Bussing': 0.05},
-    ('International Short-Haul', 'Arrival'):   {'Arr Customer Service': 0.51, 'Check-in / Trolleys': 0.42, 'Bussing': 0.07},
+    ('International Short-Haul', 'Arrival'):   {'Arr Customer Service': 0.51, 'Check-in/Trolleys': 0.42, 'Bussing': 0.07},
     ('International Long-Haul',  'Departure'): {'GNIB': 0.70, 'Ramp / Marshalling': 0.29, 'Bussing': 0.01},
     ('International Long-Haul',  'Arrival'):   {'Arr Customer Service': 0.96, 'Bussing': 0.04},
     ('Transatlantic CBP',        'Departure'): {'GNIB': 0.70, 'Ramp / Marshalling': 0.29, 'Bussing': 0.01},
@@ -486,6 +485,7 @@ def lt_staff_allocation():
     monthly_total_req = defaultdict(list)
     monthly_total_avail = defaultdict(list)
 
+    req_skill_set = set()
     for wk_key, sk_req in skill_req.items():
         try:
             year_str, w_str = wk_key.split('-W')
@@ -495,16 +495,32 @@ def lt_staff_allocation():
         month_key = d.strftime('%b %Y')
         for skill, fte in sk_req.items():
             monthly_skill[month_key][skill].append(fte)
+            req_skill_set.add(skill)
         monthly_total_req[month_key].append(staff_req.get(wk_key, 0))
         monthly_total_avail[month_key].append(staff_avail.get(wk_key, 50))
 
-    # Collect all skills that actually appear in the demand data
+    # Also include staff-availability counts for roles only in staff data (not in demand model)
+    for wk_key, sk_av in skill_avail.items():
+        try:
+            year_str, w_str = wk_key.split('-W')
+            d = datetime.strptime(f'{year_str}-W{int(w_str):02d}-1', '%G-W%V-%u')
+        except:
+            continue
+        month_key = d.strftime('%b %Y')
+        for skill, count in sk_av.items():
+            if skill not in req_skill_set:
+                monthly_skill[month_key][skill].append(count)
+
+    # Collect all skills from both demand and staff availability data
     all_skill_set = set()
     for wk_sk in skill_req.values():
         all_skill_set.update(wk_sk.keys())
+    for wk_sk in skill_avail.values():
+        all_skill_set.update(wk_sk.keys())
     PREFERRED_ORDER = [
-        'GNIB', 'CBP Pre-clearance', 'Arr Customer Service', 'Check-in / Trolleys',
-        'Dep / Trolleys', 'T1/T2 Trolleys L/UL', 'Ramp / Marshalling', 'Bussing',
+        'GNIB', 'CBP Pre-clearance', 'Arr Customer Service', 'Check-in/Trolleys',
+        'Dep / Trolleys', 'T1/T2 Trolleys L/UL', 'Gate 335', 'Departures',
+        'Transfer Corridor', 'Ramp / Marshalling', 'Bussing',
         'PBZ', 'Mezz Operation', 'Litter Picking',
     ]
     skills = [s for s in PREFERRED_ORDER if s in all_skill_set]
@@ -573,8 +589,12 @@ def lt_daily_heatmap():
     """Daily heatmap data for the entire 2026 planning year."""
     demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
     
-    skills = ['GNIB', 'CBP Pre-clearance', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking', 'Ramp / Marshalling']
-    
+    skills = [
+        'GNIB', 'CBP Pre-clearance', 'Arr Customer Service', 'Check-in/Trolleys',
+        'Dep / Trolleys', 'T1/T2 Trolleys L/UL', 'Transfer Corridor',
+        'Ramp / Marshalling', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking',
+    ]
+
     # Generate all days for 2026
     start_date = datetime(2026, 1, 1)
     end_date = datetime(2026, 12, 31)
@@ -930,7 +950,7 @@ TASK_SKILL = {
     'Ramp / Marshalling':   'GNIB',
     'Bussing':              'Bussing',
     'Transfer Corridor':    'GNIB',
-    'Check-in / Trolleys':  'GNIB',
+    'Check-in/Trolleys':  'GNIB',
     'Dep / Trolleys':       'Bussing',
     'Arr Customer Service': 'GNIB',
     'Mezz Operation':       'Mezz Operation',
@@ -966,7 +986,7 @@ TASK_SHARED = frozenset({
 })
 
 TASK_PARTIALLY_SHARED = frozenset({
-    'Check-in / Trolleys',
+    'Check-in/Trolleys',
     'Dep / Trolleys',
     'PBZ',
 })
@@ -1661,7 +1681,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
     # These are the task names we categorise as 3-hour blocks:
     BLOCK_TASK_NAMES = frozenset({
         'GNIB / Immigration',
-        'Check-in / Trolleys',
+        'Check-in/Trolleys',
         'Dep / Trolleys',
         'T1/T2 Trolleys L/UL',
         'Ramp / Marshalling',   # pier-block level, not per-flight
@@ -2756,9 +2776,13 @@ DEFAULT_CONSTRAINTS = {
     'absence_cv':           0.02,   # CV of absence rate
     'cross_training_rate':  0.15,   # fraction of each skill pool cross-trained
     'new_hire_fraction':    0.00,   # fraction of workforce who are new hires
-    'contractor_staff':     {'GNIB': 0, 'CBP Pre-clearance': 0, 'Bussing': 0,
+    'contractor_staff':     {'GNIB': 0, 'CBP Pre-clearance': 0, 'Arr Customer Service': 0,
+                             'Check-in/Trolleys': 0, 'Dep / Trolleys': 0, 'T1/T2 Trolleys L/UL': 0,
+                             'Transfer Corridor': 0, 'Ramp / Marshalling': 0, 'Bussing': 0,
                              'PBZ': 0, 'Mezz Operation': 0, 'Litter Picking': 0},
-    'extra_staff':          {'GNIB': 0, 'CBP Pre-clearance': 0, 'Bussing': 0,
+    'extra_staff':          {'GNIB': 0, 'CBP Pre-clearance': 0, 'Arr Customer Service': 0,
+                             'Check-in/Trolleys': 0, 'Dep / Trolleys': 0, 'T1/T2 Trolleys L/UL': 0,
+                             'Transfer Corridor': 0, 'Ramp / Marshalling': 0, 'Bussing': 0,
                              'PBZ': 0, 'Mezz Operation': 0, 'Litter Picking': 0},
     # ── Simulation ───────────────────────────────────────────────────────────
     'n_runs':               500,
@@ -2858,8 +2882,12 @@ def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
 
     new_hire_prod = 1.0 - max(0.0, min(1.0, new_hire_frac)) * 0.30
 
-    skills = ['GNIB', 'CBP Pre-clearance', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking']
-    
+    skills = [
+        'GNIB', 'CBP Pre-clearance', 'Arr Customer Service', 'Check-in/Trolleys',
+        'Dep / Trolleys', 'T1/T2 Trolleys L/UL', 'Transfer Corridor',
+        'Ramp / Marshalling', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking',
+    ]
+
     # Group weeks by month
     month_map = defaultdict(list)
     for wk in included_weeks:

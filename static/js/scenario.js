@@ -131,12 +131,12 @@ function _buildUI() {
             <span class="sc-hint" style="font-weight:400;font-size:11px;margin-left:6px">100% reliable additional hires</span>
           </div>
           <div class="sc-extra-grid" id="sc-extra-grid">
-            ${['GNIB','CBP Pre-clearance','Bussing','PBZ','Mezz Operation','Litter Picking'].map(sk => `
+            ${['GNIB','CBP Pre-clearance','Arr Customer Service','Check-in/Trolleys','Dep / Trolleys','T1/T2 Trolleys L/UL','Transfer Corridor','Ramp / Marshalling','Bussing','PBZ','Mezz Operation','Litter Picking'].map(sk => `
             <div class="sc-extra-row">
               <span class="sc-extra-skill">${sk}</span>
               <div class="sc-spinner-wrap">
                 <button class="sc-spin-btn" onclick="scExtraAdj('extra','${sk}',-1)">−</button>
-                <span class="sc-spin-val" id="sc-extra-${sk.replace(/ /g,'_')}">0</span>
+                <span class="sc-spin-val" id="sc-extra-${sk.replace(/ /g,'_').replace(/\//g,'_')}">0</span>
                 <button class="sc-spin-btn" onclick="scExtraAdj('extra','${sk}',+1)">+</button>
               </div>
             </div>`).join('')}
@@ -146,12 +146,12 @@ function _buildUI() {
             <span class="sc-hint" style="font-weight:400;font-size:11px;margin-left:6px">85% ± 10% attendance reliability per run</span>
           </div>
           <div class="sc-extra-grid" id="sc-contr-grid">
-            ${['GNIB','CBP Pre-clearance','Bussing','PBZ','Mezz Operation','Litter Picking'].map(sk => `
+            ${['GNIB','CBP Pre-clearance','Arr Customer Service','Check-in/Trolleys','Dep / Trolleys','T1/T2 Trolleys L/UL','Transfer Corridor','Ramp / Marshalling','Bussing','PBZ','Mezz Operation','Litter Picking'].map(sk => `
             <div class="sc-extra-row">
               <span class="sc-extra-skill">${sk}</span>
               <div class="sc-spinner-wrap">
                 <button class="sc-spin-btn" onclick="scExtraAdj('contr','${sk}',-1)">−</button>
-                <span class="sc-spin-val" id="sc-contr-${sk.replace(/ /g,'_')}">0</span>
+                <span class="sc-spin-val" id="sc-contr-${sk.replace(/ /g,'_').replace(/\//g,'_')}">0</span>
                 <button class="sc-spin-btn" onclick="scExtraAdj('contr','${sk}',+1)">+</button>
               </div>
             </div>`).join('')}
@@ -200,6 +200,12 @@ function _buildUI() {
                  <div class="sc-filters" id="sc-monthly-skill-filter" style="display:flex; flex-wrap:wrap; gap:8px; font-size:11px;">
                    <label><input type="checkbox" value="GNIB" checked onchange="scUpdateMonthlyRiskFilter()"> GNIB</label>
                    <label><input type="checkbox" value="CBP Pre-clearance" checked onchange="scUpdateMonthlyRiskFilter()"> CBP Pre-clearance</label>
+                   <label><input type="checkbox" value="Arr Customer Service" checked onchange="scUpdateMonthlyRiskFilter()"> Arr Customer Service</label>
+                   <label><input type="checkbox" value="Check-in/Trolleys" checked onchange="scUpdateMonthlyRiskFilter()"> Check-in/Trolleys</label>
+                   <label><input type="checkbox" value="Dep / Trolleys" checked onchange="scUpdateMonthlyRiskFilter()"> Dep / Trolleys</label>
+                   <label><input type="checkbox" value="T1/T2 Trolleys L/UL" checked onchange="scUpdateMonthlyRiskFilter()"> T1/T2 Trolleys L/UL</label>
+                   <label><input type="checkbox" value="Transfer Corridor" checked onchange="scUpdateMonthlyRiskFilter()"> Transfer Corridor</label>
+                   <label><input type="checkbox" value="Ramp / Marshalling" checked onchange="scUpdateMonthlyRiskFilter()"> Ramp / Marshalling</label>
                    <label><input type="checkbox" value="Bussing" checked onchange="scUpdateMonthlyRiskFilter()"> Bussing</label>
                    <label><input type="checkbox" value="PBZ" checked onchange="scUpdateMonthlyRiskFilter()"> PBZ</label>
                    <label><input type="checkbox" value="Mezz Operation" checked onchange="scUpdateMonthlyRiskFilter()"> Mezz Operation</label>
@@ -278,7 +284,7 @@ window.scExtraAdj = function(type, skill, delta) {
 
 /* ── Collect constraints from UI ── */
 function _gatherConstraints() {
-  const SKILLS = ['GNIB','CBP Pre-clearance','Bussing','PBZ','Mezz Operation','Litter Picking'];
+  const SKILLS = ['GNIB','CBP Pre-clearance','Arr Customer Service','Check-in/Trolleys','Dep / Trolleys','T1/T2 Trolleys L/UL','Transfer Corridor','Ramp / Marshalling','Bussing','PBZ','Mezz Operation','Litter Picking'];
   const extra = {}, contr = {};
   SKILLS.forEach(sk => {
     const key = sk.replace(/ /g, '_');
@@ -376,7 +382,7 @@ function _renderMonthlyRisk(sc) {
   const months = Object.keys(monthlyData).sort((a, b) => new Date(a) - new Date(b));
   if (!months.length) return;
 
-  const skills = ['GNIB', 'CBP Pre-clearance', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking'];
+  const skills = ['GNIB','CBP Pre-clearance','Arr Customer Service','Check-in/Trolleys','Dep / Trolleys','T1/T2 Trolleys L/UL','Transfer Corridor','Ramp / Marshalling','Bussing','PBZ','Mezz Operation','Litter Picking'];
   
   // Get all checked skills
   const checks = document.querySelectorAll('#sc-monthly-skill-filter input:checked');

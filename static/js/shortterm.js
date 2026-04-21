@@ -13,7 +13,8 @@ const ST_SKILL_COLOR = {
   'GNIB': '#3498DB', 'CBP Pre-clearance': '#9B59B6', 'Bussing': '#E8850A',
   'PBZ': '#2ECC71', 'Mezz Operation': '#1ABC9C', 'Litter Picking': '#E74C3C',
   'Ramp / Marshalling': '#F39C12', 'Arr Customer Service': '#5DADE2',
-  'Check-in / Trolleys': '#A9CCE3',
+  'Check-in/Trolleys': '#A9CCE3', 'Transfer Corridor': '#27AE60',
+  'Dep / Trolleys': '#8E44AD', 'T1/T2 Trolleys L/UL': '#E91E63',
 };
 
 let ST_DATES = [];
@@ -22,13 +23,6 @@ let ST_DATA = null;
 let ST_ACTIVE_TAB = 'flights';  // 'flights' | 'staff'
 const ST_CHARTS = {};
 
-// Listen for theme changes
-window.addEventListener('themeChanged', () => {
-  if (ST_ACTIVE_TAB === 'perf') {
-    const el = document.getElementById('st-sub-content');
-    if (el) renderSTPerfChart(el);
-  }
-});
 
 // ── Boot ───────────────────────────────────────────────────────
 async function initShortTerm() {
@@ -104,7 +98,6 @@ function renderShortTermDay() {
       <button class="sub-tab ${ST_ACTIVE_TAB==='roster-board'?'active':''}" data-sttab="roster-board">📋 Roster Board</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='gate-timeline'?'active':''}" data-sttab="gate-timeline">🛬 Gate Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='opt'?'active':''}" data-sttab="opt">⚙ Optimization</button>
-      <button class="sub-tab ${ST_ACTIVE_TAB==='perf'?'active':''}" data-sttab="perf">📈 Performance</button>
     </div>
     <div id="st-sub-content"></div>
   `;
@@ -385,7 +378,6 @@ function renderSTSubContent() {
   else if (ST_ACTIVE_TAB === 'roster-board') renderSTRosterBoard(el);
   else if (ST_ACTIVE_TAB === 'gate-timeline') renderSTGateTimeline(el);
   else if (ST_ACTIVE_TAB === 'opt') renderSTOptimization(el);
-  else if (ST_ACTIVE_TAB === 'perf') renderSTPerfChart(el);
 }
 
 // ── Roster Timeline Tab ──────────────────────────────────────────
@@ -1291,84 +1283,6 @@ function renderSTGateTimeline(container) {
     </div>`;
 }
 
-// ── Performance Analysis ───────────────────────────────────────
-function renderSTPerfChart(el) {
-  el.innerHTML = `
-    <div class="section-header" style="margin-top: 24px;">
-      <h2>Task Performance &amp; Punctuality</h2>
-      <span class="section-hint">Performance of ground processes for the selected 7-day period.</span>
-    </div>
-    <div class="panel" style="max-width:600px; margin: 0 auto; display: flex; flex-direction: column; height: calc(100vh - 220px); min-height: 350px;">
-      <div class="panel-title-row">
-        <span class="panel-title"><img src="data:image/svg+xml;utf8,<svg fill='%231a2744' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1.41 16.09V20h-2.67v-1.93c-1.71-.36-3.16-1.46-3.27-3.4h1.96c.1 1.05.82 1.87 2.65 1.87 1.96 0 2.4-1.08 2.4-1.73 0-.91-.54-1.57-2.73-2.18-2.6-.71-3.69-2.07-3.69-3.76 0-1.63 1.25-2.81 2.69-3.21V4h2.67v1.94c1.54.34 2.89 1.47 2.97 3.25h-1.96c-.11-1.07-.86-1.74-2.5-1.74-1.69 0-2.3.93-2.3 1.58 0 1.08.77 1.51 2.87 2.1 2.65.75 3.55 2.1 3.55 3.84-.01 1.86-1.5 3-2.64 3.3z'/></svg>" width="16" style="vertical-align:text-bottom; margin-right:4px;">Ground Process Punctuality</span>
-        <div style="font-size:0.75rem;"><span style="color:var(--text); font-weight:700;">73.8 %</span> <span style="color:var(--muted);">(Weekly Avg)</span></div>
-      </div>
-      <div style="flex: 1; position: relative;">
-        <canvas id="st-perf-radar"></canvas>
-      </div>
-    </div>
-  `;
-
-  setTimeout(() => {
-    const ctx = document.getElementById('st-perf-radar');
-    if (!ctx) return;
-    if (ST_CHARTS['perf-radar']) ST_CHARTS['perf-radar'].destroy();
-
-    const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
-    Chart.defaults.color = isDark ? '#ffffff' : '#000000';
-    Chart.defaults.font.family = 'Inter, sans-serif';
-
-    ST_CHARTS['perf-radar'] = new Chart(ctx, {
-      type: 'radar',
-      data: {
-        labels: ['Cleaning', 'Catering', 'Maintenance', 'Fueling', 'Loading', 'Boarding'],
-        datasets: [{
-          label: 'This Week',
-          data: [89, 87, 80, 68, 58, 62],
-          backgroundColor: 'rgba(34, 114, 180, 0.4)',
-          borderColor: '#2b8ad5',
-          pointBackgroundColor: '#2b8ad5',
-          pointBorderColor: isDark ? '#1e293b' : '#fff',
-          pointHoverBackgroundColor: '#fff',
-          pointHoverBorderColor: '#2b8ad5',
-          borderWidth: 2,
-          fill: true,
-        }, {
-          label: 'Last Week',
-          data: [85, 80, 72, 65, 54, 60],
-          backgroundColor: 'rgba(0, 0, 0, 0)',
-          borderColor: 'rgba(0, 0, 0, 0.3)',
-          borderDash: [5, 5],
-          borderWidth: 2,
-          pointRadius: 0,
-          fill: false,
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          r: {
-            angleLines: { color: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0, 0, 0, 0.1)' },
-            grid: { color: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0, 0, 0, 0.1)' },
-            pointLabels: { color: isDark ? '#ffffff' : '#1a2744', font: { size: 11, weight: '500' } },
-            ticks: { display: false, min: 0, max: 100 }
-          }
-        },
-        plugins: {
-          legend: {
-            position: 'bottom', align: 'end',
-            labels: { color: isDark ? '#ffffff' : '#000000', boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'circle' }
-          },
-          tooltip: {
-            backgroundColor: 'rgba(0,0,0,0.8)', titleFont: { size: 13 }, bodyFont: { size: 13 },
-            callbacks: { label: function(ctx) { return ctx.dataset.label + ': ' + ctx.raw + '%'; } }
-          }
-        }
-      }
-    });
-  }, 50);
-}
 
 // ── Expose to global ───────────────────────────────────────────
 // Final clean override to avoid mojibake in the alerts header/toggle text.

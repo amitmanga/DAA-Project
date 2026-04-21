@@ -20,10 +20,12 @@ const SKILL_COLOR = {
   'Litter Picking':       '#ef4444',
   'Ramp / Marshalling':   '#f59e0b',
   'Arr Customer Service': '#06b6d4',
-  'Check-in / Trolleys':  '#64748b',
+  'Check-in/Trolleys':  '#64748b',
   'Dep / Trolleys':       '#a78bfa',
   'T1/T2 Trolleys L/UL':  '#fb7185',
   'Transfer Corridor':    '#34d399',
+  'Gate 335':             '#fbbf24',
+  'Departures':           '#4f46e5',
 };
 
 const CAT_COLOR = {
@@ -84,8 +86,6 @@ function refreshAllCharts() {
     initGapSkillAnalysis(); // Re-renders merged charts
   } else if (activeSub === 'skills') {
     loadSkillCharts();
-  } else if (activeSub === 'perf') {
-    renderLongTermPerfChart();
   }
 }
 
@@ -143,7 +143,6 @@ document.querySelectorAll('.sub-tab').forEach(tab => {
     document.getElementById(`sub-${tab.dataset.sub}`).classList.add('active');
     if (tab.dataset.sub === 'scenario' && typeof initScenario === 'function') initScenario();
 
-    if (tab.dataset.sub === 'perf') renderLongTermPerfChart();
     if (tab.dataset.sub === 'gap-skill') initGapSkillAnalysis();
   });
 });
@@ -1000,87 +999,6 @@ async function loadSkillCharts() {
   });
 }
 
-// ── Performance Analysis & Punctuality ──────────────────────────
-function renderLongTermPerfChart() {
-  const ctx = document.getElementById('lt-perf-radar');
-  if (!ctx) return;
-  if (CHARTS['lt-perf-radar']) CHARTS['lt-perf-radar'].destroy();
-
-  Chart.defaults.color = DAA.text || '#1a2744';
-  Chart.defaults.font.family = 'Inter, sans-serif';
-
-  CHARTS['lt-perf-radar'] = new Chart(ctx, {
-    type: 'radar',
-    data: {
-      labels: ['Cleaning', 'Catering', 'Maintenance', 'Fueling', 'Loading', 'Boarding'],
-      datasets: [{
-        label: 'Today',
-        data: [92, 85, 78, 65, 55, 60],
-        backgroundColor: 'rgba(34, 114, 180, 0.4)', // Base brand blue with opacity
-        borderColor: '#2b8ad5',
-        pointBackgroundColor: '#2b8ad5',
-        pointBorderColor: DAA.bg || '#fff',
-        pointHoverBackgroundColor: '#fff',
-        pointHoverBorderColor: '#2b8ad5',
-        borderWidth: 2,
-        fill: true,
-      }, {
-        label: 'YTD 2026',
-        data: [88, 82, 75, 70, 60, 65],
-        backgroundColor: 'rgba(0, 0, 0, 0)',
-        borderColor: 'rgba(0, 0, 0, 0.3)',
-        borderDash: [5, 5],
-        borderWidth: 2,
-        pointRadius: 0,
-        fill: false,
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        r: {
-          angleLines: {
-            color: 'rgba(0, 0, 0, 0.1)'
-          },
-          grid: {
-            color: 'rgba(0, 0, 0, 0.1)'
-          },
-          pointLabels: {
-            color: DAA.text || '#1a2744',
-            font: { size: 11, weight: '500' }
-          },
-          ticks: {
-            display: false, // hide the central scale numbers like 0, 20, 40...
-            min: 0,
-            max: 100
-          }
-        }
-      },
-      plugins: {
-        legend: {
-          position: 'bottom',
-          align: 'end',
-          labels: {
-            color: DAA.muted || '#6b7280',
-            boxWidth: 10,
-            boxHeight: 10,
-            usePointStyle: true,
-            pointStyle: 'circle'
-          }
-        },
-        tooltip: {
-          backgroundColor: 'rgba(0,0,0,0.8)',
-          titleFont: { size: 13 },
-          bodyFont: { size: 13 },
-          callbacks: {
-            label: function(ctx) { return ctx.dataset.label + ': ' + ctx.raw + '%'; }
-          }
-        }
-      }
-    }
-  });
-}
 
 // ═════════════════════════════════════════════════════════════
 // BOOT

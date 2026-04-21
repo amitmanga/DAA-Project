@@ -473,17 +473,13 @@ body {
 #kpi-gate-util       { border-top-color: var(--teal); }
 
 .kpi-icon {
-  font-size: 0.78rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: 2rem;
+  line-height: 1;
   color: var(--muted);
   display: flex;
   align-items: center;
   gap: 6px;
 }
-/* Override emoji with text labels styled as icons */
-.kpi-icon { font-size: 0.72rem; }
 
 .kpi-body { flex: 1; }
 .kpi-value {
