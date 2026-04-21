@@ -23,6 +23,7 @@ let ID_AUTO_REFRESH = null;
 let ID_SIM_TIMER = null;
 let ID_SIM_TIME = null;
 let ID_SIM_SPEED = 1;
+let ID_COVERAGE_INTERVAL = null;
 
 // Listen for theme changes
 window.addEventListener('themeChanged', () => {
@@ -124,8 +125,8 @@ function renderIntradayPage() {
   document.getElementById('id-content').innerHTML = `
     <div class="page-header" style="margin-bottom:16px">
       <h2 class="page-title" style="font-size:1.3rem">
-        Today — ${d.date_label}
-        <span class="live-badge">● LIVE</span>
+        ${d.date_label}
+        <span class="live-badge">● Live</span>
       </h2>
     </div>
     <div class="kpi-grid st-kpi-grid" id="id-kpis"></div>
@@ -163,6 +164,7 @@ function renderIntradayPage() {
       const newTab = btn.dataset.idtab;
       ID_ACTIVE_TAB = newTab;
       if (newTab !== 'gate-timeline') stopGateTimelineAutoRefresh();
+      if (newTab !== 'staff-timeline') stopCoverageAutoRefresh();
       document.querySelectorAll('.sub-tab[data-idtab]').forEach(b => b.classList.toggle('active', b === btn));
       renderIDSubContent();
     })
@@ -664,6 +666,8 @@ function renderIDSubContent() {
     document.getElementById('id-staff-timeline-shift').addEventListener('change', renderIDRosterTimeline);
     renderIDRosterTimeline();
     renderGateTimelineNowLine();
+    renderIDHourlyCoverage();
+    startCoverageAutoRefresh();
   } else if (ID_ACTIVE_TAB === 'perf') {
     renderIDPerfChart(container);
   } else if (ID_ACTIVE_TAB === 'opt') {
@@ -1298,6 +1302,149 @@ function renderIDPerfChart(container) {
       }
     });
   }, 50);
+}
+
+// ── Hourly Workforce Coverage Heatmap ───────────────────────────
+const ID_COVERAGE_SKILLS = ['GNIB', 'CBP Pre-clearance', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking', 'Ramp / Marshalling'];
+const ID_COVERAGE_HOUR_START = 4;
+const ID_COVERAGE_HOUR_END   = 23;
+
+function buildCoverageData(tasks) {
+  const hours = [];
+  for (let h = ID_COVERAGE_HOUR_START; h <= ID_COVERAGE_HOUR_END; h++) hours.push(h);
+
+  const data = {};
+  ID_COVERAGE_SKILLS.forEach(sk => {
+    data[sk] = {};
+    hours.forEach(h => { data[sk][h] = { req: 0, assigned: 0 }; });
+  });
+
+  (tasks || []).forEach(task => {
+    const sk = task.skill;
+    if (!data[sk]) return;
+    const startH = Math.floor(task.start_mins / 60);
+    const endH   = Math.floor((task.end_mins - 1) / 60);
+    for (let h = Math.max(ID_COVERAGE_HOUR_START, startH); h <= Math.min(ID_COVERAGE_HOUR_END, endH); h++) {
+      data[sk][h].req      += (task.staff_needed || 0);
+      data[sk][h].assigned += (task.assigned ? task.assigned.length : 0);
+    }
+  });
+
+  return { data, hours };
+}
+
+function buildCoverageTableHTML(tasks) {
+  const { data, hours } = buildCoverageData(tasks);
+  const nowH = new Date().getHours();
+
+  function cellClass(req, assigned) {
+    if (req === 0) return '';
+    const gap = assigned - req;
+    if (gap < -2) return 'cell-gap';
+    if (gap < 0)  return 'cell-warning';
+    if (gap > 1)  return 'cell-surplus';
+    return 'cell-adequate';
+  }
+
+  const headCols = hours.map(h => {
+    const live = h === nowH;
+    const label = live
+      ? `Live<span style="display:block;font-size:0.6rem;opacity:0.85;font-weight:600;">${String(h).padStart(2,'0')}:00</span>`
+      : String(h).padStart(2,'0') + ':00';
+    return `<th class="${live ? 'is-today' : ''}">${label}</th>`;
+  }).join('');
+
+  const bodyRows = ID_COVERAGE_SKILLS.map(sk =>
+    `<tr><td class="skill-label">${sk}</td>${hours.map(h => {
+      const { req, assigned } = data[sk][h];
+      const nowCls = h === nowH ? 'is-today' : '';
+      if (req === 0) return `<td class="${nowCls}">—</td>`;
+      const tip = `Role: ${sk}\nHour: ${String(h).padStart(2,'0')}:00\nRequired: ${req}\nAssigned: ${assigned}`;
+      return `<td class="${cellClass(req, assigned)} ${nowCls}" title="${tip}">${assigned}/${req}</td>`;
+    }).join('')}</tr>`
+  ).join('');
+
+  const totalsReq      = hours.map(h => ID_COVERAGE_SKILLS.reduce((s, sk) => s + data[sk][h].req,      0));
+  const totalsAssigned = hours.map(h => ID_COVERAGE_SKILLS.reduce((s, sk) => s + data[sk][h].assigned, 0));
+
+  const fReq = hours.map((h, i) =>
+    `<td class="${h === nowH ? 'is-today' : ''}" style="font-weight:700;">${totalsReq[i] || '—'}</td>`
+  ).join('');
+  const fAsgn = hours.map((h, i) =>
+    `<td class="${h === nowH ? 'is-today' : ''}" style="font-weight:700;color:#3b82f6;">${totalsAssigned[i] || '—'}</td>`
+  ).join('');
+  const fGap = hours.map((h, i) => {
+    const nowCls = h === nowH ? 'is-today' : '';
+    if (!totalsReq[i]) return `<td class="${nowCls}">—</td>`;
+    const g = totalsAssigned[i] - totalsReq[i];
+    const color = g < 0 ? 'var(--crit)' : g > 1 ? 'var(--ok)' : 'var(--warn)';
+    return `<td class="${nowCls}" style="font-weight:700;color:${color};">${g > 0 ? '+' : ''}${g}</td>`;
+  }).join('');
+
+  return `
+    <thead>
+      <tr class="hm-header-row">
+        <th class="skill-col">Role / Task</th>${headCols}
+      </tr>
+    </thead>
+    <tbody>
+      ${bodyRows}
+      <tr class="total-row with-border"><td class="skill-label">Total Required</td>${fReq}</tr>
+      <tr class="total-row"><td class="skill-label">Total Assigned</td>${fAsgn}</tr>
+      <tr class="total-row"><td class="skill-label">Staff Gap</td>${fGap}</tr>
+    </tbody>`;
+}
+
+function renderIDHourlyCoverage() {
+  const wrapper = document.getElementById('id-sub-content');
+  if (!wrapper) return;
+
+  let section = document.getElementById('id-hourly-coverage-section');
+  if (!section) {
+    section = document.createElement('div');
+    section.id = 'id-hourly-coverage-section';
+    section.className = 'mt-24';
+    section.innerHTML = `
+      <div class="section-header" style="margin-bottom:8px;">
+        <h2 style="font-size:1rem;font-weight:700;color:var(--text);">Workforce Coverage — Live</h2>
+        <span class="section-hint">Assigned / Required per skill per hour. Auto-refreshes every minute.</span>
+      </div>
+      <div class="legend-row mb-12">
+        <span class="leg surplus"></span><span>Surplus</span>
+        <span class="leg adequate"></span><span>Adequate</span>
+        <span class="leg warning"></span><span>Warning</span>
+        <span class="leg gap"></span><span>Gap</span>
+      </div>
+      <div class="heatmap-wrapper" id="id-hourly-heatmap-wrapper" style="overflow-x:hidden;">
+        <table class="heatmap-table heatmap-table--fluid" id="id-hourly-heatmap"></table>
+      </div>`;
+    const panel = wrapper.querySelector('.panel');
+    if (panel) panel.appendChild(section);
+  }
+
+  const table = document.getElementById('id-hourly-heatmap');
+  if (table) table.innerHTML = buildCoverageTableHTML(ID_DATA.tasks || []);
+}
+
+function stopCoverageAutoRefresh() {
+  if (ID_COVERAGE_INTERVAL) {
+    clearInterval(ID_COVERAGE_INTERVAL);
+    ID_COVERAGE_INTERVAL = null;
+  }
+}
+
+function startCoverageAutoRefresh() {
+  stopCoverageAutoRefresh();
+  ID_COVERAGE_INTERVAL = setInterval(async () => {
+    try {
+      const fresh = await fetch('/api/intraday').then(r => r.json());
+      ID_DATA = fresh;
+      const table = document.getElementById('id-hourly-heatmap');
+      if (table) table.innerHTML = buildCoverageTableHTML(ID_DATA.tasks || []);
+    } catch (e) {
+      console.warn('Coverage refresh failed:', e);
+    }
+  }, 60000);
 }
 
 // ── Expose ──────────────────────────────────────────────────────

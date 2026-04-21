@@ -2558,6 +2558,12 @@ canvas { display: block; }
   font-size: 0.8rem;
 }
 
+/* Fluid variant: fills page width, no horizontal scroll */
+.heatmap-table--fluid {
+  width: 100%;
+  table-layout: fixed;
+}
+
 .heatmap-table thead th {
   position: sticky;
   top: 0;
@@ -2569,6 +2575,24 @@ canvas { display: block; }
   min-width: 45px;
   border-bottom: 2px solid var(--accent);
   border-right: 1px solid rgba(255,255,255,0.1);
+}
+
+.heatmap-table--fluid thead th {
+  min-width: 0;
+  font-size: 0.72rem;
+  padding: 6px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.heatmap-table--fluid tbody td {
+  font-size: 0.72rem;
+  padding: 5px 2px;
+}
+
+.heatmap-wrapper:has(.heatmap-table--fluid) {
+  overflow-x: hidden;
 }
 
 .heatmap-table thead th.skill-col {
@@ -2651,11 +2675,4 @@ canvas { display: block; }
 .heatmap-table tr.total-row:nth-last-child(2) td { bottom: 32px; }
 .heatmap-table tr.total-row:nth-last-child(3) td { bottom: 64px; }
 
-.heatmap-table th.is-today::after {
-  content: "TODAY";
-  display: block;
-  font-size: 0.55rem;
-  opacity: 0.8;
-  margin-top: 2px;
-}
 

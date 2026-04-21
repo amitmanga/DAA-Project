@@ -498,7 +498,17 @@ def lt_staff_allocation():
         monthly_total_req[month_key].append(staff_req.get(wk_key, 0))
         monthly_total_avail[month_key].append(staff_avail.get(wk_key, 50))
 
-    skills = ['GNIB', 'CBP Pre-clearance', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking', 'Ramp / Marshalling']
+    # Collect all skills that actually appear in the demand data
+    all_skill_set = set()
+    for wk_sk in skill_req.values():
+        all_skill_set.update(wk_sk.keys())
+    PREFERRED_ORDER = [
+        'GNIB', 'CBP Pre-clearance', 'Arr Customer Service', 'Check-in / Trolleys',
+        'Dep / Trolleys', 'T1/T2 Trolleys L/UL', 'Ramp / Marshalling', 'Bussing',
+        'PBZ', 'Mezz Operation', 'Litter Picking',
+    ]
+    skills = [s for s in PREFERRED_ORDER if s in all_skill_set]
+    skills += sorted(s for s in all_skill_set if s not in skills)
     months_ordered = []
     d = datetime(2026, 1, 5)
     seen_months = set()
