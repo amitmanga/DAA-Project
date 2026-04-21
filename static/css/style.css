@@ -2008,6 +2008,7 @@ canvas { display: block; }
   max-height: 520px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  background: transparent;
 }
 .gt-chart {
   min-width: 900px;
@@ -2019,7 +2020,7 @@ canvas { display: block; }
   display: flex;
   align-items: flex-end;
   height: 24px;
-  background: var(--bg-2);
+  background: transparent;
   border-bottom: 2px solid var(--border-2);
   position: sticky;
   top: 0;
@@ -2058,7 +2059,7 @@ canvas { display: block; }
   display: flex;
   align-items: stretch;
   height: 20px;
-  background: var(--bg-2);
+  background: transparent;
   border-bottom: 1px solid var(--border-2);
 }
 .gt-pier-label-cell {
@@ -2073,7 +2074,7 @@ canvas { display: block; }
   text-transform: uppercase;
   letter-spacing: 0.09em;
   color: var(--muted);
-  background: var(--bg-2);
+  background: transparent;
   position: relative;
 }
 .gt-pier-name-track::before { display: none; }
@@ -2084,10 +2085,10 @@ canvas { display: block; }
   align-items: center;
   height: 28px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  background: transparent;
 }
 .gt-row-alt {
-  background: var(--surface-2);
+  background: transparent;
 }
 .gt-gate-label {
   width: 52px;
@@ -2231,7 +2232,7 @@ canvas { display: block; }
 .rt-container {
   overflow-x: auto;
   margin-top: 10px;
-  background: var(--surface);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   position: relative;
@@ -2246,7 +2247,7 @@ canvas { display: block; }
   display: flex;
   height: 28px;
   border-bottom: 2px solid var(--border-2);
-  background: var(--bg-2);
+  background: transparent;
   position: sticky;
   top: 0;
   z-index: 20;
@@ -2255,7 +2256,7 @@ canvas { display: block; }
   width: 80px;
   flex-shrink: 0;
   border-right: 2px solid var(--border-2);
-  background: var(--bg-2);
+  background: transparent;
   position: sticky;
   left: 0;
   z-index: 21;
@@ -2289,9 +2290,9 @@ canvas { display: block; }
   display: flex;
   height: 32px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  background: transparent;
 }
-.rt-row:nth-child(even) { background: var(--surface-2); }
+.rt-row:nth-child(even) { background: transparent; }
 .rt-staff-label {
   width: 80px;
   flex-shrink: 0;
