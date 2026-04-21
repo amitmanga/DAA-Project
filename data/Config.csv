@@ -13,7 +13,7 @@ Bussing,T1+T2,High,DEP,Remote stand,STD,-35,STD,-5,30,1,Remote stand (pier gate)
 Bussing,T1+T2,High,ARR,Remote stand,STA,-10,STA,25,35,1,Remote stand (pier gate) ARR. Bus at stand 10 min before STA.
 Transfer Corridor,T2 only,High,DEP/ARR,Any,Inbound_STA,5,Outbound_STD,-20,Variable,1,"Connecting pax. Start=inbound STA+5, End=outbound STD-20. Duration 20-45 min."
 Check-in/Trolleys,T2 only,Medium,ARR/DEP/ARR,Any,STA,-15,STA,30,45,1,"T2 only. Arrivals and turnarounds. Positioned before STA, cleared STA+30."
-Dep / Trolleys,T1 only,Medium,DEP,Any,Shift_start,30,Shift_end,-30,Variable,1,T1 only. Continuous shift patrol. Not per-flight. One operative per zone.
+Dep/Trolleys,T1 only,Medium,DEP,Any,Shift_start,30,Shift_end,-30,Variable,1,T1 only. Continuous shift patrol. Not per-flight. One operative per zone.
 Arr Customer Service,T2 only,High,ARR/DEP/ARR,Short,STA,-10,STA,45,55,1,T2 arrivals only. Short-haul. In hall until pax flow clears.
 Arr Customer Service,T2 only,High,ARR/DEP/ARR,Long,STA,-15,STA,75,90,1,T2 arrivals only. Long-haul. Extended for larger volume.
 Mezz Operation,T1 only,Critical,Fixed duty,N/A,Fixed,4:00,Fixed,9:00,300,2,T1 only. Fixed post 04:00-09:00. Not flight-triggered. staff_start_mins=0 means literal 04:00.
