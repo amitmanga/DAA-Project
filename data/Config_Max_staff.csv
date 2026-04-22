@@ -1,0 +1,31 @@
+Task,Terminal,Pier,Priority,Staff Count
+Mezz Operation,1,1,Critical,1
+Mezz Operation,1,2,Critical,1
+Mezz Operation,1,3,Critical,1
+GNIB,1,1,Critical,3
+GNIB,1,2,Critical,3
+GNIB,1,3,Critical,3
+GNIB,2,4,Critical,3
+CBP Pre-clearance,2,4,Critical,2
+Gate 335,1,3,Critical,4
+Bussing,Remote,Central,High,1
+Bussing,Remote,North,High,1
+Bussing,Remote,West,High,1
+Arr Customer Service,2,4,High,0.25
+Transfer Corridor,2,4,High,3
+Check-in/Trolleys,2,4,Medium,4.5
+T1/T2 Trolleys L/UL,1,1,Medium,2
+T1/T2 Trolleys L/UL,1,2,Medium,2
+T1/T2 Trolleys L/UL,1,3,Medium,2
+T1/T2 Trolleys L/UL,2,4,Medium,2
+Dep/Trolleys,1,1,Medium,2
+Dep/Trolleys,1,2,Medium,2
+Dep/Trolleys,1,3,Medium,2
+PBZ,Remote,Central,Medium,1
+PBZ,Remote,North,Medium,1
+PBZ,Remote,West,Medium,1
+Departures,1,3,Medium,0.25
+Litter Picking,1,1,Low,0.25
+Litter Picking,1,2,Low,0.25
+Litter Picking,1,3,Low,0.25
+Litter Picking,2,4,Low,0.25
