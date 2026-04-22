@@ -6,6 +6,57 @@ import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+# CP-SAT optimiser (optional — falls back to greedy if OR-Tools is absent)
+try:
+    from intraday_optimizer import (
+        optimize_intraday_assignments as _cpsat_optimize,
+        ORTOOLS_AVAILABLE as _CPSAT_AVAILABLE,
+    )
+except ImportError:  # pragma: no cover
+    _CPSAT_AVAILABLE = False
+    def _cpsat_optimize(*_a, **_kw):  # type: ignore[misc]
+        return None
+
+# Long-term MIP optimiser (optional — requires PuLP or scipy)
+try:
+    from long_term_mip import (
+        optimize_weekly_staffing as _lt_mip_optimize,
+        MIP_AVAILABLE as _LT_MIP_AVAILABLE,
+    )
+except ImportError:  # pragma: no cover
+    _LT_MIP_AVAILABLE = False
+    def _lt_mip_optimize(*_a, **_kw):  # type: ignore[misc]
+        raise RuntimeError("long_term_mip module not found")
+
+# Roster optimiser — two-phase shift-pattern generation + staff assignment
+try:
+    from roster_optimizer import (
+        generate_roster       as _roster_generate,
+        tasks_to_demand_windows as _roster_tasks_to_dw,
+        format_as_on_duty     as _roster_fmt_on_duty,
+        DemandWindow          as _RosterDemandWindow,
+        SOLVER_AVAILABLE      as _ROSTER_SOLVER_AVAILABLE,
+    )
+    _ROSTER_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _ROSTER_AVAILABLE = False
+    _ROSTER_SOLVER_AVAILABLE = False
+    def _roster_generate(*_a, **_kw):  # type: ignore[misc]
+        raise RuntimeError("roster_optimizer module not found")
+    def _roster_tasks_to_dw(*_a, **_kw):  # type: ignore[misc]
+        return []
+    def _roster_fmt_on_duty(*_a, **_kw):  # type: ignore[misc]
+        return []
+
+# Simulation engine — Monte Carlo intraday stress-testing (validation layer only)
+try:
+    from simulation_engine import run_simulation as _sim_run_simulation
+    _SIM_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _SIM_AVAILABLE = False
+    def _sim_run_simulation(*_a, **_kw):  # type: ignore[misc]
+        raise RuntimeError("simulation_engine module not found")
+
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -162,7 +213,7 @@ def weekly_demand_2026():
         if not d or d.year != 2026:
             continue
 
-        include = (dtype == 'Forecast' and sc in ('S26', 'W26')) or \
+        include = sc in ('S26', 'W26') or \
                   (dtype == 'Historical' and sc == 'W25')
         if not include:
             continue
@@ -181,6 +232,13 @@ def weekly_demand_2026():
 
 def weekly_staff_required(demand_by_week):
     """Returns {week_key: fte_required} and {week_key: {skill: fte}}.
+
+    This is the *baseline* demand-estimation method — it converts flight movements
+    to FTE requirements using calibrated staff-minutes per movement.
+
+    For an *optimised* allocation that minimises shortages, overtime, and cost
+    given actual staff availability, use the MIP endpoint:
+        GET/POST /api/long-term/optimised-staffing
 
     Methodology (Config.csv-derived):
     1. For each (category, status) pair, sum: movements × staff_mins_per_movement
@@ -293,6 +351,10 @@ _staff_req = None
 _skill_req = None
 _staff_avail = None
 _skill_avail = None
+
+# Long-term MIP state
+_lt_use_optimisation = False   # Toggle: False = baseline, True = MIP
+_lt_mip_cache        = None    # Cached MIP result (invalidated on POST reset)
 
 
 def get_data():
@@ -883,6 +945,152 @@ def lt_merged_gap_skill():
 
 
 # ---------------------------------------------------------------------------
+# Long-term MIP optimised staffing endpoint
+# ---------------------------------------------------------------------------
+
+@app.route('/api/long-term/optimised-staffing', methods=['GET', 'POST'])
+def lt_optimised_staffing():
+    """MIP-based weekly workforce optimisation.
+
+    GET  — return current result (or prompt to enable).
+    POST — toggle optimisation on/off; optionally pass constraints overrides.
+
+    POST body (all optional):
+        {
+          "use_optimisation": true,        // enable / disable MIP
+          "reset": true,                   // clear cached result and re-solve
+          "constraints": {
+            "surge_demand_factor":        1.0,
+            "max_ot_hrs_per_person_per_week": 8,
+            "regular_hrs_per_week":       40
+          }
+        }
+
+    Response shape (when enabled and solved):
+        {
+          "use_optimisation": true,
+          "status": "Optimal",
+          "solver": "CBC via PuLP (MIP)",
+          "objective_value": 12345.6,
+          "summary": { ... aggregate stats ... },
+          "weeks": {
+            "2026-W01": {
+              "total_demand_fte": 42.3,
+              "total_available": 48,
+              "total_assigned": 41,
+              "total_shortage_fte": 1.3,
+              "overtime_hrs": 0.0,
+              "utilisation_pct": 85.4,
+              "gap": 5.7,
+              "status_flag": "minor",
+              "skills": {
+                "GNIB": {
+                  "demand_fte": 12.5, "available": 18,
+                  "assigned": 12, "shortage_fte": 0.5,
+                  "excess_fte": 0.0, "coverage_pct": 96.0
+                }, ...
+              }
+            }, ...
+          }
+        }
+    """
+    global _lt_use_optimisation, _lt_mip_cache
+
+    if request.method == 'POST':
+        body = request.get_json(force=True) or {}
+
+        # Toggle
+        if 'use_optimisation' in body:
+            _lt_use_optimisation = bool(body['use_optimisation'])
+
+        # Invalidate cache on reset or when constraints change
+        if body.get('reset') or 'constraints' in body or 'use_optimisation' in body:
+            _lt_mip_cache = None
+
+        # Store per-request constraint overrides in the body for use below
+        _lt_extra_constraints = body.get('constraints', {})
+    else:
+        _lt_extra_constraints = {}
+
+    # --- Status: disabled ---
+    if not _lt_use_optimisation:
+        return jsonify({
+            'use_optimisation': False,
+            'mip_available':    _LT_MIP_AVAILABLE,
+            'message': (
+                'MIP optimisation is disabled. '
+                'POST {"use_optimisation": true} to enable.'
+            ),
+            # Include the baseline demand/availability for comparison
+            'baseline': _lt_baseline_summary(),
+        })
+
+    # --- Status: solver unavailable ---
+    if not _LT_MIP_AVAILABLE:
+        return jsonify({
+            'use_optimisation': True,
+            'mip_available':    False,
+            'error': 'No MIP solver available.',
+            'message': 'Install PuLP:  pip install pulp',
+        }), 503
+
+    # --- Solve (or return cached result) ---
+    if _lt_mip_cache is None:
+        demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
+        try:
+            _lt_mip_cache = _lt_mip_optimize(
+                skill_req, staff_req,
+                skill_avail, staff_avail,
+                _lt_extra_constraints or None,
+            )
+            print(
+                f"[MIP] {_lt_mip_cache['status']}  "
+                f"obj={_lt_mip_cache['objective_value']}  "
+                f"shortage={_lt_mip_cache['summary'].get('total_shortage_fte', '?')} FTE"
+            )
+        except Exception as exc:
+            return jsonify({'error': str(exc), 'use_optimisation': True}), 500
+
+    return jsonify(_lt_mip_cache)
+
+
+@app.route('/api/long-term/optimisation-status', methods=['GET'])
+def lt_optimisation_status():
+    """Quick status check: is MIP enabled, available, and what does it report."""
+    return jsonify({
+        'use_optimisation': _lt_use_optimisation,
+        'mip_available':    _LT_MIP_AVAILABLE,
+        'result_cached':    _lt_mip_cache is not None,
+        'solver_status':    _lt_mip_cache.get('status')  if _lt_mip_cache else None,
+        'objective_value':  _lt_mip_cache.get('objective_value') if _lt_mip_cache else None,
+        'summary':          _lt_mip_cache.get('summary') if _lt_mip_cache else None,
+    })
+
+
+def _lt_baseline_summary():
+    """Return a lightweight baseline summary for comparison in the disabled-state response."""
+    try:
+        _, staff_req, skill_req, staff_avail, _ = get_data()
+        weeks = sorted(staff_req.keys())
+        if not weeks:
+            return {}
+        total_short = sum(
+            max(staff_req[w] - staff_avail.get(w, 0), 0) for w in weeks
+        )
+        weeks_short = sum(
+            1 for w in weeks if staff_req[w] > staff_avail.get(w, 0)
+        )
+        return {
+            'method':               'demand_estimation_baseline',
+            'total_shortage_fte':   round(total_short, 1),
+            'weeks_with_shortage':  weeks_short,
+            'total_weeks':          len(weeks),
+        }
+    except Exception:
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Route Map API
 # ---------------------------------------------------------------------------
 
@@ -1030,8 +1238,9 @@ _intraday_custom_constraints = {
         (0, 720, '00:00 - 12:00'),
         (720, 1440, '12:00 - 24:00'),
         (600, 1320, '10:00 - 22:00')
-    ]
-} 
+    ],
+    'use_cpsat': False,   # Set True to engage the CP-SAT optimiser
+}
 
 _st_custom_constraints = {
     'permitted_shifts': [
@@ -1292,8 +1501,16 @@ def compute_task_window(time_mins, rule):
     return start, end
 
 
-def get_staff_for_date(date_str, custom_constraints=None):
-    """Return (on_duty_list, absent_list) for the given date string."""
+def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=False,
+                       demand_windows=None, prev_shift_ends=None):
+    """Return (on_duty_list, absent_list) for the given date string.
+
+    When use_roster_optimiser=True the two-phase roster engine is used to
+    assign staff to optimal shift patterns instead of the density heuristic.
+    The caller may supply pre-built demand_windows (list[DemandWindow]) and
+    prev_shift_ends ({staff_id: shift_end_mins}) for the rest-rule check.
+    Both default to empty / auto-derived when omitted.
+    """
     if custom_constraints is None:
         custom_constraints = {}
     
@@ -1505,6 +1722,63 @@ def get_staff_for_date(date_str, custom_constraints=None):
                     'shift_label': f"Carry-over from prev day (Ends {mins_to_time(en-1440)})",
                     'assignments': [], 'breaks': [], 'utilisation_pct': 0
                 })
+
+    # ── Roster optimiser path ────────────────────────────────────────────────
+    # Replace the density-heuristic shift labels with optimiser-assigned patterns.
+    if use_roster_optimiser and _ROSTER_AVAILABLE and on_duty:
+        try:
+            dw_list  = demand_windows or []
+            pe_map   = prev_shift_ends or {}
+            use_mip  = custom_constraints.get('use_mip', True)
+
+            roster_result = _roster_generate(
+                demand_windows  = dw_list,
+                staff_list      = [
+                    {
+                        'id':         s['id'],
+                        'skill1':     s.get('skill1', ''),
+                        'skill2':     s.get('skill2', ''),
+                        'skill3':     s.get('skill3', ''),
+                        'skill4':     s.get('skill4', ''),
+                        'employment': s.get('employment', ''),
+                    }
+                    for s in on_duty
+                ],
+                constraints     = {
+                    'b1_duration_mins': custom_constraints.get('b1_duration_mins', 30),
+                    'b2_duration_mins': custom_constraints.get('b2_duration_mins', 60),
+                    'max_shift_mins':   custom_constraints.get('shift_duration_hrs', 12) * 60,
+                    'min_rest_mins':    custom_constraints.get('min_rest_mins', 660),
+                },
+                prev_shift_ends = pe_map,
+                use_mip         = use_mip,
+            )
+
+            # Merge optimiser assignments back onto the on_duty list
+            optimised_lookup = {e['id']: e for e in roster_result.get('roster', [])}
+            merged = []
+            for s in on_duty:
+                oe = optimised_lookup.get(s['id'])
+                if oe and oe.get('pattern_id') != 'unassigned':
+                    s = dict(s)
+                    s['shift']          = oe['shift_label'].upper()[:12]
+                    s['shift_start']    = oe['shift_start']
+                    s['shift_end']      = oe['shift_end']
+                    s['shift_label']    = oe['shift_label']
+                    s['breaks']         = oe.get('breaks', [])
+                    s['utilisation_pct'] = oe.get('utilisation_pct', 0)
+                    s['pattern_id']     = oe.get('pattern_id', '')
+                    s['skill_match']    = oe.get('skill_match', '')
+                merged.append(s)
+            on_duty = merged
+
+            # Attach top-level roster metadata for callers that inspect it
+            on_duty._roster_meta = roster_result  # type: ignore[attr-defined]
+        except Exception as _exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Roster optimiser failed — falling back to density heuristic: %s", _exc
+            )
 
     return on_duty, absent_staff
 
@@ -2225,9 +2499,84 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     else:
         all_tasks.sort(key=lambda t: (priority_order.get(t['priority'], 2), t['start_mins'], t['flight_no']))
 
-    # Greedy assignment
-    print(f"[DEBUG] Assigning {len(all_tasks)} tasks...")
-    for task in all_tasks:
+    # ── CP-SAT optimisation (enabled via use_cpsat flag) ──────────────────────
+    # Replaces the greedy loop when OR-Tools is installed and the flag is set.
+    # On solver failure or if the flag is off, falls through to greedy below.
+    _cpsat_applied = False
+    if custom_constraints.get('use_cpsat', False) and _CPSAT_AVAILABLE:
+        try:
+            # Build the constraint dict expected by the optimizer module
+            _cpsat_cons = {
+                'tt_t1_t2':               tt_t1_t2,
+                'tt_skill_switch':        tt_skill_switch,
+                'break_mins':             (
+                    int(custom_constraints.get('b1_duration_mins', 30)) +
+                    int(custom_constraints.get('b2_duration_mins', 60))
+                ),
+                'max_overtime_per_day_hrs': 2,
+            }
+            # Only pass tasks that still need staff (manual assigns may have
+            # already covered some or all slots for a task)
+            _open_tasks = [
+                t for t in all_tasks
+                if len(t.get('assigned', [])) < t.get('staff_needed', 1)
+                and not t.get('is_past')
+            ]
+            _cpsat_result = _cpsat_optimize(_open_tasks, on_duty, _cpsat_cons)
+
+            if _cpsat_result and _cpsat_result.get('solver_status') in ('OPTIMAL', 'FEASIBLE'):
+                _task_lookup = {t['id']: t for t in all_tasks}
+
+                # Apply solver assignments to task and staff objects in-place
+                for _asgn in _cpsat_result['assignments']:
+                    _task = _task_lookup.get(_asgn['task_id'])
+                    if not _task:
+                        continue
+                    for _emp_id in _asgn['staff_ids']:
+                        if _emp_id in _task['assigned']:
+                            continue
+                        _s = next((w for w in on_duty if w['id'] == _emp_id), None)
+                        if not _s:
+                            continue
+                        _task['assigned'].append(_emp_id)
+                        _s['assignments'].append({
+                            'task_id':    _task['id'],
+                            'task':       _task['task'],
+                            'start':      _task['start'],
+                            'end':        _task['end'],
+                            'start_mins': _task['start_mins'],
+                            'end_mins':   _task['end_mins'],
+                        })
+                        # Update busy_map so break-scheduling later is accurate
+                        busy_map[_emp_id].append((
+                            _task['start_mins'], _task['end_mins'],
+                            _task.get('terminal', 'ALL'),
+                            _task.get('skill', 'GNIB'),
+                        ))
+
+                # Set alerts on tasks that are still under-staffed after CP-SAT
+                for _task in all_tasks:
+                    _needed  = _task['staff_needed']
+                    _covered = len(_task['assigned'])
+                    if _covered < _needed and not _task.get('is_past'):
+                        _task['alert'] = (
+                            f'Under-staffed: need {_needed}, assigned {_covered}'
+                            f' (gap {_needed - _covered})'
+                        )
+
+                _cpsat_applied = True
+                print(
+                    f"[CP-SAT] {_cpsat_result['solver_status']}  "
+                    f"unassigned={len(_cpsat_result['unassigned_tasks'])}  "
+                    f"gap={_cpsat_result['gap_pct']}%"
+                )
+        except Exception as _cpsat_exc:
+            print(f"[CP-SAT] Error ({_cpsat_exc}); falling back to greedy.")
+
+    # ── Greedy assignment (default path, or fallback when CP-SAT is off/fails) ─
+    _greedy_tasks = [] if _cpsat_applied else all_tasks
+    print(f"[DEBUG] Assigning {len(_greedy_tasks)} tasks (greedy)...")
+    for task in _greedy_tasks:
         needed = task['staff_needed'] - len(task['assigned'])
         if needed <= 0:
             continue
@@ -2749,7 +3098,10 @@ def intraday_constraints():
         'b1_duration_mins': _intraday_custom_constraints.get('b1_duration_mins', 30),
         'b2_duration_mins': _intraday_custom_constraints.get('b2_duration_mins', 60),
         'leave_types_excluded': _intraday_custom_constraints.get('leave_types_excluded', ["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"]),
-        'permitted_shifts': _intraday_custom_constraints.get('permitted_shifts')
+        'permitted_shifts': _intraday_custom_constraints.get('permitted_shifts'),
+        # CP-SAT optimiser controls
+        'use_cpsat': _intraday_custom_constraints.get('use_cpsat', False),
+        'cpsat_available': _CPSAT_AVAILABLE,
     }
     return jsonify(res)
 
@@ -3220,6 +3572,509 @@ def update_csv_dates_to_current():
                     writer = csv.DictWriter(f, fieldnames=fieldnames)
                     writer.writeheader()
                     writer.writerows(rows)
+
+# ===========================================================================
+# UNIFIED SHORT-TERM OPTIMISE ENDPOINT
+# ===========================================================================
+
+@app.route('/api/short-term/optimise', methods=['POST'])
+def st_optimise():
+    """Apply all constraints + run roster optimiser → return full updated schedule.
+
+    Body:
+      date, use_mip, min_rest_hrs,
+      tt_t1_t2, tt_skill_switch, use_primary_first, allow_overlaps,
+      shift_duration_hrs, b1_duration_mins, b2_duration_mins,
+      leave_types_excluded, permitted_shifts
+    """
+    global _st_custom_constraints
+
+    body = request.get_json(force=True) or {}
+    date = (body.get('date') or '').strip()
+    if not date:
+        return jsonify({'error': 'date required'}), 400
+
+    use_mip = bool(body.get('use_mip', True))
+    min_rest_hrs = float(body.get('min_rest_hrs', 11))
+
+    # ── 1. Persist tactical constraints ──────────────────────────────
+    tactical_keys = [
+        'tt_t1_t2', 'tt_skill_switch', 'use_primary_first', 'allow_overlaps',
+        'shift_duration_hrs', 'b1_duration_mins', 'b2_duration_mins',
+        'leave_types_excluded', 'permitted_shifts',
+    ]
+    for k in tactical_keys:
+        if k in body:
+            _st_custom_constraints[k] = body[k]
+
+    # ── 2. Re-run tactical schedule (clears manual overrides for fresh plan) ──
+    _manual_assigns.pop(date, None)
+    result = _get_short_term_schedule(date, preserve_manual_assigns=False)
+    if 'error' in result:
+        return jsonify(result), 404
+
+    roster_info = {'roster_available': False, 'solver_used': 'none'}
+
+    # ── 3. Run roster optimiser and merge assignments ─────────────────
+    if _ROSTER_AVAILABLE:
+        try:
+            on_duty = result.get('staff', [])
+            flights = result.get('flights', [])
+
+            # Derive demand windows from today's tasks
+            all_tasks = [t for f in flights for t in f.get('tasks', [])]
+            demand_windows = _roster_tasks_to_dw(all_tasks) if all_tasks else []
+
+            # Fallback: two synthetic anchor windows covering the day
+            if not demand_windows:
+                anchor_skill = on_duty[0].get('skill1', 'GNIB') if on_duty else 'GNIB'
+                demand_windows = [
+                    _RosterDemandWindow(240,  960,  anchor_skill, 1, 'Standard'),
+                    _RosterDemandWindow(960, 1440,  anchor_skill, 1, 'Standard'),
+                ]
+
+            # Normalise staff list for the optimiser
+            staff_norm = [
+                {
+                    'id':               s.get('id', s.get('name', '')),
+                    'skill1':           s.get('skill1', ''),
+                    'skill2':           s.get('skill2', ''),
+                    'shift_start_mins': s.get('shift_start_mins', 240),
+                    'shift_end_mins':   s.get('shift_end_mins',   960),
+                }
+                for s in on_duty
+            ]
+
+            roster_constraints = {
+                'shift_duration_hrs': _st_custom_constraints.get('shift_duration_hrs', 12),
+                'min_rest_mins':      int(min_rest_hrs * 60),
+                'b1_duration_mins':   _st_custom_constraints.get('b1_duration_mins', 30),
+                'b2_duration_mins':   _st_custom_constraints.get('b2_duration_mins', 60),
+            }
+
+            rr = _roster_generate(staff_norm, demand_windows,
+                                  constraints=roster_constraints, use_mip=use_mip)
+
+            # Merge optimised shift/break assignments back into the staff list
+            roster_map = {e['id']: e for e in (rr.get('roster') or [])}
+            for s in result['staff']:
+                sid = s.get('id', s.get('name', ''))
+                entry = roster_map.get(sid)
+                if entry and entry.get('pattern_id') != 'unassigned':
+                    s['shift_label']      = entry.get('shift_label', s.get('shift', ''))
+                    s['pattern_id']       = entry.get('pattern_id', '')
+                    s['skill_match']      = entry.get('skill_match', 'primary')
+                    s['utilisation_pct']  = entry.get('utilisation_pct', 0)
+                    if entry.get('shift_start_mins') is not None:
+                        s['shift_start_mins'] = entry['shift_start_mins']
+                    if entry.get('shift_end_mins') is not None:
+                        s['shift_end_mins'] = entry['shift_end_mins']
+                    if entry.get('breaks'):
+                        s['breaks'] = entry['breaks']
+
+            roster_info = {
+                'roster_available': True,
+                'solver_used':   rr.get('solver_used', 'greedy'),
+                'mip_available': _ROSTER_SOLVER_AVAILABLE,
+                'pattern_count': rr.get('pattern_count', 0),
+                'patterns':      rr.get('patterns', []),
+                'fairness':      rr.get('fairness', {}),
+                'coverage':      rr.get('coverage', {}),
+                'flags':         rr.get('flags', []),
+                'utilisation':   rr.get('utilisation', {}),
+            }
+        except Exception as exc:
+            roster_info = {'roster_available': False, 'error': str(exc)}
+
+    result['roster'] = roster_info
+    result['constraints_applied'] = {
+        k: _st_custom_constraints.get(k) for k in tactical_keys
+    }
+    return jsonify(result)
+
+
+# ===========================================================================
+# ROSTER OPTIMISATION ENDPOINT
+# ===========================================================================
+
+@app.route('/api/roster/optimised', methods=['GET', 'POST'])
+def roster_optimised():
+    """Two-phase roster optimisation: shift-pattern generation → staff assignment.
+
+    GET  ?date=YYYY-MM-DD[&use_mip=true]
+    POST { "date": "YYYY-MM-DD",
+           "use_mip": true,
+           "constraints": {
+             "b1_duration_mins": 30,
+             "b2_duration_mins": 60,
+             "min_rest_mins": 660,
+             "shift_duration_hrs": 12
+           }
+         }
+
+    Phase 1 — Shift-Pattern Generation
+      Generates all feasible patterns on a 60-minute grid up to 12 h.
+      Scores each by weighted demand coverage; prunes to ≤18 candidates.
+      Always retains DAY (04:00–16:00) and NIGHT (16:00–04:00) anchors.
+
+    Phase 2a — Greedy Assignment  (always runs)
+      Assigns staff to patterns respecting 11-hour rest, skill fit, and load balance.
+
+    Phase 2b — MIP Refinement  (optional; requires PuLP)
+      Minimises skill-mismatch cost + L1 workload deviation + demand coverage gaps.
+
+    Response
+    --------
+    {
+      "date":           "YYYY-MM-DD",
+      "solver_used":    "CBC (PuLP MIP)" | "Greedy",
+      "mip_status":     "Optimal" | "greedy_only" | …,
+      "roster_available": true,
+      "staff_count":    42,
+      "pattern_count":  8,
+      "patterns":       [ {id, label, start_mins, end_mins, net_mins,
+                           coverage_score, demand_profile, staff_count} … ],
+      "roster":         [ {id, skill1-4, employment, pattern_id, shift_label,
+                           shift_start, shift_end, shift_duration_mins,
+                           net_working_mins, utilisation_pct, skill_match,
+                           breaks, assignments} … ],
+      "utilisation":    { staff_id: {gross_mins, net_working_mins,
+                                     utilisation_pct, pattern_id, skill_match} },
+      "fairness":       { gini_coefficient, mean_utilisation_pct,
+                          std_utilisation_pct, min_utilisation_pct,
+                          max_utilisation_pct, interpretation },
+      "coverage":       { skill: {needed, covered, coverage_pct} },
+      "flags":          [ {flag_id, severity, staff_id, detail} … ],
+      "absent_staff":   [ {id, skill1, leave_type} … ],
+      "constraints_used": { … }
+    }
+    """
+    if not _ROSTER_AVAILABLE:
+        return jsonify({
+            'error':   'roster_optimizer module not available',
+            'message': 'Ensure roster_optimizer.py is present in the project root.',
+        }), 503
+
+    # ── Parse parameters ────────────────────────────────────────────────────
+    if request.method == 'POST':
+        body = request.get_json(force=True) or {}
+    else:
+        body = {}
+
+    date_str = (
+        body.get('date')
+        or request.args.get('date', '')
+        or datetime.now().strftime('%Y-%m-%d')
+    ).strip()
+
+    use_mip_param = body.get('use_mip', request.args.get('use_mip', 'true'))
+    use_mip = str(use_mip_param).lower() not in ('false', '0', 'no')
+
+    constraints_override = body.get('constraints', {})
+    constraints = {
+        'b1_duration_mins':  int(constraints_override.get('b1_duration_mins', 30)),
+        'b2_duration_mins':  int(constraints_override.get('b2_duration_mins', 60)),
+        'min_rest_mins':     int(constraints_override.get('min_rest_mins', 660)),
+        'shift_duration_hrs': int(constraints_override.get('shift_duration_hrs', 12)),
+    }
+    constraints['max_shift_mins'] = constraints['shift_duration_hrs'] * 60
+
+    # ── Validate date ───────────────────────────────────────────────────────
+    parsed_date = None
+    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%m-%Y', '%d-%m-%y'):
+        try:
+            parsed_date = datetime.strptime(date_str, fmt)
+            break
+        except ValueError:
+            pass
+    if parsed_date is None:
+        return jsonify({'error': f'Invalid date: {date_str!r}'}), 400
+
+    # ── Load staff & absences for the date ─────────────────────────────────
+    # We call the existing path (without the optimiser branch) to get the raw
+    # staff list and absent staff.  The optimiser branch is applied below after
+    # we have built demand windows from the day's flights.
+    on_duty_raw, absent_staff = get_staff_for_date(
+        date_str,
+        custom_constraints={
+            'shift_duration_hrs':  constraints['shift_duration_hrs'],
+            'b1_duration_mins':    constraints['b1_duration_mins'],
+            'b2_duration_mins':    constraints['b2_duration_mins'],
+            'leave_types_excluded': constraints_override.get(
+                'leave_types_excluded',
+                ['Annual Leave', 'Paternity Leave', 'Jury Duty', 'Sick Leave', 'Training'],
+            ),
+        },
+        use_roster_optimiser=False,   # raw list first; optimiser applied below
+    )
+
+    if not on_duty_raw:
+        return jsonify({
+            'date':           date_str,
+            'error':          'No staff scheduled for this date',
+            'absent_staff':   absent_staff,
+            'roster_available': False,
+        }), 404
+
+    # ── Build demand windows from the day's flights ─────────────────────────
+    # Re-use optimize_day task generation machinery to derive demand windows.
+    rules      = load_config_rules()
+    stands_map = get_stands_map()
+
+    # Read flights for this date
+    all_flights  = read_csv_flights()
+    date_csv_key = parsed_date.strftime('%d-%b-%y')
+    day_flights  = [f for f in all_flights if f.get('date', '').strip() == date_csv_key]
+
+    demand_windows: list = []
+    if day_flights:
+        # Build processed flights for task generation (same pre-processing as optimize_day)
+        processed = []
+        for f in day_flights:
+            sta_m = parse_time(f.get('sta', ''))
+            if sta_m is None:
+                continue
+            status  = f.get('Status', '').strip()
+            icao    = f.get('icao_wake', '').strip().upper()
+            cbp_flag = f.get('cbp', '')
+            haul    = icao_to_haul(icao, cbp_flag)
+            stand   = f.get('stand', '').strip()
+            stand_info = stands_map.get(stand, {'type': 'Contact', 'terminal': 'T1', 'pier': 'P1'})
+            is_remote  = stand_info.get('type', '').lower() in ('remote', 'apron')
+
+            processed.append({
+                'time_mins':   sta_m,
+                'status':      status,
+                'haul':        haul,
+                'stand':       stand,
+                'is_remote':   is_remote,
+                'terminal':    stand_info.get('terminal', 'T1'),
+                'pier':        stand_info.get('pier', 'P1'),
+                'flight_no':   f.get('flight_no', ''),
+                'icao':        icao,
+            })
+
+        day_tasks = _generate_day_tasks(processed, rules, stands_map, SHARING_WINDOW_MINS)
+        demand_windows = _roster_tasks_to_dw(day_tasks)
+
+    # If no flights data, synthesise two 12-hour demand blocks (DAY + NIGHT)
+    # so the engine always has something to score patterns against.
+    if not demand_windows:
+        demand_windows = [
+            _RosterDemandWindow(start=240,  end=960,  skill='GNIB', needed=3, priority='Medium'),
+            _RosterDemandWindow(start=960,  end=1440, skill='GNIB', needed=2, priority='Medium'),
+        ]
+
+    # ── Normalise staff dicts for the optimiser ─────────────────────────────
+    staff_list = [
+        {
+            'id':         s['id'],
+            'skill1':     s.get('skill1', ''),
+            'skill2':     s.get('skill2', ''),
+            'skill3':     s.get('skill3', ''),
+            'skill4':     s.get('skill4', ''),
+            'employment': s.get('employment', ''),
+        }
+        for s in on_duty_raw
+    ]
+
+    # ── Run roster optimiser ────────────────────────────────────────────────
+    roster_result = _roster_generate(
+        demand_windows  = demand_windows,
+        staff_list      = staff_list,
+        constraints     = constraints,
+        prev_shift_ends = {},   # no cross-day state at this endpoint for now
+        use_mip         = use_mip,
+    )
+
+    # ── Build response ──────────────────────────────────────────────────────
+    return jsonify({
+        'date':              date_str,
+        'roster_available':  True,
+        'solver_used':       roster_result.get('solver_used', 'Greedy'),
+        'mip_status':        roster_result.get('mip_status', 'greedy_only'),
+        'mip_available':     _ROSTER_SOLVER_AVAILABLE,
+        'staff_count':       roster_result.get('staff_count', len(staff_list)),
+        'pattern_count':     roster_result.get('pattern_count', 0),
+        'patterns':          roster_result.get('patterns', []),
+        'roster':            roster_result.get('roster', []),
+        'utilisation':       roster_result.get('utilisation', {}),
+        'fairness':          roster_result.get('fairness', {}),
+        'coverage':          roster_result.get('coverage', {}),
+        'flags':             roster_result.get('flags', []),
+        'absent_staff':      absent_staff,
+        'demand_windows':    [
+            {
+                'start':    dw.start,
+                'end':      dw.end,
+                'skill':    dw.skill,
+                'needed':   dw.needed,
+                'priority': dw.priority,
+                'task_id':  dw.task_id,
+            }
+            for dw in demand_windows
+        ],
+        'constraints_used':  constraints,
+    })
+
+
+# ===========================================================================
+# MONTE CARLO SIMULATION ENDPOINT  (/api/simulation/run)
+# ===========================================================================
+
+@app.route('/api/simulation/run', methods=['POST'])
+def simulation_run():
+    """Intraday Monte Carlo stress-test for a staffing plan.
+
+    This is a VALIDATION layer — it does not modify any optimisation logic.
+    It perturbs the environment (delays, absences, surge) and measures how
+    well the original plan survives across hundreds of random scenarios.
+
+    POST body
+    ---------
+    {
+      "date":     "YYYY-MM-DD",          // date to simulate (required)
+      "num_runs": 200,                   // iterations 10-1000 (default 100)
+      "params": {
+        "delay_sigma_mins":  15,         // std-dev of per-flight delay draw
+        "delay_max_mins":    30,         // hard cap on delay magnitude
+        "delay_prob":        0.25,       // fraction of flights delayed per run
+        "absence_rate_min":  0.05,       // minimum run-level absence fraction
+        "absence_rate_max":  0.15,       // maximum run-level absence fraction
+        "surge_mean":        1.0,        // expected passenger surge factor
+        "surge_sigma":       0.10,       // log-normal sigma for surge draw
+        "seed":              null        // int for reproducibility, null = random
+      }
+    }
+
+    Response
+    --------
+    {
+      "date":        "YYYY-MM-DD",
+      "risk_score":  42.3,              // 0-100 composite risk index
+      "risk_level":  "Medium",          // Low / Medium / High / Critical
+      "summary": {
+        "num_runs":             200,
+        "unserved_tasks":       {mean, std, p10, p50, p90, p99, ...},
+        "staff_utilisation":    {mean, std, p10, p50, p90, p99, ...},
+        "critical_failure_probability": 0.12,
+        "prob_any_unserved":    0.65,
+        "prob_gt10pct_unserved": 0.18,
+        ...
+      },
+      "worst_case": {
+        "run_id": 47,
+        "unserved_pct": 28.6,
+        "absent_count": 9,
+        "delayed_flights": {"EI123": 28, ...},
+        "failing_tasks":  [{task_id, label, skill, priority, gap, ...}],
+        ...
+      },
+      "bottlenecks": {
+        "top_failing_tasks": [{task_id, label, skill, fail_rate_pct, avg_gap}],
+        "failing_skills":    [{skill, fail_rate_pct, total_gap_headcount}],
+        "tasks_never_failed": 18,
+      },
+      "distributions": {
+        "unserved_pct":     [{x, count}, ...],
+        "utilisation_mean": [{x, count}, ...],
+        ...
+      },
+      "baseline": {
+        "total_tasks": 35,
+        "unserved_tasks": 2,
+        "coverage_pct": 94.3,
+        ...
+      },
+      "run_log": [{run_id, unserved_pct, absent_count, ...}],
+      "params_used": {...},
+      "meta": {elapsed_seconds, runs_per_second, ...}
+    }
+    """
+    if not _SIM_AVAILABLE:
+        return jsonify({
+            "error":   "simulation_engine module not available",
+            "message": "Ensure simulation_engine.py is in the project root.",
+        }), 503
+
+    body = request.get_json(force=True) or {}
+
+    # ── Parse date ──────────────────────────────────────────────────────────
+    date_str = body.get("date", "").strip()
+    if not date_str:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+
+    parsed_date = None
+    for fmt in ("%Y-%m-%d", "%d-%b-%y", "%d-%m-%Y", "%d-%m-%y"):
+        try:
+            parsed_date = datetime.strptime(date_str, fmt)
+            break
+        except ValueError:
+            pass
+    if parsed_date is None:
+        return jsonify({"error": f"Invalid date: {date_str!r}"}), 400
+
+    # ── Parse simulation parameters ─────────────────────────────────────────
+    num_runs = int(body.get("num_runs", 100))
+    num_runs = max(10, min(num_runs, 1000))
+
+    sim_params = body.get("params", {})
+
+    # ── Build the base plan via optimize_day (read-only) ────────────────────
+    # We call the standard day optimiser to get the current staffing plan.
+    # The simulation layer then stress-tests this plan without touching it.
+    plan = optimize_day(
+        date_str,
+        overrides={},
+        manual_assigns={},
+        custom_constraints=_st_custom_constraints,
+    )
+
+    if "error" in plan:
+        return jsonify({
+            "error": f"Could not build plan for {date_str}: {plan['error']}",
+            "date":  date_str,
+        }), 404
+
+    if not plan.get("tasks"):
+        return jsonify({
+            "error": "Plan has no tasks — no flights scheduled for this date?",
+            "date":  date_str,
+            "kpis":  plan.get("kpis", {}),
+        }), 404
+
+    # ── Run Monte Carlo simulation ──────────────────────────────────────────
+    try:
+        sim_result = _sim_run_simulation(
+            plan     = plan,
+            num_runs = num_runs,
+            params   = sim_params or None,
+        )
+    except Exception as exc:
+        logger.exception("Simulation failed for date %s", date_str)
+        return jsonify({"error": str(exc), "date": date_str}), 500
+
+    # ── Attach plan-level context to the response ───────────────────────────
+    sim_result["date"]         = date_str
+    sim_result["date_label"]   = plan.get("date_label", date_str)
+    sim_result["plan_kpis"]    = plan.get("kpis", {})
+    sim_result["sim_available"] = True
+
+    return jsonify(sim_result)
+
+
+@app.route('/api/simulation/status', methods=['GET'])
+def simulation_status():
+    """Quick availability check for the simulation engine."""
+    return jsonify({
+        "sim_available": _SIM_AVAILABLE,
+        "message": (
+            "Monte Carlo simulation engine ready."
+            if _SIM_AVAILABLE
+            else "simulation_engine.py not found. Ensure it is in the project root."
+        ),
+    })
+
 
 if __name__ == '__main__':
     update_csv_dates_to_current()

@@ -577,182 +577,318 @@ async function renderSTRosterBoard(container) {
 
 // ── Optimization Tab ─────────────────────────────────────────────
 async function renderSTOptimization(container) {
-  container.innerHTML = `
-    <div class="panel mt-20" style="max-width:900px; margin-left:auto; margin-right:auto;">
-      <div class="loading-spinner"><div class="spinner"></div><span>Loading planning constraints…</span></div>
-    </div>
-  `;
+  const SKILL_COLORS = {
+    'GNIB':'#3498DB','CBP Pre-clearance':'#9B59B6','Bussing':'#E8850A',
+    'PBZ':'#2ECC71','Mezz Operation':'#1ABC9C','Litter Picking':'#E74C3C',
+    'Ramp / Marshalling':'#F39C12','Arr Customer Service':'#5DADE2',
+    'Check-in/Trolleys':'#A9CCE3','Transfer Corridor':'#27AE60',
+    'Dep / Trolleys':'#8E44AD','T1/T2 Trolleys L/UL':'#E91E63',
+  };
 
-  let constraints;
+  // Load current constraints to pre-fill the form
+  container.innerHTML = `<div class="panel mt-20"><div class="loading-spinner"><div class="spinner"></div><span>Loading optimiser…</span></div></div>`;
+  let constraints = {};
   try {
-    const res = await fetch('/api/short-term/constraints');
-    constraints = await res.json();
-  } catch (e) {
-    container.innerHTML = `<div class="panel mt-20 alert-crit">Failed to load constraints API.</div>`;
-    return;
-  }
+    const r = await fetch('/api/short-term/constraints');
+    constraints = await r.json();
+  } catch (_) {}
 
   container.innerHTML = `
-    <div class="panel mt-20" style="border-top: 4px solid var(--info);">
-      <div class="panel-title-row" style="margin-bottom:24px; border-bottom:1px solid var(--border); padding-bottom:16px;">
+    <div class="panel mt-20" style="border-top:4px solid var(--accent);">
+      <div class="panel-title-row" style="margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:16px;">
         <div>
-          <h2 class="panel-title" style="margin:0; font-size:1.4rem; color:var(--text); text-transform:none;">⚙ Tactical Optimization Engine</h2>
-          <p class="section-hint" style="margin:6px 0 0; color:var(--muted); font-size:0.88rem;">Configure planning parameters for ${ST_DATA.date_label}</p>
+          <h2 class="panel-title" style="margin:0;font-size:1.4rem;color:var(--text);text-transform:none;">⚙ Unified Optimiser</h2>
+          <p class="section-hint" style="margin:6px 0 0;font-size:0.88rem;">
+            Adjust all constraints then run — results are applied live across all tabs.
+            &nbsp;·&nbsp; <em>Phase 1</em>: schedule tasks by skill &nbsp;·&nbsp; <em>Phase 2</em>: assign shifts via Greedy + MIP
+          </p>
         </div>
-        <button class="btn-update-fluid" id="st-opt-update">
-          ⚡ Update Schedule
-        </button>
+        <button class="btn-update-fluid" id="st-opt-run" style="min-width:180px;">⚡ Run &amp; Apply</button>
       </div>
 
-      <div class="opt-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:24px;">
-        
-        <!-- Shifts & Breaks -->
+      <div class="opt-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-bottom:8px;">
+
+        <!-- Shift & Rest -->
         <div class="opt-card">
-          <div class="opt-card-title">
-            <span style="color:var(--info)">⏱</span> Working Hours & Breaks
+          <div class="opt-card-title"><span style="color:var(--info)">⏱</span> Shift &amp; Rest</div>
+          <div style="display:flex;gap:10px;margin-bottom:12px;">
+            <div style="flex:1"><label class="opt-label">Shift Duration (hrs)</label>
+              <input type="number" id="opt-shift-hrs" class="select-input" value="${constraints.shift_duration_hrs||12}" min="6" max="16" style="width:100%"/></div>
+            <div style="flex:1"><label class="opt-label">Min Rest (hrs)</label>
+              <input type="number" id="opt-rest-hrs" class="select-input" value="11" min="8" max="16" style="width:100%"/></div>
           </div>
-          <div class="input-group" style="margin-bottom:16px">
-            <label class="opt-label">Shift Duration (Hrs)</label>
-            <input type="number" id="st-opt-shift-hrs" class="select-input" style="width:100%" value="${constraints.shift_duration_hrs || 12}" min="6" max="16"/>
-          </div>
-          <div class="input-group" style="margin-bottom:16px; display:flex; gap:16px;">
-            <div style="flex:1;">
-              <label class="opt-label">Short Break (mins)</label>
-              <input type="number" id="st-opt-b1-dur" class="select-input" style="width:100%" value="${constraints.b1_duration_mins || 30}" min="15" max="60"/>
-            </div>
-            <div style="flex:1;">
-              <label class="opt-label">Meal Break (mins)</label>
-              <input type="number" id="st-opt-b2-dur" class="select-input" style="width:100%" value="${constraints.b2_duration_mins || 30}" min="15" max="120"/>
-            </div>
+          <div style="display:flex;gap:10px;">
+            <div style="flex:1"><label class="opt-label">Short Break (min)</label>
+              <input type="number" id="opt-b1" class="select-input" value="${constraints.b1_duration_mins||30}" min="15" max="60" style="width:100%"/></div>
+            <div style="flex:1"><label class="opt-label">Meal Break (min)</label>
+              <input type="number" id="opt-b2" class="select-input" value="${constraints.b2_duration_mins||60}" min="30" max="120" style="width:100%"/></div>
           </div>
         </div>
 
-        <!-- Travel Times -->
+        <!-- Travel buffers -->
         <div class="opt-card">
-          <div class="opt-card-title">
-            <span style="color:var(--accent)">🚶</span> Travel Time Buffers (mins)
-          </div>
-          <div class="input-group" style="margin-bottom:16px">
-            <label class="opt-label">T1 to T2 Transfer (mins)</label>
-            <input type="number" id="st-opt-tt-t1-t2" class="select-input" style="width:100%" value="${constraints.tt_t1_t2 || 15}" min="0" max="60"/>
+          <div class="opt-card-title"><span style="color:var(--accent)">🚶</span> Travel Buffers (min)</div>
+          <div class="input-group" style="margin-bottom:14px">
+            <label class="opt-label">T1 → T2 Transfer</label>
+            <input type="number" id="opt-tt-t1t2" class="select-input" value="${constraints.tt_t1_t2||15}" min="0" max="60" style="width:100%"/>
           </div>
           <div class="input-group">
-            <label class="opt-label">Skill Switch Transfer (mins)</label>
-            <input type="number" id="st-opt-tt-sk" class="select-input" style="width:100%" value="${constraints.tt_skill_switch || 10}" min="0" max="60"/>
+            <label class="opt-label">Skill-Switch Transfer</label>
+            <input type="number" id="opt-tt-sk" class="select-input" value="${constraints.tt_skill_switch||10}" min="0" max="60" style="width:100%"/>
           </div>
         </div>
 
-        <!-- Absences -->
+        <!-- Solver mode -->
         <div class="opt-card">
-          <div class="opt-card-title">
-            <span style="color:var(--crit)">🚫</span> Absence Exclusions
+          <div class="opt-card-title"><span style="color:var(--ok)">🧮</span> Solver</div>
+          <p class="opt-hint">MIP (CBC) minimises skill mismatch + workload inequality after greedy pass. Requires PuLP.</p>
+          <div style="display:flex;align-items:center;gap:12px;margin:12px 0;">
+            <input type="checkbox" id="opt-mip" style="width:20px;height:20px;accent-color:var(--accent);cursor:pointer" checked/>
+            <label for="opt-mip" class="opt-label" style="margin:0;cursor:pointer">Enable MIP Refinement</label>
           </div>
-          <p class="opt-hint">Staff with selected leave types will not be rostered during the optimization run.</p>
-          <div id="st-opt-leave-toggles" style="display:flex; flex-direction:column; gap:12px;">
-            ${["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"].map(lt => `
-              <div class="input-group" style="display:flex; align-items:center; gap:14px;">
-                <input type="checkbox" id="st-chk-lt-${lt.replace(/\s+/g,'-')}" value="${lt}" style="width:20px;height:20px;accent-color:var(--info); cursor:pointer" 
-                  ${(constraints.leave_types_excluded || []).includes(lt) ? 'checked' : ''} />
-                <label for="st-chk-lt-${lt.replace(/\s+/g,'-')}" class="opt-label" style="margin-bottom:0; cursor:pointer">${lt}</label>
-              </div>
-            `).join('')}
+          <p class="opt-hint" style="margin-top:6px;font-size:0.74rem;">Obj: Σ skill-mismatch + L1 workload deviation + Σ demand-gap × priority</p>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <input type="checkbox" id="opt-prim-first" style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${constraints.use_primary_first!==false?'checked':''}/>
+              <label for="opt-prim-first" class="opt-label" style="margin:0;cursor:pointer">Primary Skills First</label>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;">
+              <input type="checkbox" id="opt-overlap" style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${(constraints.allow_overlaps||constraints.allow_overlap)?'checked':''}/>
+              <label for="opt-overlap" class="opt-label" style="margin:0;cursor:pointer">Allow Schedule Overlaps</label>
+            </div>
           </div>
         </div>
 
-        <!-- Permitted Shifts -->
+        <!-- Absence exclusions -->
         <div class="opt-card">
-          <div class="opt-card-title">
-            <span style="color:var(--ok)">📅</span> Permitted Shift Timings
+          <div class="opt-card-title"><span style="color:var(--crit)">🚫</span> Exclude Leave Types</div>
+          <p class="opt-hint">Staff on these leave types are removed before optimisation.</p>
+          <div id="opt-leave-toggles" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
+            ${["Annual Leave","Paternity Leave","Jury Duty","Sick Leave","Training"].map(lt => `
+              <div style="display:flex;align-items:center;gap:12px;">
+                <input type="checkbox" id="opt-lt-${lt.replace(/\s+/g,'-')}" value="${lt}"
+                  style="width:18px;height:18px;accent-color:var(--info);cursor:pointer"
+                  ${(constraints.leave_types_excluded||[]).includes(lt)?'checked':''}/>
+                <label for="opt-lt-${lt.replace(/\s+/g,'-')}" class="opt-label" style="margin:0;cursor:pointer">${lt}</label>
+              </div>`).join('')}
           </div>
-          <p class="opt-hint">Standard shift blocks allowed for tactical roster auto-generation.</p>
-          <div id="st-opt-shift-toggles" style="display:flex; flex-direction:column; gap:12px;">
+        </div>
+
+        <!-- Permitted shifts -->
+        <div class="opt-card">
+          <div class="opt-card-title"><span style="color:var(--ok)">📅</span> Permitted Shift Windows</div>
+          <div id="opt-shift-toggles" style="display:flex;flex-direction:column;gap:10px;margin-top:8px;">
             ${[
-              {label: '00:00 - 12:00', s: 0, e: 720},
-              {label: '12:00 - 24:00', s: 720, e: 1440},
-              {label: '10:00 - 22:00', s: 600, e: 1320},
-              {label: '4:00 - 16:00', s: 240, e: 960},
-              {label: '16:00 - 4:00', s: 960, e: 240}
-            ].map((sh, idx) => {
-              const isChecked = (constraints.permitted_shifts || []).some(ps => ps[0] === sh.s && ps[1] === sh.e) || 
-                                (!constraints.permitted_shifts && idx < 3);
-              return `
-                <div class="input-group" style="display:flex; align-items:center; gap:14px;">
-                  <input type="checkbox" class="shift-chk" id="st-chk-sh-${idx}" 
-                    data-label="${sh.label}" data-start="${sh.s}" data-end="${sh.e}"
-                    style="width:20px;height:20px;accent-color:var(--info); cursor:pointer" 
-                    ${isChecked ? 'checked' : ''} />
-                  <label for="st-chk-sh-${idx}" class="opt-label" style="margin-bottom:0; cursor:pointer">${sh.label}</label>
-                </div>
-              `;
+              {label:'00:00 – 12:00', s:0,   e:720},
+              {label:'12:00 – 24:00', s:720, e:1440},
+              {label:'10:00 – 22:00', s:600, e:1320},
+              {label:'04:00 – 16:00', s:240, e:960},
+              {label:'16:00 – 04:00', s:960, e:240},
+            ].map((sh,i) => {
+              const chk = (constraints.permitted_shifts||[]).some(p=>p[0]===sh.s&&p[1]===sh.e)||(!constraints.permitted_shifts&&i<3);
+              return `<div style="display:flex;align-items:center;gap:12px;">
+                <input type="checkbox" class="opt-sh-chk" id="opt-sh-${i}"
+                  data-label="${sh.label}" data-start="${sh.s}" data-end="${sh.e}"
+                  style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${chk?'checked':''}/>
+                <label for="opt-sh-${i}" class="opt-label" style="margin:0;cursor:pointer">${sh.label}</label>
+              </div>`;
             }).join('')}
           </div>
         </div>
 
-        <!-- Assignment Logic -->
-        <div class="opt-card">
-          <div class="opt-card-title">
-            <span style="color:var(--purple)">⚖</span> Assignment Logic
-          </div>
-          <p class="opt-hint">Prioritize core competencies and handle task overlaps during tactical planning.</p>
-          <div class="input-group" style="margin-bottom:12px; display:flex; align-items:center; gap:14px;">
-            <input type="checkbox" id="st-opt-prim-first" style="width:20px;height:20px;accent-color:var(--info); cursor:pointer" ${constraints.use_primary_first ? 'checked' : ''} />
-            <label for="st-opt-prim-first" class="opt-label" style="margin-bottom:0; cursor:pointer">Prioritize Primary Skills First</label>
-          </div>
-          <div class="input-group" style="display:flex; align-items:center; gap:14px;">
-            <input type="checkbox" id="st-opt-overlap" style="width:20px;height:20px;accent-color:var(--info); cursor:pointer" ${(constraints.allow_overlaps ?? constraints.allow_overlap) ? 'checked' : ''} />
-            <label for="st-opt-overlap" class="opt-label" style="margin-bottom:0; cursor:pointer">Allow Schedule Overlaps (Beta)</label>
-          </div>
-        </div>
+      </div><!-- /opt-grid -->
 
-      </div>
-    </div>
-  `;
+      <!-- Results -->
+      <div id="opt-results"></div>
+    </div>`;
 
-  document.getElementById('st-opt-update').addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    const oldText = btn.innerHTML;
-    btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;margin-right:8px;display:inline-block;vertical-align:middle;"></span>Updating...';
-    btn.disabled = true;
+  // ── Run & Apply handler ───────────────────────────────────────────
+  document.getElementById('st-opt-run').addEventListener('click', async () => {
+    const btn     = document.getElementById('st-opt-run');
+    const results = document.getElementById('opt-results');
+    btn.disabled  = true;
+    btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Optimising…';
+    results.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Running two-phase optimisation and applying to all tabs…</span></div>';
 
-    const leaves = Array.from(document.querySelectorAll('#st-opt-leave-toggles input:checked')).map(cb => cb.value);
-
-    const shifts = Array.from(document.querySelectorAll('#st-opt-shift-toggles input:checked')).map(cb => [
-      parseInt(cb.dataset.start, 10),
-      parseInt(cb.dataset.end, 10),
-      cb.dataset.label
+    const leaves = Array.from(document.querySelectorAll('#opt-leave-toggles input:checked')).map(cb => cb.value);
+    const shifts  = Array.from(document.querySelectorAll('#opt-shift-toggles input:checked')).map(cb => [
+      parseInt(cb.dataset.start,10), parseInt(cb.dataset.end,10), cb.dataset.label
     ]);
 
     const payload = {
-      date: ST_CURRENT_DATE,
-      tt_t1_t2: parseInt(document.getElementById('st-opt-tt-t1-t2').value, 10),
-      tt_skill_switch: parseInt(document.getElementById('st-opt-tt-sk').value, 10),
-      use_primary_first: document.getElementById('st-opt-prim-first').checked,
-      allow_overlaps: document.getElementById('st-opt-overlap').checked,
-      shift_duration_hrs: parseInt(document.getElementById('st-opt-shift-hrs').value, 10),
-      b1_duration_mins: parseInt(document.getElementById('st-opt-b1-dur').value, 10),
-      b2_duration_mins: parseInt(document.getElementById('st-opt-b2-dur').value, 10),
+      date:                 ST_CURRENT_DATE,
+      use_mip:              document.getElementById('opt-mip').checked,
+      min_rest_hrs:         parseFloat(document.getElementById('opt-rest-hrs').value),
+      shift_duration_hrs:   parseInt(document.getElementById('opt-shift-hrs').value, 10),
+      b1_duration_mins:     parseInt(document.getElementById('opt-b1').value, 10),
+      b2_duration_mins:     parseInt(document.getElementById('opt-b2').value, 10),
+      tt_t1_t2:             parseInt(document.getElementById('opt-tt-t1t2').value, 10),
+      tt_skill_switch:      parseInt(document.getElementById('opt-tt-sk').value, 10),
+      use_primary_first:    document.getElementById('opt-prim-first').checked,
+      allow_overlaps:       document.getElementById('opt-overlap').checked,
       leave_types_excluded: leaves,
-      permitted_shifts: shifts
+      permitted_shifts:     shifts,
     };
 
     try {
-      const res = await fetch('/api/short-term/constraints', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const res  = await fetch('/api/short-term/optimise', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error('Update failed');
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Optimiser failed');
+
+      // ── Apply result to global state and refresh all tabs ──────────
       ST_DATA = data;
       renderShortTermDay();
+
+      // ── Scroll back to opt tab and show results inline ─────────────
+      ST_ACTIVE_TAB = 'opt';
+      const el = document.getElementById('st-sub-content');
+      if (el) {
+        const resEl = el.querySelector('#opt-results');
+        if (resEl) _renderOptResults(resEl, data);
+      }
+
     } catch (err) {
-      console.error(err);
-      alert('Failed to update schedule.');
+      results.innerHTML = `<div class="panel mt-8" style="padding:16px;border-left:4px solid var(--crit);">
+        <strong style="color:var(--crit)">✕ Optimiser error</strong><br/><span style="font-size:0.85rem">${err.message}</span></div>`;
     } finally {
-      btn.innerHTML = oldText;
-      btn.disabled = false;
+      btn.disabled  = false;
+      btn.innerHTML = '⚡ Run &amp; Apply';
     }
   });
+
+  // ── Render optimiser results (roster section) ──────────────────────
+  function _renderOptResults(resultsEl, data) {
+    const r = data.roster || {};
+    if (!r.roster_available) {
+      resultsEl.innerHTML = `
+        <div class="panel mt-16" style="padding:16px;border-left:4px solid var(--ok);">
+          <strong style="color:var(--ok)">✓ Schedule updated</strong>
+          <span style="margin-left:12px;font-size:0.85rem;color:var(--muted)">
+            Roster optimiser unavailable — tactical constraints applied. All tabs refreshed.
+          </span>
+          ${r.error ? `<div style="font-size:0.8rem;color:var(--warn);margin-top:6px;">Reason: ${r.error}</div>` : ''}
+        </div>`;
+      return;
+    }
+
+    const fairness  = r.fairness || {};
+    const gini      = fairness.gini_coefficient ?? '—';
+    const giniLabel = fairness.interpretation  || '—';
+    const giniColor = giniLabel==='excellent'?'var(--ok)':giniLabel==='good'?'var(--info)':giniLabel==='moderate'?'var(--warn)':'var(--crit)';
+    const solverBadge = (r.solver_used||'').includes('MIP')||(r.solver_used||'').includes('CBC')
+      ? `<span class="badge-solver badge-mip">MIP CBC</span>`
+      : `<span class="badge-solver badge-greedy">Greedy</span>`;
+
+    // KPIs
+    const staffCount = (data.staff||[]).length;
+    const kpiHtml = `
+      <div class="ro-kpi-row" style="margin-top:20px;">
+        <div class="ro-kpi"><div class="ro-kpi-val" style="color:var(--ok)">✓ Applied</div><div class="ro-kpi-lbl">All Tabs Updated</div></div>
+        <div class="ro-kpi"><div class="ro-kpi-val">${r.pattern_count||0}</div><div class="ro-kpi-lbl">Shift Patterns</div></div>
+        <div class="ro-kpi"><div class="ro-kpi-val">${staffCount}</div><div class="ro-kpi-lbl">Staff On Duty</div></div>
+        <div class="ro-kpi"><div class="ro-kpi-val" style="color:${giniColor}">${typeof gini==='number'?gini.toFixed(3):gini}</div><div class="ro-kpi-lbl">Gini (${giniLabel})</div></div>
+        <div class="ro-kpi"><div class="ro-kpi-val">${fairness.mean_utilisation_pct??'—'}%</div><div class="ro-kpi-lbl">Mean Util</div></div>
+        <div class="ro-kpi"><div class="ro-kpi-val">${solverBadge}</div><div class="ro-kpi-lbl">Solver</div></div>
+        <div class="ro-kpi"><div class="ro-kpi-val">${(r.flags||[]).length}</div><div class="ro-kpi-lbl">Flags</div></div>
+      </div>`;
+
+    // Shift patterns grid
+    const patternHtml = (r.patterns||[]).map(p => {
+      const chips = Object.entries(p.demand_profile||{}).map(([sk,v]) =>
+        `<span class="ro-skill-chip" style="background:${SKILL_COLORS[sk]||'#666'}20;color:${SKILL_COLORS[sk]||'#666'}">${sk}: ${v.toFixed(1)}</span>`
+      ).join('') || '<span class="ro-no-demand">No demand data</span>';
+      const pct = Math.round(((p.net_mins||630)/720)*100);
+      return `
+        <div class="ro-pattern-card">
+          <div class="ro-pattern-label">${p.label}</div>
+          <div class="ro-pattern-meta" style="display:flex;gap:10px;font-size:0.78rem;">
+            <span>Score: ${p.coverage_score.toFixed(1)}</span>
+            <span>👤 ${p.staff_count}</span>
+            <span>${pct}% net</span>
+          </div>
+          <div style="height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin:4px 0;">
+            <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:2px;"></div>
+          </div>
+          <div class="ro-skills-wrap">${chips}</div>
+        </div>`;
+    }).join('');
+
+    // Coverage bars
+    const coverageHtml = Object.entries(r.coverage||{}).map(([sk,cv]) => {
+      const pct = cv.coverage_pct||0;
+      const col = pct>=90?'var(--ok)':pct>=70?'var(--warn)':'var(--crit)';
+      return `<div style="margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:2px;">
+          <span style="font-weight:600">${sk}</span>
+          <span style="color:${col};font-weight:700">${pct}%</span>
+        </div>
+        <div style="height:8px;border-radius:4px;background:var(--surface);overflow:hidden;">
+          <div style="width:${Math.min(pct,100)}%;height:100%;background:${col};border-radius:4px;transition:width 0.4s;"></div>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Flags
+    const flagsHtml = (r.flags||[]).length
+      ? (r.flags||[]).map(f=>`<div class="ro-flag"><strong>${f.flag_id}</strong> — ${f.detail}</div>`).join('')
+      : '<div class="ro-no-flags">✓ No roster flags</div>';
+
+    // Fairness grid
+    const fairHtml = `
+      <div class="ro-fairness-grid">
+        <div class="ro-fair-stat"><span class="ro-fair-val" style="color:${giniColor}">${typeof gini==='number'?gini.toFixed(3):gini}</span><span class="ro-fair-lbl">Gini</span></div>
+        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.mean_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Mean</span></div>
+        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.std_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Std Dev</span></div>
+        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.min_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Min</span></div>
+        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.max_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Max</span></div>
+      </div>`;
+
+    // Staff table from updated ST_DATA
+    const matchIcon  = m => m==='primary'?'✓':m==='secondary'?'~':'✗';
+    const matchColor = m => m==='primary'?'var(--ok)':m==='secondary'?'var(--warn)':'var(--crit)';
+    const staffRows = (data.staff||[]).map(s => `
+      <tr>
+        <td style="font-weight:600">${s.id||s.name}</td>
+        <td><span class="ro-skill-chip" style="background:${SKILL_COLORS[s.skill1]||'#666'}20;color:${SKILL_COLORS[s.skill1]||'#666'}">${s.skill1||'—'}</span></td>
+        <td style="font-size:0.8rem">${s.shift_label||s.shift||'—'}</td>
+        <td style="color:${matchColor(s.skill_match)};font-weight:700">${matchIcon(s.skill_match||'primary')}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="flex:1;background:var(--surface);border-radius:4px;height:6px;overflow:hidden;">
+              <div style="width:${s.utilisation_pct||0}%;height:100%;background:${(s.utilisation_pct||0)>85?'var(--ok)':'var(--info)'};border-radius:4px;"></div>
+            </div>
+            <span style="font-size:0.75rem;font-weight:600;min-width:34px">${s.utilisation_pct||0}%</span>
+          </div>
+        </td>
+        <td style="font-size:0.78rem;color:var(--muted)">${(s.breaks||[]).map(b=>`${(b.type||'').split(' ')[0]} ${b.start_str||''}`).join(', ')||'—'}</td>
+      </tr>`).join('');
+
+    resultsEl.innerHTML = `
+      ${kpiHtml}
+      <div class="row-2col mt-20" style="gap:20px;align-items:start;">
+        <div>
+          <div class="section-subhead">Shift Patterns</div>
+          <div class="ro-patterns-grid">${patternHtml||'<div class="ro-no-demand">No patterns generated.</div>'}</div>
+        </div>
+        <div>
+          <div class="section-subhead">Skill Coverage</div>
+          ${coverageHtml||'<div class="ro-no-demand">No coverage data.</div>'}
+          <div class="section-subhead" style="margin-top:16px;">Workload Fairness</div>
+          ${fairHtml}
+          <div class="section-subhead" style="margin-top:16px;">Flags</div>
+          ${flagsHtml}
+        </div>
+      </div>
+      <div class="section-subhead mt-16">Staff Assignment (Updated)</div>
+      <div class="table-scroll">
+        <table class="data-table" style="font-size:0.82rem;">
+          <thead><tr><th>ID</th><th>Skill</th><th>Shift</th><th>Match</th><th>Utilisation</th><th>Breaks</th></tr></thead>
+          <tbody>${staffRows||'<tr><td colspan="6" class="empty-state small">No staff data.</td></tr>'}</tbody>
+        </table>
+      </div>`;
+  }
 }
 
 // ── Flights Tab ────────────────────────────────────────────────

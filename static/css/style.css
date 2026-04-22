@@ -2673,3 +2673,257 @@ canvas { display: block; }
 .heatmap-table tr.total-row:nth-last-child(3) td { bottom: 64px; }
 
 
+
+/* ══════════════════════════════════════════════════════════════════
+   ROSTER OPTIMISER UI  (shortterm + intraday)
+══════════════════════════════════════════════════════════════════ */
+
+/* KPI row */
+.ro-kpi-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.ro-kpi {
+  flex: 1 1 120px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  text-align: center;
+}
+.ro-kpi-val {
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.1;
+  margin-bottom: 4px;
+}
+.ro-kpi-lbl {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Solver badges */
+.badge-solver {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.badge-mip   { background: #1d4ed820; color: #1d4ed8; border: 1px solid #1d4ed840; }
+.badge-greedy{ background: #d9770620; color: #d97706; border: 1px solid #d9770640; }
+[data-theme="dark"] .badge-mip    { background: #3b82f630; color: #93c5fd; border-color: #3b82f650; }
+[data-theme="dark"] .badge-greedy { background: #f59e0b30; color: #fcd34d; border-color: #f59e0b50; }
+
+/* Shift pattern cards grid */
+.ro-patterns-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.ro-pattern-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ro-pattern-anchor {
+  border-left: 3px solid var(--accent);
+}
+.ro-pattern-label {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+.ro-pattern-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.ro-pattern-score {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.ro-pattern-staff {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.ro-pattern-util {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.ro-pattern-bar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* Demand skill chips in pattern cards */
+.ro-skills-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ro-skill-chip {
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border-radius: 12px;
+  background: var(--accent-bg, #e0e7ff);
+  color: var(--accent, #4f46e5);
+  font-weight: 600;
+  white-space: nowrap;
+}
+[data-theme="dark"] .ro-skill-chip {
+  background: #312e8140;
+  color: #a5b4fc;
+}
+.ro-no-demand {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Fairness grid */
+.ro-fairness-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+.ro-fair-stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  text-align: center;
+}
+.ro-fair-val {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.ro-fair-lbl {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Flags & absent staff */
+.ro-flag {
+  display: inline-block;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 3px;
+}
+[data-theme="dark"] .ro-flag {
+  background: #78350f30;
+  color: #fcd34d;
+  border-color: #78350f60;
+}
+.ro-absent-chip {
+  display: inline-block;
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: 14px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin: 3px;
+}
+[data-theme="dark"] .ro-absent-chip {
+  background: #7f1d1d30;
+  color: #fca5a5;
+  border-color: #7f1d1d60;
+}
+.ro-no-flags {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   MONTE CARLO / SIMULATION UI
+══════════════════════════════════════════════════════════════════ */
+
+.sim-risk-hero {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 24px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.sim-risk-score-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 100px;
+}
+.sim-risk-number {
+  font-size: 3.2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+.sim-risk-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 4px;
+  opacity: 0.7;
+}
+.sim-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  flex: 1;
+}
+.sim-stat-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 90px;
+}
+.sim-stat-val {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.sim-stat-lbl {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+/* Section subheading inside panels */
+.section-subhead {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 16px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
