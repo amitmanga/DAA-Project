@@ -1,24 +1,26 @@
-Task,Terminal,Priority,Flight Type,Haul / Sub-Type,Window Start Ref,Start Offset (mins),Window End Ref,End Offset (mins),Duration (mins),Staff Count,notes
-GNIB / Immigration,T1+T2,Critical,DEP,Short,STD,-45,STD,15,60,2,Short-haul DEP. Queue forms 45 min before STD.
-GNIB / Immigration,T1+T2,Critical,DEP/ARR,Short,STD,-45,STD,15,60,2,Short-haul turnaround. Same window as DEP.
-GNIB / Immigration,T1+T2,Critical,DEP,Long,STD,-60,STD,20,80,3,Long-haul DEP. Larger aircraft needs earlier start.
-GNIB / Immigration,T1+T2,Critical,DEP/ARR,Long,STD,-60,STD,20,80,3,Long-haul turnaround. DEP phase drives window.
-GNIB / Immigration,T1+T2,Critical,DEP/ARR,Long >300 pax,STD,-75,STD,25,100,4,"Wide-body >300 pax. Extra staff, earlier start."
-CBP Pre-clearance,T2 only,Critical,DEP,US/Canada,First_US_STD,-90,Last_US_STD,30,Variable,3,Hall open 90 min before first US STD to last US STD+30. Duration 4-6 hrs.
-Ramp / Marshalling,T1+T2,High,DEP,Short,STD,-20,STD,10,30,1,"Short-haul DEP only. Marshals in, supervises pushback."
-Ramp / Marshalling,T1+T2,High,DEP/ARR,Short,STA,-15,STD,10,Variable,1,Short-haul turnaround. STA-15 to STD+10. Duration = STA to STD+10.
-Ramp / Marshalling,T1+T2,High,DEP,Long,STD,-30,STD,20,50,2,Long-haul DEP. Lead + support ramp. Wider equipment footprint.
-Ramp / Marshalling,T1+T2,High,DEP/ARR,Long,STA,-20,STD,20,Variable,2,Long-haul turnaround. Both operatives STA-20 to STD+20.
-Bussing,T1+T2,High,DEP,Remote stand,STD,-35,STD,-5,30,1,Remote stand (pier gate) DEP. Bus at gate 35 min before STD.
-Bussing,T1+T2,High,ARR,Remote stand,STA,-10,STA,25,35,1,Remote stand (pier gate) ARR. Bus at stand 10 min before STA.
-Transfer Corridor,T2 only,High,DEP/ARR,Any,Inbound_STA,5,Outbound_STD,-20,Variable,1,"Connecting pax. Start=inbound STA+5, End=outbound STD-20. Duration 20-45 min."
-Check-in/Trolleys,T2 only,Medium,ARR/DEP/ARR,Any,STA,-15,STA,30,45,1,"T2 only. Arrivals and turnarounds. Positioned before STA, cleared STA+30."
-Dep/Trolleys,T1 only,Medium,DEP,Any,Shift_start,30,Shift_end,-30,Variable,1,T1 only. Continuous shift patrol. Not per-flight. One operative per zone.
-Arr Customer Service,T2 only,High,ARR/DEP/ARR,Short,STA,-10,STA,45,55,1,T2 arrivals only. Short-haul. In hall until pax flow clears.
-Arr Customer Service,T2 only,High,ARR/DEP/ARR,Long,STA,-15,STA,75,90,1,T2 arrivals only. Long-haul. Extended for larger volume.
-Mezz Operation,T1 only,Critical,Fixed duty,N/A,Fixed,4:00,Fixed,9:00,300,2,T1 only. Fixed post 04:00-09:00. Not flight-triggered. staff_start_mins=0 means literal 04:00.
-Litter Picking,T1+T2,Low,Shift patrol,Morning,Fixed,6:00,Fixed,14:00,480,1,Both terminals. Literal 06:00-14:00. Not relative to flight.
-Litter Picking,T1+T2,Low,Shift patrol,Afternoon,Fixed,14:00,Fixed,21:00,420,1,Both terminals. Literal 14:00-21:00.
-Litter Picking,T1+T2,Low,Shift patrol,Evening/Night,Fixed,21:00,Fixed,04:00+1,420,1,Both terminals. Literal 21:00-04:00+1.
-PBZ,T2 only,Medium,DEP/ARR,Short (Pier),STD,-50,STD,10,60,1,T2 only. Pier B Zone. Gate support 50 min before STD.
-T1/T2 Trolleys L/UL,T1+T2,Medium,Shift patrol,Surge,Shift_start,30,Shift_end,-30,Variable,1,Both terminals. Cross-terminal transfer during imbalance. Surge 07:00-10:00 and 15:00-18:00.
+Task,Terminal 1,Terminal 2,Pier 1,Pier 2,Pier 3,Pier 4,Priority,Short Haul,Long Haul,Arrival,Departure,Max Staff Count,Dependent on Flights/Terminal,,,,,,,,,,
+GNIB,Yes,Yes,Yes,Yes,Yes,Yes,Critical,Yes,Yes,Yes,Yes,12,Terminal,,,,,,,,,,
+Mezz Operation,Yes,No,Yes,Yes,Yes,No,Critical,No,No,No,No,3,Fixed,,,,,,,,,,
+CBP Pre-clearance,No,Yes,No,No,No,Yes,Critical,Yes,Yes,Yes,Yes,2,US Flights,,,,,,,,,,
+Gate 335,Yes,No,No,No,Yes,No,Critical,Yes,Yes,Yes,Yes,4,All Flights,,,,,,,,,,
+Bussing,Yes,Yes,Yes,Yes,Yes,Yes,High,Yes,Yes,Yes,Yes,3,All Flights,,,,,,,,,,
+Arr Customer Service,No,Yes,No,No,No,Yes,High,Yes,Yes,Yes,Yes,0.25,Terminal,,,,,,,,,,
+Transfer Corridor,No,Yes,No,No,No,Yes,High,Yes,Yes,Yes,Yes,3,Terminal,,,,,,,,,,
+Check-in/Trolleys,No,Yes,No,No,No,Yes,Medium,Yes,Yes,Yes,Yes,4.5,Terminal,,,,,,,,,,
+T1/T2 Trolleys L/UL,Yes,Yes,Yes,Yes,Yes,Yes,Medium,Yes,Yes,Yes,Yes,8,Terminal,,,,,,,,,,
+Dep/Trolleys,Yes,No,Yes,Yes,Yes,No,Medium,Yes,Yes,Yes,Yes,6,Terminal,,,,,,,,,,
+PBZ,Yes,Yes,Yes,Yes,Yes,Yes,Medium,Yes,Yes,Yes,Yes,3,All Flights,,,,,,,,,,
+Departures,Yes,No,No,No,Yes,No,Medium,Yes,Yes,Yes,Yes,0.25,All Flights,,,,,,,,,,
+Litter Picking,Yes,Yes,Yes,Yes,Yes,Yes,Low,Yes,Yes,Yes,Yes,1,Terminal,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,
