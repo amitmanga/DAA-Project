@@ -1352,6 +1352,112 @@ def load_config_rules():
     return _config_rules
 
 
+_max_staff_config = None   # cache for Config_Max_staff.csv
+
+def load_max_staff_config() -> dict:
+    """Load Config_Max_staff.csv and return a lookup dict.
+
+    Keys  : (internal_task_name, normalised_terminal, normalised_pier)
+    Values: {'max_staff': int, 'priority': str|None}
+
+    Terminal is normalised to 'T1' / 'T2' / 'Remote'.
+    Pier     is normalised to 'P1' / 'P2' / 'P3' / 'P4' / 'Central' / 'North' / 'West'.
+    Fractional staff counts are rounded up; minimum is 1.
+    """
+    global _max_staff_config
+    if _max_staff_config is not None:
+        return _max_staff_config
+
+    # Map config task names → internal task names used in the scheduler
+    TASK_NAME_MAP = {
+        'gnib':                  'GNIB / Immigration',
+        'gnib / immigration':    'GNIB / Immigration',
+        'cbp pre-clearance':     'CBP Pre-clearance',
+        'check-in/trolleys':     'Check-in/Trolleys',
+        'dep/trolleys':          'Dep / Trolleys',
+        'dep / trolleys':        'Dep / Trolleys',
+        't1/t2 trolleys l/ul':   'T1/T2 Trolleys L/UL',
+        'ramp / marshalling':    'Ramp / Marshalling',
+        'bussing':               'Bussing',
+        'arr customer service':  'Arr Customer Service',
+        'transfer corridor':     'Transfer Corridor',
+        'mezz operation':        'Mezz Operation',
+        'pbz':                   'PBZ',
+        'litter picking':        'Litter Picking',
+    }
+
+    def _norm_terminal(t: str) -> str:
+        t = str(t).strip().lower()
+        if t in ('1', 't1'):    return 'T1'
+        if t in ('2', 't2'):    return 'T2'
+        if t == 'remote':       return 'Remote'
+        return t.upper()
+
+    def _norm_pier(p: str) -> str:
+        p = str(p).strip()
+        low = p.lower()
+        if low == '1':          return 'P1'
+        if low == '2':          return 'P2'
+        if low == '3':          return 'P3'
+        if low == '4':          return 'P4'
+        if low == 'central':    return 'Central'
+        if low == 'north':      return 'North'
+        if low == 'west':       return 'West'
+        return p.upper()
+
+    result: dict = {}
+    try:
+        rows = read_csv('Config_Max_staff.csv')
+        for row in rows:
+            task_raw     = row.get('Task', '').strip()
+            terminal_raw = row.get('Terminal', '').strip()
+            pier_raw     = row.get('Pier', '').strip()
+            priority_raw = row.get('Priority', '').strip()
+            count_raw    = row.get('Staff Count', '').strip()
+
+            task_key = TASK_NAME_MAP.get(task_raw.lower())
+            if not task_key:
+                continue  # unknown task — skip
+
+            terminal_key = _norm_terminal(terminal_raw)
+            pier_key     = _norm_pier(pier_raw)
+
+            try:
+                max_staff = max(1, math.ceil(float(count_raw)))
+            except (ValueError, TypeError):
+                continue
+
+            priority = priority_raw if priority_raw in ('Critical', 'High', 'Medium', 'Low') else None
+
+            result[(task_key, terminal_key, pier_key)] = {
+                'max_staff': max_staff,
+                'priority':  priority,
+            }
+    except Exception as exc:
+        print(f"[WARN] Could not load Config_Max_staff.csv: {exc}")
+
+    _max_staff_config = result
+    return result
+
+
+def _max_staff_lookup(task_name: str, terminal: str, pier: str, cfg: dict) -> dict | None:
+    """Return the max-staff config entry for (task, terminal, pier), or None.
+
+    Falls back from exact pier → 'ALL' pier so block tasks (which use pier='ALL')
+    can still be capped when the config only lists specific pier rows.
+    """
+    entry = cfg.get((task_name, terminal, pier))
+    if entry:
+        return entry
+    # For block tasks stored with pier='ALL', try matching any pier row for
+    # that terminal and take the minimum cap (most conservative).
+    if pier == 'ALL':
+        candidates = [v for (tn, tm, _p), v in cfg.items() if tn == task_name and tm == terminal]
+        if candidates:
+            return min(candidates, key=lambda x: x['max_staff'])
+    return None
+
+
 def _infer_terminal(gate: str) -> str:
     """Best-effort terminal inference from a gate/stand identifier.
 
@@ -1927,7 +2033,8 @@ def _partial_staff_count(total_pax: int) -> int:
 
 
 def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
-                        window_mins: int = SHARING_WINDOW_MINS) -> list:
+                        window_mins: int = SHARING_WINDOW_MINS,
+                        max_staff_cfg: dict | None = None) -> list:
     """Generate all per-day tasks with four distinct processing paths:
 
     1. BLOCK tasks  — GNIB / Immigration and all Trolley variants.
@@ -1950,6 +2057,10 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
     The block-task names are intentionally excluded from TASK_SHARED /
     TASK_PARTIALLY_SHARED so there is zero overlap.
     """
+
+    # Load (or reuse cached) max-staff config
+    if max_staff_cfg is None:
+        max_staff_cfg = load_max_staff_config()
 
     # ── BLOCK tasks are completely separate from the rule loop ─────────────
     # These are the task names we categorise as 3-hour blocks:
@@ -2037,18 +2148,25 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
 
             if task_name in TASK_DEDICATED:
                 # ── DEDICATED ──────────────────────────────────────────────
-                task_id = f"{fn}_{task_name[:8].replace(' ', '')}_{start_mins}"
+                task_id   = f"{fn}_{task_name[:8].replace(' ', '')}_{start_mins}"
+                _ded_need = rule['staff_count']
+                _ded_pri  = rule['priority']
+                _ms_entry = _max_staff_lookup(task_name, terminal, pier, max_staff_cfg)
+                if _ms_entry:
+                    _ded_need = min(_ded_need, _ms_entry['max_staff'])
+                    if _ms_entry['priority']:
+                        _ded_pri = _ms_entry['priority']
                 dedicated_tasks.append({
                     'id':             task_id,
                     'flight_no':      fn,
                     'task':           task_name,
                     'skill':          skill,
-                    'priority':       rule['priority'],
+                    'priority':       _ded_pri,
                     'start_mins':     start_mins,
                     'end_mins':       end_mins,
                     'start':          mins_to_time(start_mins),
                     'end':            mins_to_time(end_mins),
-                    'staff_needed':   rule['staff_count'],
+                    'staff_needed':   _ded_need,
                     'assigned':       [],
                     'alert':          None,
                     'time_mins':      t_mins,
@@ -2073,18 +2191,25 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
 
             else:
                 # Unknown sharing class — treat as dedicated for safety
-                task_id = f"{fn}_{task_name[:8].replace(' ', '')}_{start_mins}"
+                task_id   = f"{fn}_{task_name[:8].replace(' ', '')}_{start_mins}"
+                _unk_need = rule['staff_count']
+                _unk_pri  = rule['priority']
+                _ms_entry = _max_staff_lookup(task_name, terminal, pier, max_staff_cfg)
+                if _ms_entry:
+                    _unk_need = min(_unk_need, _ms_entry['max_staff'])
+                    if _ms_entry['priority']:
+                        _unk_pri = _ms_entry['priority']
                 dedicated_tasks.append({
                     'id':             task_id,
                     'flight_no':      fn,
                     'task':           task_name,
                     'skill':          skill,
-                    'priority':       rule['priority'],
+                    'priority':       _unk_pri,
                     'start_mins':     start_mins,
                     'end_mins':       end_mins,
                     'start':          mins_to_time(start_mins),
                     'end':            mins_to_time(end_mins),
-                    'staff_needed':   rule['staff_count'],
+                    'staff_needed':   _unk_need,
                     'assigned':       [],
                     'alert':          None,
                     'time_mins':      t_mins,
@@ -2131,13 +2256,21 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         else:
             needed = rule['staff_count']
 
+        # Apply max-staff cap and priority override from Config_Max_staff
+        _sh_pri   = rule['priority']
+        _ms_entry = _max_staff_lookup(task_name, terminal, pier, max_staff_cfg)
+        if _ms_entry:
+            needed  = min(needed, _ms_entry['max_staff'])
+            if _ms_entry['priority']:
+                _sh_pri = _ms_entry['priority']
+
         task_label = f"{task_name} — {pier} {direction}"
         shared_tasks.append({
             'id':             task_id,
             'flight_no':      fns[0],
             'task':           task_label,
             'skill':          skill,
-            'priority':       rule['priority'],
+            'priority':       _sh_pri,
             'start_mins':     blk_start,
             'end_mins':       blk_end,
             'start':          mins_to_time(blk_start),
@@ -2175,15 +2308,26 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
             skill      = 'GNIB'
             needed     = max(2, math.ceil(total_pax / 300))
             priority   = 'Critical'
+            # Map to internal name for config lookup
+            _blk_task_name = 'GNIB / Immigration'
         else:  # TROLLEY
             if direction == 'ARR':
-                task_label = f"Trolleys — {terminal} ARR"
-                skill      = 'GNIB'
+                task_label     = f"Trolleys — {terminal} ARR"
+                skill          = 'GNIB'
+                _blk_task_name = 'Check-in/Trolleys'
             else:
-                task_label = f"Trolleys — {terminal} DEP"
-                skill      = 'Bussing'
+                task_label     = f"Trolleys — {terminal} DEP"
+                skill          = 'Bussing'
+                _blk_task_name = 'Dep / Trolleys'
             needed   = max(1, math.ceil(total_pax / 500))
             priority = 'High'
+
+        # Apply max-staff cap and priority override
+        _ms_entry = _max_staff_lookup(_blk_task_name, terminal, 'ALL', max_staff_cfg)
+        if _ms_entry:
+            needed   = min(needed, _ms_entry['max_staff'])
+            if _ms_entry['priority']:
+                priority = _ms_entry['priority']
 
         task_id = f"BLOCK_{terminal}_{block_idx}_{direction}_{group}"
         block_tasks.append({
@@ -2219,6 +2363,12 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         blk_start  = block_idx * 180
         blk_end    = min(1440, blk_start + 180)
         needed     = max(1, math.ceil(flight_count / 3))
+        ramp_pri   = 'High'
+        _ms_entry  = _max_staff_lookup('Ramp / Marshalling', terminal, pier, max_staff_cfg)
+        if _ms_entry:
+            needed   = min(needed, _ms_entry['max_staff'])
+            if _ms_entry['priority']:
+                ramp_pri = _ms_entry['priority']
         task_label = f"Ramp Marshalling \u2014 {pier} {direction}"
         task_id    = f"RAMP_{terminal}_{pier}_{block_idx}_{direction}"
         ramp_tasks.append({
@@ -2226,7 +2376,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
             'flight_no':      fns[0],
             'task':           task_label,
             'skill':          'GNIB',
-            'priority':       'High',
+            'priority':       ramp_pri,
             'start_mins':     blk_start,
             'end_mins':       blk_end,
             'start':          mins_to_time(blk_start),
@@ -2404,51 +2554,74 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # DEDICATED  → one task per flight (Ramp / Marshalling, Bussing)
     # SHARED     → one pooled task per (terminal, pier, 30-min bucket)
     # PARTIALLY SHARED → pooled task with pax-scaled headcount
-    all_tasks = _generate_day_tasks(processed_flights, rules, stands_map, SHARING_WINDOW_MINS)
+    _ms_cfg   = load_max_staff_config()
+    all_tasks = _generate_day_tasks(processed_flights, rules, stands_map, SHARING_WINDOW_MINS,
+                                    max_staff_cfg=_ms_cfg)
 
     # ── CBP hall task (day-level session, not per-flight or per-window) ───────
-    # Covers the entire departure window for all US/Canada flights.
-    # Kept separate because the hall operates as a continuous session, not a
-    # per-window pool — the same 3 officers handle all pre-clearance regardless
-    # of how many 30-min buckets the departures span.
     if cbp_dep_times:
         cbp_start = min(cbp_dep_times) - 90
         cbp_end   = max(cbp_dep_times) + 30
         cbp_start = max(0, cbp_start)
         if cbp_end <= cbp_start:
             cbp_end = cbp_start + 120
-        # Identify which flights are covered by this session
         cbp_flights = [pf['flight_no'] for pf in processed_flights
                        if pf['haul'] == 'US/Canada' and pf['status'] == 'Departure']
+        _cbp_need = 3
+        _cbp_pri  = 'Critical'
+        _cbp_ms   = _max_staff_lookup('CBP Pre-clearance', 'T2', 'CBP', _ms_cfg) or \
+                    _max_staff_lookup('CBP Pre-clearance', 'T2', 'P4',  _ms_cfg)
+        if _cbp_ms:
+            _cbp_need = min(_cbp_need, _cbp_ms['max_staff'])
+            if _cbp_ms['priority']:
+                _cbp_pri = _cbp_ms['priority']
         all_tasks.append({
             'id':              f'CBP_HALL_{cbp_start}',
             'flight_no':       'CBP-HALL',
             'task':            'CBP Pre-clearance',
             'skill':           'CBP Pre-clearance',
-            'priority':        'Critical',
+            'priority':        _cbp_pri,
             'start_mins':      cbp_start,
             'end_mins':        cbp_end,
             'start':           mins_to_time(cbp_start),
             'end':             mins_to_time(cbp_end),
-            'staff_needed':    3,
+            'staff_needed':    _cbp_need,
             'assigned':        [],
             'alert':           None,
             'time_mins':       cbp_start,
             'flights_covered': cbp_flights,
-            'terminal':        'T2',   # CBP pre-clearance hall is T2 by convention
+            'terminal':        'T2',
             'pier':            'CBP',
             'sharing_mode':    'shared',
             'time_window':     f"{mins_to_time(cbp_start)}–{mins_to_time(cbp_end)}",
         })
 
-    # ── Fixed duties (area-based, independent of flight schedule) ────────────
-    # Mezz Operation, Litter Picking, and PBZ run every operating day.
-    # They are included here as shared area tasks with no specific flight linkage.
+    # ── Fixed duties — apply max-staff cap from Config_Max_staff ─────────────
+    def _fd_need(task, terminal, pier, default):
+        _e = _max_staff_lookup(task, terminal, pier, _ms_cfg)
+        return min(default, _e['max_staff']) if _e else default
+
+    def _fd_pri(task, terminal, pier, default):
+        _e = _max_staff_lookup(task, terminal, pier, _ms_cfg)
+        return (_e['priority'] or default) if _e else default
+
     fixed_duties = [
-        {'id': 'FIXED_MEZZ_240',  'task': 'Mezz Operation', 'skill': 'Mezz Operation', 'priority': 'High',   'start_mins': 240,  'end_mins': 540,  'staff_needed': 2},
-        {'id': 'FIXED_LITTER_AM', 'task': 'Litter Picking', 'skill': 'Litter Picking', 'priority': 'Medium', 'start_mins': 240,  'end_mins': 720,  'staff_needed': 1},
-        {'id': 'FIXED_LITTER_PM', 'task': 'Litter Picking', 'skill': 'Litter Picking', 'priority': 'Medium', 'start_mins': 720,  'end_mins': 1140, 'staff_needed': 1},
-        {'id': 'FIXED_PBZ_240',   'task': 'PBZ',            'skill': 'PBZ',            'priority': 'High',   'start_mins': 240,  'end_mins': 960,  'staff_needed': 2},
+        {'id': 'FIXED_MEZZ_240',  'task': 'Mezz Operation', 'skill': 'Mezz Operation',
+         'priority': _fd_pri('Mezz Operation', 'T1', 'P1', 'High'),
+         'start_mins': 240, 'end_mins': 540,
+         'staff_needed': _fd_need('Mezz Operation', 'T1', 'P1', 2)},
+        {'id': 'FIXED_LITTER_AM', 'task': 'Litter Picking', 'skill': 'Litter Picking',
+         'priority': _fd_pri('Litter Picking', 'T1', 'P1', 'Medium'),
+         'start_mins': 240, 'end_mins': 720,
+         'staff_needed': _fd_need('Litter Picking', 'T1', 'P1', 1)},
+        {'id': 'FIXED_LITTER_PM', 'task': 'Litter Picking', 'skill': 'Litter Picking',
+         'priority': _fd_pri('Litter Picking', 'T1', 'P1', 'Medium'),
+         'start_mins': 720, 'end_mins': 1140,
+         'staff_needed': _fd_need('Litter Picking', 'T1', 'P1', 1)},
+        {'id': 'FIXED_PBZ_240',   'task': 'PBZ',            'skill': 'PBZ',
+         'priority': _fd_pri('PBZ', 'Remote', 'Central', 'High'),
+         'start_mins': 240, 'end_mins': 960,
+         'staff_needed': _fd_need('PBZ', 'Remote', 'Central', 2)},
     ]
     for fd in fixed_duties:
         fd.update({
@@ -2494,12 +2667,31 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                     })
                     busy_map[emp_id].append((task['start_mins'], task['end_mins'], task.get('terminal', 'ALL'), task.get('skill', 'GNIB')))
 
-    # Sort: prefer early tasks first in intraday live mode, otherwise keep priority-first order.
+    # Sort tasks for assignment.
+    # Key objectives in order:
+    #   1. Priority (Critical → High → Medium → Low) from Config_Max_staff / Config.csv
+    #   2. Coverage breadth: tasks covering more flights processed first so shared
+    #      resources are allocated where they deliver the most coverage.
+    #   3. Terminal/pier spread: tasks serving multiple terminals ahead of single-terminal
+    #   4. Earliest start time (so deadlines are met in time order)
+    #   5. Flight number as final tiebreaker for determinism
+    # In live intraday mode (prefer_early=True) start_mins leads so past-due tasks
+    # are never skipped in favour of future high-priority ones.
     priority_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
     if prefer_early:
-        all_tasks.sort(key=lambda t: (t['start_mins'], priority_order.get(t['priority'], 2), t['flight_no']))
+        all_tasks.sort(key=lambda t: (
+            t['start_mins'],
+            priority_order.get(t['priority'], 2),
+            -len(t.get('flights_covered', [])),
+            t.get('flight_no', ''),
+        ))
     else:
-        all_tasks.sort(key=lambda t: (priority_order.get(t['priority'], 2), t['start_mins'], t['flight_no']))
+        all_tasks.sort(key=lambda t: (
+            priority_order.get(t['priority'], 2),
+            -len(t.get('flights_covered', [])),
+            t['start_mins'],
+            t.get('flight_no', ''),
+        ))
 
     # ── CP-SAT optimisation (enabled via use_cpsat flag) ──────────────────────
     # Replaces the greedy loop when OR-Tools is installed and the flag is set.
