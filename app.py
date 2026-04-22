@@ -1949,6 +1949,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
             "start":           mins_to_time(blk_start),
             "end":             mins_to_time(blk_end),
             "staff_needed":    needed,
+            "staff_capacity":  rule["max_staff_count"],
             "assigned":        [],
             "alert":           None,
             "time_mins":       blk_start,
@@ -1992,6 +1993,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
             "start":           mins_to_time(blk_start),
             "end":             mins_to_time(blk_end),
             "staff_needed":    needed,
+            "staff_capacity":  rule["max_staff_count"],
             "assigned":        [],
             "alert":           None,
             "time_mins":       blk_start,
@@ -2067,20 +2069,54 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     on_duty, absent_staff = get_staff_for_date(date_str, custom_constraints)
     print(f"[DEBUG] On-duty: {len(on_duty)}, Absent: {len(absent_staff)}")
 
-    # Build skill lookup dicts
-    staff_by_prim = defaultdict(list)   # skill1 → [staff_dict]
-    staff_by_any  = defaultdict(list)   # unique staff per skill across slots 1-4
+    # Build skill lookup dicts using raw CSV skill names.
+    # Staff CSV uses task-name labels ('Gate 335', 'Dep/Trolleys', etc.).
+    # Pools are keyed by these raw names; task-to-staff matching uses SKILL_ALIASES below.
+    staff_by_prim = defaultdict(list)   # raw_skill1 → [staff_dict]
+    staff_by_any  = defaultdict(list)   # raw skill (any slot) → [staff_dict]
     for s in on_duty:
-        if s.get('skill1'):
-            staff_by_prim[s['skill1']].append(s)
-            staff_by_any[s['skill1']].append(s)
-        
-        # Deduplicate: only add to other skills if not already added
-        seen_for_emp = { s['skill1'] }
-        for sk in [s.get('skill2'), s.get('skill3'), s.get('skill4')]:
-            if sk and sk not in seen_for_emp:
-                staff_by_any[sk].append(s)
-                seen_for_emp.add(sk)
+        raw1 = s.get('skill1', '').strip()
+        if raw1:
+            staff_by_prim[raw1].append(s)
+            staff_by_any[raw1].append(s)
+
+        seen_raw = {raw1}
+        for raw_sk in [s.get('skill2',''), s.get('skill3',''), s.get('skill4','')]:
+            rsk = raw_sk.strip()
+            if rsk and rsk not in seen_raw:
+                staff_by_any[rsk].append(s)
+                seen_raw.add(rsk)
+
+    # Reverse map: task_skill → set of raw CSV skill names that qualify.
+    # e.g. 'GNIB' → {'GNIB', 'Gate 335', 'Departures', 'Check-in/Trolleys', ...}
+    #      'Bussing' → {'Bussing', 'Dep/Trolleys', 'T1/T2 Trolleys L/UL', ...}
+    _skill_aliases: dict = defaultdict(set)
+    for raw_name, ts in TASK_SKILL.items():
+        _skill_aliases[ts].add(raw_name)
+    # Always include the task_skill itself in its own alias set
+    for ts in set(TASK_SKILL.values()):
+        _skill_aliases[ts].add(ts)
+
+    def _skill_norm(raw_sk: str) -> str:
+        """Map a raw staff skill name to its task-execution skill."""
+        return TASK_SKILL.get(raw_sk.strip(), raw_sk.strip()) if raw_sk else ''
+
+    def _candidate_pools(task_skill: str):
+        """Return (prim_pool, any_pool) covering all raw skills for task_skill."""
+        keys = _skill_aliases.get(task_skill, {task_skill})
+        seen_ids: set = set()
+        prim: list = []
+        any_: list = []
+        for k in keys:
+            for s in staff_by_prim.get(k, []):
+                if id(s) not in seen_ids:
+                    seen_ids.add(id(s)); prim.append(s)
+        seen_ids.clear()
+        for k in keys:
+            for s in staff_by_any.get(k, []):
+                if id(s) not in seen_ids:
+                    seen_ids.add(id(s)); any_.append(s)
+        return prim, any_
 
     # busy_map: emp_id → [(start, end, terminal, skill)]
     busy_map = defaultdict(list)
@@ -2174,6 +2210,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         cbp_flights = [pf['flight_no'] for pf in processed_flights
                        if pf['haul'] == 'US/Canada' and pf['status'] == 'Departure']
         _cbp_need = min(3, _cbp_rule['max_staff_count']) if _cbp_rule else 3
+        _cbp_cap  = _cbp_rule['max_staff_count'] if _cbp_rule else 3
         _cbp_pri  = _cbp_rule['priority'] if _cbp_rule else 'Critical'
         all_tasks.append({
             'id':              f'CBP_HALL_{cbp_start}',
@@ -2186,6 +2223,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             'start':           mins_to_time(cbp_start),
             'end':             mins_to_time(cbp_end),
             'staff_needed':    _cbp_need,
+            'staff_capacity':  _cbp_cap,
             'assigned':        [],
             'alert':           None,
             'time_mins':       cbp_start,
@@ -2207,13 +2245,14 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         _needed = _fr['max_staff_count']
         for _shift_idx, (_s, _e) in enumerate([(240, 720), (720, 1200)]):
             fixed_duties.append({
-                'id':           f"FIXED_{_task[:6].replace(' ', '')}_{_shift_idx}",
-                'task':         _task,
-                'skill':        _skill,
-                'priority':     _pri,
-                'start_mins':   _s,
-                'end_mins':     _e,
-                'staff_needed': _needed,
+                'id':            f"FIXED_{_task[:6].replace(' ', '')}_{_shift_idx}",
+                'task':          _task,
+                'skill':         _skill,
+                'priority':      _pri,
+                'start_mins':    _s,
+                'end_mins':      _e,
+                'staff_needed':  _needed,
+                'staff_capacity': _needed,
             })
     for fd in fixed_duties:
         fd.update({
@@ -2378,11 +2417,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         # we iterate and stop as soon as we meet the 'needed' headcount.
         assigned_count = 0
 
+        _prim_pool, _any_pool = _candidate_pools(skill)
         candidate_pools = []
         if use_primary_first:
-            candidate_pools = [staff_by_prim.get(skill, []), staff_by_any.get(skill, [])]
+            candidate_pools = [_prim_pool, _any_pool]
         else:
-            candidate_pools = [staff_by_any.get(skill, [])]
+            candidate_pools = [_any_pool]
 
         for pool_index, pool in enumerate(candidate_pools):
             if assigned_count >= needed:
@@ -2452,7 +2492,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             skill = task['skill']
             start = task['start_mins']
             end   = task['end_mins']
-            for pool in [staff_by_prim.get(skill, []), staff_by_any.get(skill, [])]:
+            _p2_prim, _p2_any = _candidate_pools(skill)
+            for pool in [_p2_prim, _p2_any]:
                 if needed <= 0:
                     break
                 for s in pool:
@@ -2497,9 +2538,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             end   = task['end_mins']
             if 'mismatch_assigned' not in task:
                 task['mismatch_assigned'] = []
-            skill_pools = list({id(s): s for s in (
-                staff_by_prim.get(skill, []) + staff_by_any.get(skill, [])
-            )}.values())
+            _p3_prim, _p3_any = _candidate_pools(skill)
+            skill_pools = list({id(s): s for s in (_p3_prim + _p3_any)}.values())
             any_pool = [s for s in _all_staff_sorted if s not in skill_pools]
             for (pool, is_mismatch) in [(skill_pools, False), (any_pool, True)]:
                 if needed <= 0:
@@ -2532,6 +2572,80 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             else:
                 remaining = task['staff_needed'] - len(task['assigned'])
                 task['alert'] = f'Under-staffed: need {task["staff_needed"]}, assigned {len(task["assigned"])} (gap {remaining})'
+
+    # ── Pass 4: Full staff utilisation ────────────────────────────────────────
+    # For every on-duty staff member, find 3-hour blocks within their shift where
+    # they have no assignment, and assign them to the highest-priority task in
+    # that block that matches one of their skills and has spare capacity.
+    # This ensures all staff are productive every hour they are on duty.
+    _p4_priority = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
+
+    # Index tasks by 3-hour block index
+    _blk_task_index: dict = defaultdict(list)
+    for _t in all_tasks:
+        if _t.get('is_past'):
+            continue
+        _blk = _t['start_mins'] // 180
+        _blk_task_index[_blk].append(_t)
+    # Sort each bucket: Critical first, then more-assigned tasks (fill existing slots)
+    for _blk in _blk_task_index:
+        _blk_task_index[_blk].sort(key=lambda t: (
+            _p4_priority.get(t.get('priority', 'Medium'), 2),
+            -len(t['assigned']),
+        ))
+
+    _p4_assigned = 0
+    for s in on_duty:
+        emp_id   = s['id']
+        # Normalise via TASK_SKILL so 'Gate 335' → 'GNIB', 'Dep/Trolleys' → 'Bussing', etc.
+        s_skills = {_skill_norm(sk) for sk in [s.get('skill1',''), s.get('skill2',''), s.get('skill3',''), s.get('skill4','')] if sk}
+        sh_start = s['shift_start']
+        sh_end   = s['shift_end']
+
+        first_blk = sh_start // 180
+        last_blk  = max(first_blk, (sh_end - 1) // 180)
+
+        for blk in range(first_blk, last_blk + 1):
+            blk_start = blk * 180
+            blk_end   = min(1440, blk_start + 180)
+
+            # Skip if staff already has an assignment overlapping this block
+            already_busy = any(
+                ws < blk_end and we > blk_start
+                for (ws, we, _t, _sk) in busy_map[emp_id]
+            )
+            if already_busy:
+                continue
+
+            # Find best matching task in this block
+            for _t in _blk_task_index.get(blk, []):
+                t_skill = _t.get('skill', 'GNIB')
+                if t_skill not in s_skills:
+                    continue
+                cap = _t.get('staff_capacity', _t['staff_needed'])
+                if len(_t['assigned']) >= cap:
+                    continue
+                if emp_id in _t['assigned']:
+                    continue
+                if not _available_no_buffer(s, _t['start_mins'], _t['end_mins']):
+                    continue
+
+                _t['assigned'].append(emp_id)
+                s['assignments'].append({
+                    'task_id':    _t['id'],
+                    'task':       _t['task'],
+                    'skill':      t_skill,
+                    'terminal':   _t.get('terminal', 'ALL'),
+                    'start':      _t['start'],
+                    'end':        _t['end'],
+                    'start_mins': _t['start_mins'],
+                    'end_mins':   _t['end_mins'],
+                })
+                busy_map[emp_id].append((_t['start_mins'], _t['end_mins'], _t.get('terminal', 'ALL'), t_skill))
+                _p4_assigned += 1
+                break  # one task per block per staff member
+
+    print(f"[DEBUG] Pass-4 (full utilisation): {_p4_assigned} additional assignments")
 
     # Schedule breaks and compute utilisation
     print(f"[DEBUG] Scheduling breaks for staff...")
