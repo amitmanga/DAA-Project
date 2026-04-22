@@ -1,4 +1,4 @@
-"""
+﻿"""
 roster_optimizer.py
 ~~~~~~~~~~~~~~~~~~~~
 Two-phase roster optimisation: shift-pattern generation → staff assignment.
@@ -99,7 +99,7 @@ class ShiftPattern:
     pat_id:     str
     start_mins: int
     end_mins:   int          # may exceed 1440 for night-side windows
-    label:      str          # e.g. "04:00–16:00"
+    label:      str          # e.g. "00:00–12:00"
     b1_start:   int          # first break start (absolute mins)
     b1_end:     int
     b2_start:   int
@@ -134,8 +134,8 @@ def generate_shift_patterns(
     MAX_SHIFT_MINS length, pre-schedules breaks, scores each pattern
     by demand coverage, then prunes to at most MAX_PATTERNS candidates.
 
-    Always guarantees the two canonical DAY (04:00–16:00) and NIGHT
-    (16:00–04:00) patterns survive pruning so the output is never empty.
+    Always guarantees the two canonical DAY (00:00–12:00) and NIGHT
+    (12:00–24:00) patterns survive pruning so the output is never empty.
     """
     b1_mins = int(constraints.get("b1_duration_mins", _B1_MINS))
     b2_mins = int(constraints.get("b2_duration_mins", _B2_MINS))
@@ -187,7 +187,7 @@ def generate_shift_patterns(
         patterns.append(pat)
 
     # Always keep the two canonical shifts (even if demand is zero)
-    canonical = {240, 960}   # DAY=240, NIGHT=960
+    canonical = {0, 720}   # DAY=00:00, NIGHT=12:00
     canonical_pats = [p for p in patterns if p.start_mins in canonical]
     other_pats = sorted(
         [p for p in patterns if p.start_mins not in canonical],
@@ -350,9 +350,9 @@ def assign_greedy(
             unassigned.discard(sid)
             assigned_this += 1
 
-    # Remaining unassigned staff: give them the canonical DAY shift (P0240)
+    # Remaining unassigned staff: give them the canonical DAY shift (P0000)
     # so they still appear in the roster with a valid shift window.
-    canonical_day_id = "P0240"
+    canonical_day_id = "P0000"
     fallback_pat = next((p for p in patterns if p.pat_id == canonical_day_id), patterns[0])
     for sid in list(unassigned):
         prev_end = prev_shift_ends.get(sid, 0)

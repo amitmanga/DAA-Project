@@ -1,4 +1,4 @@
-/* ═══════════════════════════════════════════════════════
+﻿/* ═══════════════════════════════════════════════════════
    DAA Intraday Operations — D (Today)
    ═══════════════════════════════════════════════════════ */
 
@@ -1543,18 +1543,15 @@ async function renderIDOptimization(container) {
           <div class="opt-card-title"><span style="color:var(--ok)">📅</span> Permitted Shift Windows</div>
           <div id="opt-shift-toggles" style="display:flex;flex-direction:column;gap:10px;margin-top:8px;">
             ${[
-              {label:'00:00 – 12:00', s:0,   e:720},
-              {label:'12:00 – 24:00', s:720, e:1440},
-              {label:'10:00 – 22:00', s:600, e:1320},
-              {label:'04:00 – 16:00', s:240, e:960},
-              {label:'16:00 – 04:00', s:960, e:240},
+              {label:'Day', display:'Day (00:00 – 12:00)', s:0,   e:720},
+              {label:'Night', display:'Night (12:00 – 24:00)', s:720, e:1440},
             ].map((sh,i) => {
-              const chk = (constraints.permitted_shifts||[]).some(p=>p[0]===sh.s&&p[1]===sh.e)||(!constraints.permitted_shifts&&i<3);
+              const chk = (constraints.permitted_shifts||[]).some(p=>p[0]===sh.s&&p[1]===sh.e)||(!constraints.permitted_shifts&&i<2);
               return `<div style="display:flex;align-items:center;gap:12px;">
                 <input type="checkbox" class="opt-sh-chk" id="opt-sh-${i}"
                   data-label="${sh.label}" data-start="${sh.s}" data-end="${sh.e}"
                   style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${chk?'checked':''}/>
-                <label for="opt-sh-${i}" class="opt-label" style="margin:0;cursor:pointer">${sh.label}</label>
+                <label for="opt-sh-${i}" class="opt-label" style="margin:0;cursor:pointer">${sh.display}</label>
               </div>`;
             }).join('')}
           </div>

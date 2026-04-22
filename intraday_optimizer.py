@@ -1,4 +1,4 @@
-"""
+﻿"""
 intraday_optimizer.py
 ~~~~~~~~~~~~~~~~~~~~~
 CP-SAT based intraday staff-assignment optimiser for the DAA workforce tool.
@@ -407,8 +407,8 @@ def _get_shift_mins(s: dict, endpoint: str) -> int:
     # Fallback: infer from shift_label
     label = s.get("shift_label", "DAY").upper()
     if "NIGHT" in label:
-        return 960 if endpoint == "start" else 240   # 16:00 → 04:00 next day
-    return 240 if endpoint == "start" else 960        # 04:00 → 16:00
+        return 720 if endpoint == "start" else 1440  # 12:00 -> 24:00
+    return 0 if endpoint == "start" else 720         # 00:00 -> 12:00
 
 
 def _shift_duration(s_start: int, s_end: int) -> int:

@@ -1,4 +1,4 @@
-{
+﻿{
   "_meta": {
     "source": "DAA Ground Operations — Roster Optimisation Constraints",
     "version": "1.0.0",
@@ -12,21 +12,20 @@
       {
         "shift_id": "DAY",
         "label": "Day Shift",
-        "start": "04:00",
-        "end": "16:00",
+        "start": "00:00",
+        "end": "12:00",
         "duration_hrs": 12,
-        "start_mins": 240,
-        "end_mins": 960
+        "start_mins": 0,
+        "end_mins": 720
       },
       {
         "shift_id": "NIGHT",
         "label": "Night Shift",
-        "start": "16:00",
-        "end": "04:00",
+        "start": "12:00",
+        "end": "00:00",
         "duration_hrs": 12,
-        "start_mins": 960,
-        "end_mins": 1680,
-        "note": "end_mins uses 28:00 convention (next day 04:00 = 1680 mins from midnight)"
+        "start_mins": 720,
+        "end_mins": 1440
       }
     ]
   },
@@ -46,7 +45,7 @@
     "min_rest_between_shifts_hrs": 11,
     "min_rest_between_shifts_mins": 660,
     "enforcement": "hard",
-    "note": "A staff member finishing the 16:00–04:00 night shift cannot start the 04:00–16:00 day shift the same morning. The gap from 04:00 to 04:00 is exactly 24 hours so this constraint is satisfied by default across shift boundaries. Flag a breach if any assignment window violates this."
+    "note": "A staff member finishing the 12:00–00:00 night shift cannot start the 00:00–12:00 day shift until the minimum 11-hour rest is satisfied. Flag a breach if any assignment window violates this."
   },
 
   "overtime": {

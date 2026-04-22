@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, render_template
+﻿from flask import Flask, jsonify, request, render_template
 import csv
 import json
 import os
@@ -1235,18 +1235,16 @@ _intraday_overrides = {}   # {flight_no: {delay_mins: int, cancelled: bool}}
 _manual_assigns = {}       # {date_key: {task_id: [extra_staff_ids]}}
 _intraday_custom_constraints = {
     'permitted_shifts': [
-        (0, 720, '00:00 - 12:00'),
-        (720, 1440, '12:00 - 24:00'),
-        (600, 1320, '10:00 - 22:00')
+        (0, 720, 'Day'),
+        (720, 1440, 'Night')
     ],
     'use_cpsat': False,   # Set True to engage the CP-SAT optimiser
 }
 
 _st_custom_constraints = {
     'permitted_shifts': [
-        (0, 720, '00:00 - 12:00'),
-        (720, 1440, '12:00 - 24:00'),
-        (600, 1320, '10:00 - 22:00')
+        (0, 720, 'Day'),
+        (720, 1440, 'Night')
     ]
 }
 
@@ -1771,11 +1769,10 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
             idx = min(i, len(density_shifts) - 1)
             st, en, lb = density_shifts[idx]
         else:
-            # Hard fallback: round-robin across three standard shifts
+            # Hard fallback: round-robin across the two fixed 12-hour shifts
             sys_defaults = [
-                (0,   720,  '00:00–12:00'),
-                (720, 1440, '12:00–24:00'),
-                (600, 1320, '10:00–22:00'),
+                (0,   720,  'Day'),
+                (720, 1440, 'Night'),
             ]
             st, en, lb = sys_defaults[i % len(sys_defaults)]
 
@@ -1788,46 +1785,6 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
             'shift_label': f"{lb} {mins_to_time(st)}–{mins_to_time(en)}",
             'assignments': [], 'breaks': [], 'utilisation_pct': 0
         })
-
-    # Previous Day Carry-over (Night shifts that cross midnight)
-    prev_d = d - timedelta(days=1)
-    prev_key = prev_d.strftime('%d-%m-%Y')
-    path_staff = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
-    with open(path_staff, encoding='utf-8-sig') as f:
-        prev_day_rows = [r for r in csv.DictReader(f) if r.get('DATE','').strip() == prev_key and r.get('EMPLOYEE NUMBER','').strip()]
-    
-    # Check absences for the previous day too
-    prev_absent = set()
-    path_abs = os.path.join(BASE_DIR, 'data', 'Staff_absence_schedule.csv')
-    with open(path_abs, encoding='utf-8-sig') as f:
-        for a in csv.DictReader(f):
-            e_id = a.get('EMPLOYEE NUMBER','').strip()
-            df, dt = parse_date(a.get('DATE FROM','')), parse_date(a.get('DATE TO',''))
-            if df and dt and df <= prev_d <= dt:
-                if a.get('LEAVE TYPE','') in leave_types_excluded: prev_absent.add(e_id)
-
-    for r in prev_day_rows:
-        emp_id = r.get('EMPLOYEE NUMBER', '').strip()
-        if emp_id in prev_absent: continue
-        
-        digits = ''.join(c for c in emp_id if c.isdigit())
-        if digits and int(digits) % 2 == 0: # Only Night shifts
-            st = 960
-            en = st + shift_duration_mins
-            if en > 1440: # crosses midnight
-                on_duty.append({
-                    'id': f"{emp_id} (Carry-over)",
-                    'skill1': r.get('Skill1','').strip(),
-                    'skill2': r.get('Skill2','').strip(),
-                    'skill3': r.get('Skill3','').strip(),
-                    'skill4': r.get('Skill4','').strip(),
-                    'employment': r.get('EMPLOYMENT TYPE','').strip(),
-                    'shift': 'NIGHT',
-                    'shift_start': 0, 
-                    'shift_end': en - 1440,
-                    'shift_label': f"Carry-over from prev day (Ends {mins_to_time(en-1440)})",
-                    'assignments': [], 'breaks': [], 'utilisation_pct': 0
-                })
 
     # ── Roster optimiser path ────────────────────────────────────────────────
     # Replace the density-heuristic shift labels with optimiser-assigned patterns.
@@ -4148,7 +4105,7 @@ def roster_optimised():
     Phase 1 — Shift-Pattern Generation
       Generates all feasible patterns on a 60-minute grid up to 12 h.
       Scores each by weighted demand coverage; prunes to ≤18 candidates.
-      Always retains DAY (04:00–16:00) and NIGHT (16:00–04:00) anchors.
+      Always retains DAY (00:00–12:00) and NIGHT (12:00–24:00) anchors.
 
     Phase 2a — Greedy Assignment  (always runs)
       Assigns staff to patterns respecting 11-hour rest, skill fit, and load balance.
