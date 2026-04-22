@@ -912,7 +912,7 @@ function renderSTFlightsTab(container) {
           <thead>
             <tr>
               <th>Time</th><th>Flight</th><th>Route</th><th>Airline</th>
-              <th>A/C</th><th>Gate</th><th>Type</th><th>Tasks</th><th>Status</th>
+              <th>A/C</th><th>Gate</th><th>Terminal</th><th>Pier</th><th>Type</th><th>Tasks</th><th>Status</th>
             </tr>
           </thead>
           <tbody id="st-flights-tbody"></tbody>
@@ -932,7 +932,9 @@ function filterSTFlights() {
   const status = document.getElementById('st-status-filter').value;
   const filtered = ST_DATA.flights.filter(f => {
     const matchQ = !q || f.flight_no.toLowerCase().includes(q)
-      || f.origin.toLowerCase().includes(q) || f.airline_name.toLowerCase().includes(q);
+      || f.origin.toLowerCase().includes(q) || f.airline_name.toLowerCase().includes(q)
+      || (f.terminal || '').toLowerCase().includes(q)
+      || (f.pier || '').toLowerCase().includes(q);
     const matchS = !status || f.status === status;
     return matchQ && matchS;
   });
@@ -960,6 +962,8 @@ function renderSTFlightsRows(flights) {
       <td>${f.airline_name}</td>
       <td>${f.aircraft_type} <span class="icao-badge">${f.icao_cat}</span></td>
       <td>${f.gate} <span class="stand-badge ${f.stand_type==='Remote'?'badge-warn':'badge-ok'}">${f.stand_type==='Remote'?'RMT':'CNT'}</span></td>
+      <td><span class="terminal-badge">${f.terminal || '—'}</span></td>
+      <td><span class="pier-badge">${f.pier || '—'}</span></td>
       <td><span class="status-badge ${f.status==='Arrival'?'badge-info':'badge-accent'}">${f.status}</span></td>
       <td class="tasks-cell">${taskPills || '<span class="muted">—</span>'}</td>
       <td><span class="badge ${f.status === 'Departure' ? 'badge-accent' : 'badge-info'}">${f.status}</span></td>
@@ -1012,7 +1016,12 @@ function showSTFlightDetail(flight) {
             <div class="fd-task-time">${t.start} – ${t.end}</div>
             <div class="fd-task-staff">
               ${t.assigned.length
-                ? t.assigned.map(id => `<span class="staff-chip">${id}</span>`).join('')
+                ? t.assigned.map(id => {
+                    const isMismatch = (t.mismatch_assigned || []).includes(id);
+                    return isMismatch
+                      ? `<span class="staff-chip mismatch-chip" title="Skill mismatch — cross-skill assigned">⚠ ${id}</span>`
+                      : `<span class="staff-chip">${id}</span>`;
+                  }).join('')
                 : '<span class="gap-chip">⚠ Unassigned</span>'}
               <span class="fd-task-need">(need ${t.staff_needed})</span>
             </div>

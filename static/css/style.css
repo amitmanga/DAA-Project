@@ -70,6 +70,8 @@
 /* Badge & Pill Visibility in Dark Mode */
 [data-theme="dark"] .icao-badge { color: #93c5fd; }
 [data-theme="dark"] .stand-badge { border-color: rgba(255,255,255,0.1); color: var(--text); }
+[data-theme="dark"] .terminal-badge { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; }
+[data-theme="dark"] .pier-badge { background: rgba(20, 184, 166, 0.2); color: #5eead4; }
 
 [data-theme="dark"] .status-ok,
 [data-theme="dark"] .task-pill-ok { color: #6ee7b7; }
@@ -161,6 +163,7 @@
 
 [data-theme="dark"] .staff-chip { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
 [data-theme="dark"] .gap-chip { background: rgba(239, 68, 68, 0.15); color: #fca5a5; }
+[data-theme="dark"] .mismatch-chip { background: rgba(234, 179, 8, 0.15); color: #fde047; border-color: #ca8a04; }
 [data-theme="dark"] .btn-assign-inline { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; border-color: rgba(16, 185, 129, 0.3); }
 [data-theme="dark"] .timeline-meta,
 [data-theme="dark"] .fd-task-time { color: var(--muted); }
@@ -1202,6 +1205,26 @@ canvas { display: block; }
   border: 1px solid var(--border);
   color: var(--text-2);
 }
+.terminal-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.12);
+  color: #6d28d9;
+  letter-spacing: 0.03em;
+}
+.pier-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(20, 184, 166, 0.12);
+  color: #0f766e;
+  letter-spacing: 0.03em;
+}
 .status-badge {
   display: inline-block;
   font-size: 0.67rem;
@@ -1361,6 +1384,11 @@ canvas { display: block; }
 .gap-chip {
   background: var(--crit-light);
   color: #991b1b;
+}
+.mismatch-chip {
+  background: rgba(234, 179, 8, 0.15);
+  color: #854d0e;
+  border: 1px dashed #ca8a04;
 }
 .chip-remove {
   background: none;

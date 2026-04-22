@@ -715,7 +715,7 @@ function renderIDSubContent() {
             <thead>
               <tr>
                 <th>Time</th><th>Flight</th><th>Route</th><th>Airline</th>
-                <th>Gate</th><th>Type</th><th>Tasks</th><th>Status</th><th>Action</th>
+                <th>Gate</th><th>Terminal</th><th>Pier</th><th>Type</th><th>Tasks</th><th>Status</th><th>Action</th>
               </tr>
             </thead>
             <tbody id="id-flights-tbody"></tbody>
@@ -922,6 +922,8 @@ function renderIDFlightsTable(flights) {
       <td class="route-cell">${f.origin_code} ${f.origin}</td>
       <td>${f.airline_name}</td>
       <td>${f.gate}</td>
+      <td><span class="terminal-badge">${f.terminal || '—'}</span></td>
+      <td><span class="pier-badge">${f.pier || '—'}</span></td>
       <td><span class="status-badge ${statusClass}">${f.status}</span></td>
       <td class="tasks-cell">${taskPills}</td>
       <td>${f.delay_mins > 0 ? `<span class="badge badge-warn">Delayed</span>` : '<span class="badge badge-ok">On time</span>'}</td>
@@ -959,7 +961,9 @@ function filterIDFlights() {
   const st = (statusFilter && statusFilter.value) ? statusFilter.value : '';
   const filtered = ID_DATA.flights.filter(f => {
     const mq = !q || f.flight_no.toLowerCase().includes(q)
-      || f.origin.toLowerCase().includes(q) || f.airline_name.toLowerCase().includes(q);
+      || f.origin.toLowerCase().includes(q) || f.airline_name.toLowerCase().includes(q)
+      || (f.terminal || '').toLowerCase().includes(q)
+      || (f.pier || '').toLowerCase().includes(q);
     const ms = !st || f.status === st;
     return mq && ms;
   });
@@ -1021,10 +1025,12 @@ function showIDFlightDetail(flight) {
                 <div class="timeline-meta">Scheduled: ${t.start} – ${t.end} · need ${t.staff_needed}</div>
                 <div class="fd-task-staff">
                   ${t.assigned.length
-                    ? t.assigned.map(id =>
-                        `<span class="staff-chip">${id}
-                          <button class="chip-remove" onclick="unassignStaff('${t.id}','${id}')">✕</button>
-                        </span>`).join('')
+                    ? t.assigned.map(id => {
+                        const isMismatch = (t.mismatch_assigned || []).includes(id);
+                        return isMismatch
+                          ? `<span class="staff-chip mismatch-chip" title="Cross-skill assignment">⚠ ${id}<button class="chip-remove" onclick="unassignStaff('${t.id}','${id}')">✕</button></span>`
+                          : `<span class="staff-chip">${id}<button class="chip-remove" onclick="unassignStaff('${t.id}','${id}')">✕</button></span>`;
+                      }).join('')
                     : '<span class="gap-chip">⚠ Unassigned</span>'}
                   <button class="btn-assign-inline" onclick="showManageModalForTask(${JSON.stringify(flight).replace(/"/g,'&quot;')}, '${t.id}')">+ Assign</button>
                 </div>

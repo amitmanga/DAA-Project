@@ -2483,12 +2483,14 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 if s and emp_id not in task['assigned']:
                     task['assigned'].append(emp_id)
                     s['assignments'].append({
-                        'task_id': tid,
-                        'task': task['task'],
-                        'start': task['start'],
-                        'end': task['end'],
+                        'task_id':    tid,
+                        'task':       task['task'],
+                        'skill':      task.get('skill', 'GNIB'),
+                        'terminal':   task.get('terminal', 'ALL'),
+                        'start':      task['start'],
+                        'end':        task['end'],
                         'start_mins': task['start_mins'],
-                        'end_mins': task['end_mins'],
+                        'end_mins':   task['end_mins'],
                     })
                     busy_map[emp_id].append((task['start_mins'], task['end_mins'], task.get('terminal', 'ALL'), task.get('skill', 'GNIB')))
 
@@ -2542,6 +2544,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                         _s['assignments'].append({
                             'task_id':    _task['id'],
                             'task':       _task['task'],
+                            'skill':      _task.get('skill', 'GNIB'),
+                            'terminal':   _task.get('terminal', 'ALL'),
                             'start':      _task['start'],
                             'end':        _task['end'],
                             'start_mins': _task['start_mins'],
@@ -2608,15 +2612,15 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                     continue
 
                 assignment = {
-                    'task_id': task['id'],
-                    'task': task['task'],
-                    'start': task['start'],
-                    'end': task['end'],
+                    'task_id':   task['id'],
+                    'task':      task['task'],
+                    'skill':     task.get('skill', 'GNIB'),
+                    'terminal':  task.get('terminal', 'ALL'),
+                    'start':     task['start'],
+                    'end':       task['end'],
                     'start_mins': start,
-                    'end_mins': end,
+                    'end_mins':   end,
                 }
-                if pool_index == 0 and use_primary_first:
-                    assignment['terminal'] = task.get('terminal', 'ALL')
 
                 task['assigned'].append(s['id'])
                 s['assignments'].append(assignment)
@@ -2627,6 +2631,123 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             gap = needed - assigned_count
             if not task.get('is_past'):
                 task['alert'] = f'Under-staffed: need {needed}, assigned {assigned_count} (gap {gap})'
+
+    # ── Pass 2: relax travel/skill-switch buffers for still-unassigned tasks ──
+    # Retry with zero inter-task buffers so back-to-back tasks on the same staff
+    # can be filled when minor buffer constraints prevented assignment above.
+    def _available_no_buffer(s, task_start, task_end, extend_shift_mins=0):
+        S, E = s['shift_start'], s['shift_end']
+        D_shift = (E - S) % 1440
+        if D_shift == 0 and E == S:
+            D_shift = 1440
+        task_dur = (task_end - task_start) % 1440
+        if task_dur == 0 and task_end != task_start:
+            task_dur = 1440
+        ts_rel = (task_start - S) % 1440
+        if ts_rel + task_dur > D_shift + extend_shift_mins:
+            return False
+        for (ws, we, _t, _sk) in busy_map[s['id']]:
+            ws_rel = (ws - S) % 1440
+            w_dur  = (we - ws) % 1440
+            if w_dur == 0 and we != ws:
+                w_dur = 1440
+            if ts_rel < ws_rel + w_dur and ts_rel + task_dur > ws_rel:
+                return False
+        return True
+
+    _pass2_tasks = [
+        t for t in (_greedy_tasks if not _cpsat_applied else all_tasks)
+        if len(t['assigned']) < t['staff_needed'] and not t.get('is_past')
+    ]
+    if _pass2_tasks:
+        print(f"[DEBUG] Pass-2 (zero buffers): {len(_pass2_tasks)} tasks still need staff")
+        for task in _pass2_tasks:
+            needed = task['staff_needed'] - len(task['assigned'])
+            if needed <= 0:
+                continue
+            skill = task['skill']
+            start = task['start_mins']
+            end   = task['end_mins']
+            for pool in [staff_by_prim.get(skill, []), staff_by_any.get(skill, [])]:
+                if needed <= 0:
+                    break
+                for s in pool:
+                    if needed <= 0:
+                        break
+                    if s['id'] in task['assigned']:
+                        continue
+                    if not _available_no_buffer(s, start, end):
+                        continue
+                    task['assigned'].append(s['id'])
+                    s['assignments'].append({
+                        'task_id':    task['id'],
+                        'task':       task['task'],
+                        'skill':      skill,
+                        'terminal':   task.get('terminal', 'ALL'),
+                        'start':      task['start'],
+                        'end':        task['end'],
+                        'start_mins': start,
+                        'end_mins':   end,
+                    })
+                    busy_map[s['id']].append((start, end, task.get('terminal', 'ALL'), skill))
+                    needed -= 1
+            if len(task['assigned']) >= task['staff_needed']:
+                task['alert'] = None
+
+    # ── Pass 3: extend shift window (up to 90 min overtime) + any-skill fallback ─
+    # Last-resort pass so no task is left completely unassigned. Staff with
+    # zero skill overlap are marked with skill_mismatch=True.
+    _pass3_tasks = [
+        t for t in all_tasks
+        if len(t['assigned']) < t['staff_needed'] and not t.get('is_past')
+    ]
+    if _pass3_tasks:
+        print(f"[DEBUG] Pass-3 (extended shift + any skill): {len(_pass3_tasks)} tasks")
+        _all_staff_sorted = sorted(on_duty, key=lambda s: len(busy_map[s['id']]))
+        for task in _pass3_tasks:
+            needed = task['staff_needed'] - len(task['assigned'])
+            if needed <= 0:
+                continue
+            skill = task['skill']
+            start = task['start_mins']
+            end   = task['end_mins']
+            if 'mismatch_assigned' not in task:
+                task['mismatch_assigned'] = []
+            skill_pools = list({id(s): s for s in (
+                staff_by_prim.get(skill, []) + staff_by_any.get(skill, [])
+            )}.values())
+            any_pool = [s for s in _all_staff_sorted if s not in skill_pools]
+            for (pool, is_mismatch) in [(skill_pools, False), (any_pool, True)]:
+                if needed <= 0:
+                    break
+                for s in pool:
+                    if needed <= 0:
+                        break
+                    if s['id'] in task['assigned']:
+                        continue
+                    if not _available_no_buffer(s, start, end, extend_shift_mins=90):
+                        continue
+                    task['assigned'].append(s['id'])
+                    if is_mismatch:
+                        task['mismatch_assigned'].append(s['id'])
+                    s['assignments'].append({
+                        'task_id':        task['id'],
+                        'task':           task['task'],
+                        'skill':          skill,
+                        'terminal':       task.get('terminal', 'ALL'),
+                        'start':          task['start'],
+                        'end':            task['end'],
+                        'start_mins':     start,
+                        'end_mins':       end,
+                        'skill_mismatch': is_mismatch,
+                    })
+                    busy_map[s['id']].append((start, end, task.get('terminal', 'ALL'), skill))
+                    needed -= 1
+            if len(task['assigned']) >= task['staff_needed']:
+                task['alert'] = None
+            else:
+                remaining = task['staff_needed'] - len(task['assigned'])
+                task['alert'] = f'Under-staffed: need {task["staff_needed"]}, assigned {len(task["assigned"])} (gap {remaining})'
 
     # Schedule breaks and compute utilisation
     print(f"[DEBUG] Scheduling breaks for staff...")
@@ -2672,22 +2793,23 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # Dedicated and fixed tasks appear only on their primary flight.
     for task in all_tasks:
         task_summary = {
-            'id':              task['id'],
-            'task':            task['task'],
-            'skill':           task['skill'],
-            'priority':        task['priority'],
-            'start':           task['start'],
-            'end':             task['end'],
-            'start_mins':      task['start_mins'],
-            'end_mins':        task['end_mins'],
-            'staff_needed':    task['staff_needed'],
-            'assigned':        task['assigned'],
-            'alert':           task['alert'],
-            'sharing_mode':    task.get('sharing_mode', 'dedicated'),
-            'flights_covered': task.get('flights_covered', []),
-            'time_window':     task.get('time_window', ''),
-            'terminal':        task.get('terminal', ''),
-            'pier':            task.get('pier', ''),
+            'id':               task['id'],
+            'task':             task['task'],
+            'skill':            task['skill'],
+            'priority':         task['priority'],
+            'start':            task['start'],
+            'end':              task['end'],
+            'start_mins':       task['start_mins'],
+            'end_mins':         task['end_mins'],
+            'staff_needed':     task['staff_needed'],
+            'assigned':         task['assigned'],
+            'mismatch_assigned': task.get('mismatch_assigned', []),
+            'alert':            task['alert'],
+            'sharing_mode':     task.get('sharing_mode', 'dedicated'),
+            'flights_covered':  task.get('flights_covered', []),
+            'time_window':      task.get('time_window', ''),
+            'terminal':         task.get('terminal', ''),
+            'pier':             task.get('pier', ''),
         }
         for fn in task.get('flights_covered', [task.get('flight_no', '')]):
             if fn in flights_map:
