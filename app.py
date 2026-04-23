@@ -1508,7 +1508,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
 
     # ── Density-based shift allocation ──────────────────────────────────────
     # Only allocate shifts WHEN THERE ARE FLIGHTS.
-    # Empty 3-hour windows are excluded from candidates entirely.
+    # Empty 1.5-hour windows are excluded from candidates entirely.
     # Busier windows attract proportionally more staff.
     density_shifts = None
     if not sh_options:
@@ -1524,35 +1524,44 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                         if t is not None:
                             flight_times.append(t)
 
-            # 3-hour blocks: 0..7  (00-03, 03-06, … 21-24)
-            block_density = [0] * 8
-            for t in flight_times:
-                block_density[min(7, int(t) // 180)] += 1
+            # 1.5-hour blocks: 0..15
+            # block_density now stores WEIGHTED demand (proxy for FTE)
+            block_density = [0.0] * 16
+            with open(flt_path, encoding='cp1252') as ff:
+                for row in csv.DictReader(ff):
+                    clean = {k: v.replace('\xa0', '').strip() for k, v in row.items()}
+                    if clean.get('date', '') == flt_date_key:
+                        t = parse_time(clean.get('sta', ''))
+                        if t is not None:
+                            # Proxy for task demand: higher weight for larger aircraft categories
+                            # Cat C (~1.0), Cat E (~2.0), Cat F (~3.0)
+                            cat = clean.get('icao_cat', 'C').upper()
+                            weight = 1.0
+                            if cat == 'D':   weight = 1.5
+                            elif cat == 'E': weight = 2.0
+                            elif cat == 'F': weight = 3.0
+                            
+                            block_density[min(15, int(t) // 90)] += weight
 
-            # Find the span of active blocks (first and last that have flights)
+            # Find the span of active blocks
             active_blocks = [bi for bi, cnt in enumerate(block_density) if cnt > 0]
 
             if active_blocks:
-                first_active = active_blocks[0]
-                last_active  = active_blocks[-1]
-
-                # Build candidates ONLY for blocks that have flights.
-                # Each candidate shift starts at block_start and runs
-                # shift_duration_mins long (capped at 24:00).
-                blks_per_shift = max(1, shift_duration_mins // 180)
+                # Build candidates ONLY for requested start timings
+                # Mandatory shift start timings: 00:00, 3:00, 7:00, 12:00
+                requested_starts = [0, 180, 420, 720]
                 candidates = []
-                for bi in active_blocks:
-                    s_start = bi * 180
-                    s_end   = min(1440, s_start + shift_duration_mins)
-                    if s_end - s_start < 180:
-                        continue
-                    # Coverage = flights in all blocks this shift spans
-                    coverage = sum(
-                        block_density[j]
-                        for j in range(bi, min(8, bi + blks_per_shift))
-                    )
+                for s_start in requested_starts:
+                    s_end = min(1440, s_start + shift_duration_mins)
+                    
+                    # Coverage = weighted flights in the duration of this shift
+                    bi_start = s_start // 90
+                    bi_end = (s_end - 1) // 90
+                    coverage = sum(block_density[j] for j in range(bi_start, min(16, bi_end + 1)))
+                    
                     if coverage == 0:
-                        continue  # skip empty shifts
+                        continue
+                        
                     candidates.append({
                         'start':   s_start,
                         'end':     s_end,
@@ -1564,12 +1573,13 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                     total_density = sum(c['density'] for c in candidates)
                     n_staff_count = len(day_staff)
                     density_shifts = []
+                    # Proportionally allocate staff based on weighted demand
                     for cand in sorted(candidates, key=lambda x: -x['density']):
                         n_alloc = max(0, round(n_staff_count * cand['density'] / total_density))
                         for _ in range(n_alloc):
                             density_shifts.append((cand['start'], cand['end'], cand['label']))
 
-                    # Pad to exactly n_staff_count (use busiest shift)
+                    # Pad/Trim to exactly n_staff_count (use busiest shift)
                     best = max(candidates, key=lambda x: x['density'])
                     while len(density_shifts) < n_staff_count:
                         density_shifts.append((best['start'], best['end'], best['label']))
@@ -1599,10 +1609,12 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
             idx = min(i, len(density_shifts) - 1)
             st, en, lb = density_shifts[idx]
         else:
-            # Hard fallback: round-robin across the two fixed 12-hour shifts
+            # Hard fallback: round-robin across the requested shift starts
             sys_defaults = [
-                (0,   720,  'Day'),
-                (720, 1440, 'Night'),
+                (0,   720,  '00:00'),
+                (180, 900,  '03:00'),
+                (420, 1140, '07:00'),
+                (720, 1440, '12:00'),
             ]
             st, en, lb = sys_defaults[i % len(sys_defaults)]
 
@@ -1642,6 +1654,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                     'b2_duration_mins': custom_constraints.get('b2_duration_mins', 60),
                     'max_shift_mins':   custom_constraints.get('shift_duration_hrs', 12) * 60,
                     'min_rest_mins':    custom_constraints.get('min_rest_mins', 660),
+                    'permitted_starts': [0, 180, 420, 720],
                 },
                 prev_shift_ends = pe_map,
                 use_mip         = use_mip,
@@ -1680,13 +1693,14 @@ def schedule_breaks(staff, assigned_windows, custom_constraints=None):
     """Schedule mandatory rest breaks respecting these exact rules:
 
       1. A break MUST occur after every 3 hours (180 min) of continuous work.
-      2. The gap between the END of break-1 and the START of break-2 must
+      2. No break may start earlier than shift_start + 180 min (3 hours).
+      3. The gap between the END of break-1 and the START of break-2 must
          be at least 3 hours (180 min).
-      3. Maximum 2 breaks per shift.
-      4. Break durations: Break-1 = b1_duration_mins (default 30),
+      4. Maximum 2 breaks per shift.
+      5. Break durations: Break-1 = b1_duration_mins (default 30),
                           Break-2 = b2_duration_mins (default 60).
-      5. Breaks are placed in the first free gap at or after the mandatory
-         trigger; fall back to anywhere in the shift if no ideal spot exists.
+      6. Breaks are placed in the first free gap at or after the mandatory
+         trigger; last-resort fallback still respects the 3-hour minimum.
     """
     shift_start = staff['shift_start']
     shift_end   = staff['shift_end']
@@ -1765,11 +1779,16 @@ def schedule_breaks(staff, assigned_windows, custom_constraints=None):
         if i > 0 and earliest_b2 is not None:
             search_from = max(trigger, earliest_b2)
 
+        # Earliest the FIRST break may start: at least 3 hours into the shift.
+        # All subsequent breaks already respect earliest_b2 (break_end + 180).
+        earliest_b1 = shift_start + WORK_LIMIT
+        search_from = max(search_from, earliest_b1) if i == 0 else search_from
+
         # Try right after trigger (within 90-min window), then anywhere in shift
         b_start = (
             find_free_slot(dur, search_from, search_from + 90, cur_busy)
             or find_free_slot(dur, search_from, shift_end - dur, cur_busy)
-            or (find_free_slot(dur, shift_start, shift_end - dur, cur_busy) if i == 0 else None)
+            or (find_free_slot(dur, earliest_b1, shift_end - dur, cur_busy) if i == 0 else None)
         )
 
         if b_start is not None:
@@ -1828,8 +1847,8 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
     applies_to_departures, max_staff_count, priority.
 
     Scope:
-      'Terminal'    -> one pooled 3-hour block per (terminal, block_idx, direction)
-      'All Flights' -> one pooled 3-hour block per (terminal, pier, block_idx, direction)
+      'Terminal'    -> one pooled 1.5-hour block per (terminal, block_idx, direction)
+      'All Flights' -> one pooled 1.5-hour block per (terminal, pier, block_idx, direction)
       'US Flights'  -> like 'All Flights' but haul must be 'US/Canada'
       'Fixed'       -> handled in optimize_day() -- skipped here
     """
@@ -1865,7 +1884,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         terminal  = si["terminal"]
         pier      = si["pier"]
 
-        block_idx = t_mins // 180
+        block_idx = t_mins // 90
         direction = "ARR" if status == "Arrival" else "DEP"
         pax       = _pax_for_icao(icao_cat)
 
@@ -1923,15 +1942,15 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         rule      = data["rule"]
         total_pax = data["pax"]
         fns       = data["flights"]
-        blk_start = block_idx * 180
-        blk_end   = min(1440, blk_start + 180)
+        blk_start = block_idx * 90
+        blk_end   = min(1440, blk_start + 90)
         skill     = TASK_SKILL.get(task_name, "GNIB")
 
         if task_name in PAX_RATIOS and total_pax > 0:
             ratio, min_s = PAX_RATIOS[task_name]
             needed = max(min_s, _math.ceil(total_pax / ratio))
         else:
-            needed = max(1, _math.ceil(len(fns) / 2))
+            needed = max(1, _math.ceil(len(fns) / 1))
         needed = min(needed, rule["max_staff_count"])
 
         safe_name  = task_name[:8].replace(" ", "").replace("/", "")
@@ -1967,8 +1986,8 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         rule      = data["rule"]
         total_pax = data["pax"]
         fns       = data["flights"]
-        blk_start = block_idx * 180
-        blk_end   = min(1440, blk_start + 180)
+        blk_start = block_idx * 90
+        blk_end   = min(1440, blk_start + 90)
         skill     = TASK_SKILL.get(task_name, "GNIB")
 
         if task_name in PAX_RATIOS and total_pax > 0:
@@ -2340,10 +2359,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             _cpsat_cons = {
                 'tt_t1_t2':               tt_t1_t2,
                 'tt_skill_switch':        tt_skill_switch,
-                'break_mins':             (
-                    int(custom_constraints.get('b1_duration_mins', 30)) +
-                    int(custom_constraints.get('b2_duration_mins', 60))
-                ),
+                'b1_duration_mins':       int(custom_constraints.get('b1_duration_mins', 30)),
+                'b2_duration_mins':       int(custom_constraints.get('b2_duration_mins', 60)),
                 'max_overtime_per_day_hrs': 2,
             }
             # Only pass tasks that still need staff (manual assigns may have
@@ -2574,18 +2591,18 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 task['alert'] = f'Under-staffed: need {task["staff_needed"]}, assigned {len(task["assigned"])} (gap {remaining})'
 
     # ── Pass 4: Full staff utilisation ────────────────────────────────────────
-    # For every on-duty staff member, find 3-hour blocks within their shift where
+    # For every on-duty staff member, find 1.5-hour blocks within their shift where
     # they have no assignment, and assign them to the highest-priority task in
     # that block that matches one of their skills and has spare capacity.
     # This ensures all staff are productive every hour they are on duty.
     _p4_priority = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
 
-    # Index tasks by 3-hour block index
+    # Index tasks by 1.5-hour block index
     _blk_task_index: dict = defaultdict(list)
     for _t in all_tasks:
         if _t.get('is_past'):
             continue
-        _blk = _t['start_mins'] // 180
+        _blk = _t['start_mins'] // 90
         _blk_task_index[_blk].append(_t)
     # Sort each bucket: Critical first, then more-assigned tasks (fill existing slots)
     for _blk in _blk_task_index:
@@ -2602,12 +2619,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         sh_start = s['shift_start']
         sh_end   = s['shift_end']
 
-        first_blk = sh_start // 180
-        last_blk  = max(first_blk, (sh_end - 1) // 180)
+        first_blk = sh_start // 90
+        last_blk  = max(first_blk, (sh_end - 1) // 90)
 
         for blk in range(first_blk, last_blk + 1):
-            blk_start = blk * 180
-            blk_end   = min(1440, blk_start + 180)
+            blk_start = blk * 90
+            blk_end   = min(1440, blk_start + 90)
 
             # Skip if staff already has an assignment overlapping this block
             already_busy = any(

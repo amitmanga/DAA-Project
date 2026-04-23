@@ -1,4 +1,4 @@
-﻿/* ═══════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════
    DAA Intraday Operations — D (Today)
    ═══════════════════════════════════════════════════════ */
 
@@ -627,8 +627,10 @@ function renderIDSubContent() {
             <input class="search-input" id="id-staff-search" placeholder="Search by ID, skill…" />
             <select id="id-shift-filter" class="select-input">
               <option value="">All Shifts</option>
-              <option value="Day">Day</option>
-              <option value="Night">Night</option>
+              <option value="00:00">00:00</option>
+              <option value="03:00">03:00</option>
+              <option value="07:00">07:00</option>
+              <option value="12:00">12:00</option>
             </select>
           </div>
         </div>
@@ -645,8 +647,10 @@ function renderIDSubContent() {
             <input class="search-input" id="id-staff-timeline-search" placeholder="Search ID, skill…" />
             <select id="id-staff-timeline-shift" class="select-input">
               <option value="">All Shifts</option>
-              <option value="Day">Day</option>
-              <option value="Night">Night</option>
+              <option value="00:00">00:00</option>
+              <option value="03:00">03:00</option>
+              <option value="07:00">07:00</option>
+              <option value="12:00">12:00</option>
             </select>
             <button class="btn-delay" id="id-timeline-reset">Reset Sim</button>
           </div>
@@ -1543,8 +1547,10 @@ async function renderIDOptimization(container) {
           <div class="opt-card-title"><span style="color:var(--ok)">📅</span> Permitted Shift Windows</div>
           <div id="opt-shift-toggles" style="display:flex;flex-direction:column;gap:10px;margin-top:8px;">
             ${[
-              {label:'Day', display:'Day (00:00 – 12:00)', s:0,   e:720},
-              {label:'Night', display:'Night (12:00 – 24:00)', s:720, e:1440},
+              {label:'00:00', display:'Day (00:00 – 12:00)', s:0,   e:720},
+              {label:'03:00', display:'Morning (03:00 – 15:00)', s:180, e:900},
+              {label:'07:00', display:'Early (07:00 – 19:00)', s:420, e:1140},
+              {label:'12:00', display:'Night (12:00 – 00:00)', s:720, e:1440},
             ].map((sh,i) => {
               const chk = (constraints.permitted_shifts||[]).some(p=>p[0]===sh.s&&p[1]===sh.e)||(!constraints.permitted_shifts&&i<2);
               return `<div style="display:flex;align-items:center;gap:12px;">

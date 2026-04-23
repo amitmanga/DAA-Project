@@ -1,4 +1,4 @@
-﻿"""
+"""
 intraday_optimizer.py
 ~~~~~~~~~~~~~~~~~~~~~
 CP-SAT based intraday staff-assignment optimiser for the DAA workforce tool.
@@ -80,8 +80,8 @@ def optimize_intraday_assignments(
         ``shift_end`` (integer minutes since midnight).
     constraints : dict
         Subset of the roster constraints dict.  Recognised keys:
-        ``tt_t1_t2``, ``tt_skill_switch``, ``break_mins``,
-        ``max_overtime_per_day_hrs``.
+        ``tt_t1_t2``, ``tt_skill_switch``, ``b1_duration_mins``,
+        ``b2_duration_mins``, ``max_overtime_per_day_hrs``.
 
     Returns
     -------
@@ -103,7 +103,9 @@ def optimize_intraday_assignments(
     # ------------------------------------------------------------------
     tt_t1_t2    = int(constraints.get("tt_t1_t2", 15))
     tt_skill_sw = int(constraints.get("tt_skill_switch", 10))
-    break_mins  = int(constraints.get("break_mins", 90))
+    b1_mins     = int(constraints.get("b1_duration_mins", 30))
+    b2_mins     = int(constraints.get("b2_duration_mins", 60))
+    break_mins  = b1_mins + b2_mins
     max_ot_mins = int(float(constraints.get("max_overtime_per_day_hrs", 2)) * 60)
 
     T = len(tasks)
@@ -118,7 +120,7 @@ def optimize_intraday_assignments(
     shift_end   = [_get_shift_mins(s, "end")   for s in staff]
     # Total shift duration (handles night-shift midnight wrap)
     shift_dur   = [_shift_duration(shift_start[j], shift_end[j]) for j in range(S)]
-    # Net usable minutes after deducting mandatory break time
+    # Net capacity for overtime penalty calculation (after breaks)
     net_cap     = [max(0, shift_dur[j] - break_mins) for j in range(S)]
 
     # ------------------------------------------------------------------
@@ -182,6 +184,47 @@ def optimize_intraday_assignments(
         for i in range(T):
             if can_assign[j][i]:
                 x[j][i] = model.NewBoolVar(f"x_{j}_{i}")
+
+    # ------------------------------------------------------------------
+    # 3.5  Mandatory Breaks — Prioritised over work
+    #
+    #      Each staff member gets two mandatory breaks (B1, B2) if their
+    #      shift duration permits.
+    # ------------------------------------------------------------------
+    b1_start = [model.NewIntVar(shift_start[j] + 180, shift_end[j], f"b1_s_{j}") for j in range(S)]
+    b2_start = [model.NewIntVar(shift_start[j] + 180, shift_end[j], f"b2_s_{j}") for j in range(S)]
+
+    for j in range(S):
+        s_start = shift_start[j]
+        s_end   = shift_end[j]
+        
+        # Break 1: mandatory after 180 mins of shift
+        model.Add(b1_start[j] >= s_start + 180)
+        model.Add(b1_start[j] + b1_mins <= s_end)
+        
+        # Break 2: mandatory 180 mins after B1 ends
+        model.Add(b2_start[j] >= b1_start[j] + b1_mins + 180)
+        model.Add(b2_start[j] + b2_mins <= s_end)
+
+        # No-overlap between tasks and breaks for staff j
+        for i in range(T):
+            if x[j][i] is not None:
+                t_start = tasks[i]["start_mins"]
+                t_end   = tasks[i]["end_mins"]
+                
+                # Task i cannot overlap with Break 1
+                before_b1 = model.NewBoolVar(f"before_b1_{j}_{i}")
+                after_b1  = model.NewBoolVar(f"after_b1_{j}_{i}")
+                model.Add(t_end <= b1_start[j]).OnlyEnforceIf(before_b1)
+                model.Add(b1_start[j] + b1_mins <= t_start).OnlyEnforceIf(after_b1)
+                model.AddBoolOr([before_b1, after_b1]).OnlyEnforceIf(x[j][i])
+                
+                # Task i cannot overlap with Break 2
+                before_b2 = model.NewBoolVar(f"before_b2_{j}_{i}")
+                after_b2  = model.NewBoolVar(f"after_b2_{j}_{i}")
+                model.Add(t_end <= b2_start[j]).OnlyEnforceIf(before_b2)
+                model.Add(b2_start[j] + b2_mins <= t_start).OnlyEnforceIf(after_b2)
+                model.AddBoolOr([before_b2, after_b2]).OnlyEnforceIf(x[j][i])
 
     # ------------------------------------------------------------------
     # 4.  Hard constraint — staffing coverage
@@ -255,7 +298,7 @@ def optimize_intraday_assignments(
     # ------------------------------------------------------------------
     # 6.  Hard constraint — shift capacity (break-aware)
     #
-    #     Total assigned minutes per staff ≤ net_cap + max overtime.
+    #     Total assigned minutes per staff ≤ gross_cap - breaks + max overtime.
     #     This prevents scheduling more work than a shift can physically hold.
     # ------------------------------------------------------------------
     for j in range(S):
@@ -267,7 +310,8 @@ def optimize_intraday_assignments(
             [x[j][i] for i in feasible_i],
             durations,
         )
-        model.Add(total_mins_expr <= net_cap[j] + max_ot_mins)
+        # Work + breaks <= shift duration + max overtime
+        model.Add(total_mins_expr + b1_mins + b2_mins <= shift_dur[j] + max_ot_mins)
 
     # ------------------------------------------------------------------
     # 7.  Objective function
@@ -374,6 +418,10 @@ def optimize_intraday_assignments(
             "shift_mins": s_dur_safe,
             "pct":        round(100 * gross_mins / s_dur_safe, 1),
             "task_ids":   [tasks[i]["id"] for i in assigned_i],
+            "breaks": [
+                {"type": "Short Break", "start": solver.Value(b1_start[j]), "end": solver.Value(b1_start[j]) + b1_mins},
+                {"type": "Meal Break",  "start": solver.Value(b2_start[j]), "end": solver.Value(b2_start[j]) + b2_mins},
+            ]
         }
 
     return {

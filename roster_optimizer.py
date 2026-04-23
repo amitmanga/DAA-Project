@@ -1,4 +1,4 @@
-﻿"""
+"""
 roster_optimizer.py
 ~~~~~~~~~~~~~~~~~~~~
 Two-phase roster optimisation: shift-pattern generation → staff assignment.
@@ -73,7 +73,7 @@ _MAX_SHIFT_MINS     = 720   # 12 h hard ceiling
 _MIN_REST_MINS      = 660   # 11 h between consecutive shifts
 _B1_MINS            = 30    # first break (Short Break)
 _B2_MINS            = 60    # second break (Meal Break)
-_B1_EARLIEST_AFTER  = 120   # earliest after shift-start break-1 may begin
+_B1_EARLIEST_AFTER  = 180   # earliest after shift-start break-1 may begin (min 3 h work first)
 _B1_LATEST_AFTER    = 360   # latest  after shift-start break-1 must begin
 _B2_EARLIEST_AFTER_B1_END = 120   # gap before break-2 may start
 _NET_WORKING_MINS   = 630   # gross 720 − 30 − 60
@@ -146,7 +146,10 @@ def generate_shift_patterns(
 
     patterns: list[ShiftPattern] = []
 
-    for start in range(0, 1440, _PATTERN_RESOLUTION):
+    # Use specific start timings if requested; otherwise default to grid
+    permitted_starts = constraints.get("permitted_starts", [0, 180, 420, 720])
+    
+    for start in permitted_starts:
         end = start + max_shift   # e.g. start=240 → end=960
 
         # Breaks placed at earliest mandatory trigger to maximise
@@ -186,8 +189,8 @@ def generate_shift_patterns(
         pat.coverage_score, pat.demand_profile = _score_pattern(pat, demand_windows)
         patterns.append(pat)
 
-    # Always keep the two canonical shifts (even if demand is zero)
-    canonical = {0, 720}   # DAY=00:00, NIGHT=12:00
+    # Always keep the requested shifts (even if demand is zero)
+    canonical = set(permitted_starts)
     canonical_pats = [p for p in patterns if p.start_mins in canonical]
     other_pats = sorted(
         [p for p in patterns if p.start_mins not in canonical],
