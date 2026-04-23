@@ -3370,6 +3370,8 @@ def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
     new_hire_frac= float(constraints.get('new_hire_fraction', 0.00))
     contractor_staff = constraints.get('contractor_staff', {})
     extra_staff      = constraints.get('extra_staff', {})
+    total_extra_staff = sum(max(0.0, float(v or 0)) for v in extra_staff.values())
+    total_contractor_staff = sum(max(0.0, float(v or 0)) for v in contractor_staff.values())
 
     new_hire_prod = 1.0 - max(0.0, min(1.0, new_hire_frac)) * 0.30
 
@@ -3429,8 +3431,8 @@ def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
             req_sk = skill_req.get(wk, {})
             avail_sk = skill_avail.get(wk, {})
             
-            wk_base_req = sum(req_sk.get(sk, 0) for sk in skills)
-            wk_base_avail = sum(avail_sk.get(sk, 0) for sk in skills)
+            wk_base_req = float(staff_req.get(wk, 0))
+            wk_base_avail = float(staff_avail.get(wk, 0))
             month_base_req += wk_base_req
             month_base_avail += wk_base_avail
 
@@ -3438,13 +3440,16 @@ def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
                 absence_f = max(0.0, min(0.6, _rnorm(absence_rate, absence_cv)))
                 contr_f = max(0.4, min(1.0, _rnorm(0.85, 0.10)))
                 
-                run_scen_req = 0
-                run_scen_avail = 0
+                run_scen_req = wk_base_req * surge_factor
                 
                 sk_perm = {}
                 for sk in skills:
                     base = avail_sk.get(sk, 0) + extra_staff.get(sk, 0)
                     sk_perm[sk] = base * (1.0 - absence_f) * new_hire_prod * target_util
+
+                base_total_avail = (wk_base_avail + total_extra_staff) * (1.0 - absence_f) * new_hire_prod * target_util
+                contractor_total_avail = total_contractor_staff * contr_f * target_util
+                run_scen_avail = base_total_avail + contractor_total_avail
                 
                 total_perm = sum(sk_perm.values())
                 flex_per_skill = (total_perm * cross_rate) / len(skills) if skills else 0.0
@@ -3453,10 +3458,7 @@ def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
                     r = req_sk.get(sk, 0) * surge_factor
                     c_avail = contractor_staff.get(sk, 0) * contr_f * target_util
                     a = sk_perm[sk] + c_avail + flex_per_skill
-                    
-                    run_scen_req += r
-                    run_scen_avail += a
-                    
+
                     cov = min(a / r, 1.0) if r > 0 else 1.0
                     month_skill_cov[sk].append(cov)
 
@@ -3478,9 +3480,11 @@ def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
                 month_sk_exp_avail[sk] += wk_sk_avail
                 wk_sk_base_avail = avail_sk.get(sk, 0)
                 month_sk_base_avail[sk] += wk_sk_base_avail
-                
-                wk_exp_req += wk_sk_req
-                wk_exp_avail += wk_sk_avail
+
+            wk_exp_req = wk_base_req * surge_factor
+            wk_exp_avail = (
+                (wk_base_avail + total_extra_staff) * (1.0 - absence_rate) * new_hire_prod * target_util
+            ) + (total_contractor_staff * 0.85 * target_util)
 
             month_scen_req += wk_exp_req
             month_scen_avail += wk_exp_avail
@@ -3508,7 +3512,11 @@ def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
             'req': {sk: month_sk_exp_req[sk] / wn for sk in skills},
             'avail': {sk: month_sk_exp_avail[sk] / wn for sk in skills},
             'base_req': {sk: month_sk_base_req[sk] / wn for sk in skills},
-            'base_avail': {sk: month_sk_base_avail[sk] / wn for sk in skills}
+            'base_avail': {sk: month_sk_base_avail[sk] / wn for sk in skills},
+            'base_total_req': month_base_req / wn,
+            'base_total_avail': month_base_avail / wn,
+            'scenario_total_req': month_scen_req / wn,
+            'scenario_total_avail': month_scen_avail / wn,
         }
 
     overall_cov_st = stats(overall_coverage_runs)

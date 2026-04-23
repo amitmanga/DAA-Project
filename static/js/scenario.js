@@ -393,15 +393,23 @@ function _renderMonthlyRisk(sc) {
   const availData = [];
   const baseReqData = [];
   const baseAvailData = [];
+  const allSkillsSelected = selectedSkills.length === skills.length;
 
   months.forEach(m => {
       let r = 0, a = 0, br = 0, ba = 0;
-      selectedSkills.forEach(sk => {
-          r += (monthlyData[m].req[sk] || 0);
-          a += (monthlyData[m].avail[sk] || 0);
-          br += ((monthlyData[m].base_req && monthlyData[m].base_req[sk]) || 0);
-          ba += ((monthlyData[m].base_avail && monthlyData[m].base_avail[sk]) || 0);
-      });
+      if (allSkillsSelected) {
+          r = monthlyData[m].scenario_total_req ?? 0;
+          a = monthlyData[m].scenario_total_avail ?? 0;
+          br = monthlyData[m].base_total_req ?? 0;
+          ba = monthlyData[m].base_total_avail ?? 0;
+      } else {
+          selectedSkills.forEach(sk => {
+              r += (monthlyData[m].req[sk] || 0);
+              a += (monthlyData[m].avail[sk] || 0);
+              br += ((monthlyData[m].base_req && monthlyData[m].base_req[sk]) || 0);
+              ba += ((monthlyData[m].base_avail && monthlyData[m].base_avail[sk]) || 0);
+          });
+      }
       reqData.push(r);
       availData.push(a);
       baseReqData.push(br);
