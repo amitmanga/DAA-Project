@@ -1,4 +1,4 @@
-﻿from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template
 import csv
 import json
 import os
@@ -151,12 +151,12 @@ SKILL_SPLIT = {
 # NET_WORKING_MINS_PER_WEEK = 630 min/shift × 5 days = 3150
 #
 #  Mezz Operation  : 2 staff × 300 min × 5 days / 3150 = 0.95 FTE
-#  Litter Picking  : 3 shift slots (480+420+420 min) × 7 days / 3150 = 2.93 FTE
+#  Litter Picking  : 2 hrs at day shift, 2 hrs at night shift by 2 FTE = 480 mins/day × 7 days / 3150 = 1.07 FTE
 #  CBP Hall        : 3 staff × 300 min/session × 5 days / 3150 = 1.43 FTE
 #  PBZ (T2 pier)   : 4 roster slots (session-based, consistent) = ~1.27 FTE
 FIXED_FTE = {
     'Mezz Operation':     0.95,
-    'Litter Picking':     2.93,
+    'Litter Picking':     1.07,
     'CBP Pre-clearance':  1.43,   # hall session staffing on top of per-movement GNIB/Ramp
     'PBZ':                1.27,
 }
@@ -1844,7 +1844,6 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         "Check-in/Trolleys":    (400, 1),
         "Arr Customer Service": (400, 1),
         "Transfer Corridor":    (500, 1),
-        "Litter Picking":       (800, 1),
         "PBZ":                  (400, 1),
         "CBP Pre-clearance":    (300, 1),
     }
@@ -2243,7 +2242,14 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         _skill  = TASK_SKILL.get(_task, _task)
         _pri    = _fr['priority']
         _needed = _fr['max_staff_count']
-        for _shift_idx, (_s, _e) in enumerate([(240, 720), (720, 1200)]):
+        
+        if _task == 'Litter Picking':
+            # 2 hrs daytime, 2 hrs nighttime at 2 FTE
+            shifts_to_run = [(600, 720), (1320, 1440)]
+        else:
+            shifts_to_run = [(240, 720), (720, 1200)]
+            
+        for _shift_idx, (_s, _e) in enumerate(shifts_to_run):
             fixed_duties.append({
                 'id':            f"FIXED_{_task[:6].replace(' ', '')}_{_shift_idx}",
                 'task':          _task,
@@ -2540,33 +2546,27 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 task['mismatch_assigned'] = []
             _p3_prim, _p3_any = _candidate_pools(skill)
             skill_pools = list({id(s): s for s in (_p3_prim + _p3_any)}.values())
-            any_pool = [s for s in _all_staff_sorted if s not in skill_pools]
-            for (pool, is_mismatch) in [(skill_pools, False), (any_pool, True)]:
+            for s in skill_pools:
                 if needed <= 0:
                     break
-                for s in pool:
-                    if needed <= 0:
-                        break
-                    if s['id'] in task['assigned']:
-                        continue
-                    if not _available_no_buffer(s, start, end, extend_shift_mins=90):
-                        continue
-                    task['assigned'].append(s['id'])
-                    if is_mismatch:
-                        task['mismatch_assigned'].append(s['id'])
-                    s['assignments'].append({
-                        'task_id':        task['id'],
-                        'task':           task['task'],
-                        'skill':          skill,
-                        'terminal':       task.get('terminal', 'ALL'),
-                        'start':          task['start'],
-                        'end':            task['end'],
-                        'start_mins':     start,
-                        'end_mins':       end,
-                        'skill_mismatch': is_mismatch,
-                    })
-                    busy_map[s['id']].append((start, end, task.get('terminal', 'ALL'), skill))
-                    needed -= 1
+                if s['id'] in task['assigned']:
+                    continue
+                if not _available_no_buffer(s, start, end, extend_shift_mins=90):
+                    continue
+                task['assigned'].append(s['id'])
+                s['assignments'].append({
+                    'task_id':        task['id'],
+                    'task':           task['task'],
+                    'skill':          skill,
+                    'terminal':       task.get('terminal', 'ALL'),
+                    'start':          task['start'],
+                    'end':            task['end'],
+                    'start_mins':     start,
+                    'end_mins':       end,
+                    'skill_mismatch': False,
+                })
+                busy_map[s['id']].append((start, end, task.get('terminal', 'ALL'), skill))
+                needed -= 1
             if len(task['assigned']) >= task['staff_needed']:
                 task['alert'] = None
             else:
