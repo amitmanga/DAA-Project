@@ -11,9 +11,10 @@ const ID = {
 const ID_SKILL_COLOR = {
   'GNIB': '#3498DB', 'CBP Pre-clearance': '#9B59B6', 'Bussing': '#E8850A',
   'PBZ': '#2ECC71', 'Mezz Operation': '#1ABC9C', 'Litter Picking': '#E74C3C',
-  'Ramp / Marshalling': '#F39C12', 'Arr Customer Service': '#5DADE2',
+  'Gate 335': '#F39C12', 'Arr Customer Service': '#5DADE2',
   'Check-in/Trolleys': '#A9CCE3', 'Transfer Corridor': '#27AE60',
-  'Dep / Trolleys': '#8E44AD', 'T1/T2 Trolleys L/UL': '#E91E63',
+  'Dep/Trolleys': '#8E44AD', 'T1/T2 Trolleys L/UL': '#E91E63',
+  'Departures': '#F1C40F'
 };
 
 let ID_DATA = null;
@@ -1228,9 +1229,10 @@ function closeManageModal() {
 
 // ── Hourly Workforce Coverage Heatmap ───────────────────────────
 const ID_COVERAGE_SKILLS = [
-  'GNIB', 'CBP Pre-clearance', 'Arr Customer Service', 'Check-in/Trolleys',
-  'Dep / Trolleys', 'T1/T2 Trolleys L/UL', 'Transfer Corridor',
-  'Ramp / Marshalling', 'Bussing', 'PBZ', 'Mezz Operation', 'Litter Picking',
+  'GNIB', 'Mezz Operation', 'CBP Pre-clearance', 'Gate 335',
+  'Bussing', 'Arr Customer Service', 'Transfer Corridor',
+  'Check-in/Trolleys', 'T1/T2 Trolleys L/UL', 'Dep/Trolleys',
+  'PBZ', 'Departures', 'Litter Picking'
 ];
 const ID_COVERAGE_HOUR_START = 4;
 const ID_COVERAGE_HOUR_END   = 23;
@@ -1246,8 +1248,13 @@ function buildCoverageData(tasks) {
   });
 
   (tasks || []).forEach(task => {
-    const sk = task.skill;
-    if (!data[sk]) return;
+    let sk = task.role || task.task || task.skill || 'GNIB';
+    if (!data[sk]) {
+      // Fallback: extract base task name from "Task -- Terminal Dir" labels
+      const base = sk.split(' -- ')[0];
+      if (data[base]) sk = base;
+      else if (!data[sk]) return;
+    }
     const startH = Math.floor(task.start_mins / 60);
     const endH   = Math.floor((task.end_mins - 1) / 60);
     for (let h = Math.max(ID_COVERAGE_HOUR_START, startH); h <= Math.min(ID_COVERAGE_HOUR_END, endH); h++) {
@@ -1284,7 +1291,7 @@ function buildCoverageTableHTML(tasks) {
     `<tr><td class="skill-label">${sk}</td>${hours.map(h => {
       const { req, assigned } = data[sk][h];
       const nowCls = h === nowH ? 'is-today' : '';
-      if (req === 0) return `<td class="${nowCls}">—</td>`;
+      if (req === 0) return `<td class="${nowCls}" style="opacity:0.3;">0/0</td>`;
       const tip = `Role: ${sk}\nHour: ${String(h).padStart(2,'0')}:00\nRequired: ${req}\nAssigned: ${assigned}`;
       return `<td class="${cellClass(req, assigned)} ${nowCls}" title="${tip}">${assigned}/${req}</td>`;
     }).join('')}</tr>`
@@ -1451,9 +1458,10 @@ async function renderIDOptimization(container) {
   const SKILL_COLORS = {
     'GNIB':'#3498DB','CBP Pre-clearance':'#9B59B6','Bussing':'#E8850A',
     'PBZ':'#2ECC71','Mezz Operation':'#1ABC9C','Litter Picking':'#E74C3C',
-    'Ramp / Marshalling':'#F39C12','Arr Customer Service':'#5DADE2',
+    'Gate 335':'#F39C12','Arr Customer Service':'#5DADE2',
     'Check-in/Trolleys':'#A9CCE3','Transfer Corridor':'#27AE60',
-    'Dep / Trolleys':'#8E44AD','T1/T2 Trolleys L/UL':'#E91E63',
+    'Dep/Trolleys':'#8E44AD','T1/T2 Trolleys L/UL':'#E91E63',
+    'Departures':'#F1C40F'
   };
 
   container.innerHTML = `<div class="panel mt-20"><div class="loading-spinner"><div class="spinner"></div><span>Loading optimiser…</span></div></div>`;
