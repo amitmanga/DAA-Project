@@ -4240,6 +4240,8 @@ def simulation_status():
     })
 
 
+# Auto-update CSV dates on start-up (ensures compatibility with WSGI servers like Gunicorn/Render)
+update_csv_dates_to_current()
+
 if __name__ == '__main__':
-    update_csv_dates_to_current()
     app.run(debug=True)
