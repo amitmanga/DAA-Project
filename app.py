@@ -3222,8 +3222,12 @@ def intraday_optimise():
                 'b2_duration_mins':   _intraday_custom_constraints.get('b2_duration_mins', 60),
             }
 
-            rr = _roster_generate(staff_norm, demand_windows,
-                                  constraints=roster_constraints, use_mip=use_mip)
+            rr = _roster_generate(
+                demand_windows=demand_windows,
+                staff_list=staff_norm,
+                constraints=roster_constraints,
+                use_mip=use_mip
+            )
 
             roster_map = {e['id']: e for e in (rr.get('roster') or [])}
             for s in result['staff']:
@@ -3816,8 +3820,12 @@ def st_optimise():
                 'b2_duration_mins':   _st_custom_constraints.get('b2_duration_mins', 60),
             }
 
-            rr = _roster_generate(staff_norm, demand_windows,
-                                  constraints=roster_constraints, use_mip=use_mip)
+            rr = _roster_generate(
+                demand_windows=demand_windows,
+                staff_list=staff_norm,
+                constraints=roster_constraints,
+                use_mip=use_mip
+            )
 
             # Merge optimised shift/break assignments back into the staff list
             roster_map = {e['id']: e for e in (rr.get('roster') or [])}

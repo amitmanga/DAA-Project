@@ -1568,6 +1568,11 @@ async function renderIDOptimization(container) {
       <!-- Results -->
       <div id="id-opt-results"></div>
     </div>`;
+  // Auto-render results if already available in global state
+  if (ID_DATA && ID_DATA.roster && ID_DATA.roster.roster_available) {
+    const resEl = document.getElementById('id-opt-results');
+    if (resEl) _renderIDOptResults(resEl, ID_DATA);
+  }
 
   // ── Run & Apply handler ───────────────────────────────────────────
   document.getElementById('id-opt-run').addEventListener('click', async () => {
@@ -1624,15 +1629,19 @@ async function renderIDOptimization(container) {
   // ── Render optimiser results ──────────────────────────────────────
   function _renderIDOptResults(resultsEl, data) {
     const r = data.roster || {};
+    
+    // Always show the status banner
+    const statusBanner = `
+      <div class="panel mt-16" style="padding:16px;border-left:4px solid var(--ok);">
+        <strong style="color:var(--ok)">✓ Schedule updated</strong>
+        <span style="margin-left:12px;font-size:0.85rem;color:var(--muted)">
+          ${r.roster_available ? 'Roster optimized and tactical constraints applied. All tabs refreshed.' : 'Roster optimiser unavailable — tactical constraints applied. All tabs refreshed.'}
+        </span>
+        ${r.error ? `<div style="font-size:0.8rem;color:var(--warn);margin-top:6px;">Reason: ${r.error}</div>` : ''}
+      </div>`;
+
     if (!r.roster_available) {
-      resultsEl.innerHTML = `
-        <div class="panel mt-16" style="padding:16px;border-left:4px solid var(--ok);">
-          <strong style="color:var(--ok)">✓ Schedule updated</strong>
-          <span style="margin-left:12px;font-size:0.85rem;color:var(--muted)">
-            Roster optimiser unavailable — tactical constraints applied. All tabs refreshed.
-          </span>
-          ${r.error ? `<div style="font-size:0.8rem;color:var(--warn);margin-top:6px;">Reason: ${r.error}</div>` : ''}
-        </div>`;
+      resultsEl.innerHTML = statusBanner;
       return;
     }
 
@@ -1723,6 +1732,7 @@ async function renderIDOptimization(container) {
       </tr>`).join('');
 
     resultsEl.innerHTML = `
+      ${statusBanner}
       ${kpiHtml}
       <div class="row-2col mt-20" style="gap:20px;align-items:start;">
         <div>

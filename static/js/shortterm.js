@@ -702,6 +702,12 @@ async function renderSTOptimization(container) {
       <div id="opt-results"></div>
     </div>`;
 
+  // Auto-render results if already available in global state
+  if (ST_DATA && ST_DATA.roster && ST_DATA.roster.roster_available) {
+    const resEl = document.getElementById('opt-results');
+    if (resEl) _renderOptResults(resEl, ST_DATA);
+  }
+
   // ── Run & Apply handler ───────────────────────────────────────────
   document.getElementById('st-opt-run').addEventListener('click', async () => {
     const btn     = document.getElementById('st-opt-run');
@@ -739,10 +745,10 @@ async function renderSTOptimization(container) {
 
       // ── Apply result to global state and refresh all tabs ──────────
       ST_DATA = data;
+      ST_ACTIVE_TAB = 'opt'; // Ensure we stay on the optimization tab
       renderShortTermDay();
 
-      // ── Scroll back to opt tab and show results inline ─────────────
-      ST_ACTIVE_TAB = 'opt';
+      // ── Show results inline in the newly rendered tab ─────────────
       const el = document.getElementById('st-sub-content');
       if (el) {
         const resEl = el.querySelector('#opt-results');
@@ -761,15 +767,19 @@ async function renderSTOptimization(container) {
   // ── Render optimiser results (roster section) ──────────────────────
   function _renderOptResults(resultsEl, data) {
     const r = data.roster || {};
+    
+    // Always show the status banner
+    const statusBanner = `
+      <div class="panel mt-16" style="padding:16px;border-left:4px solid var(--ok);">
+        <strong style="color:var(--ok)">✓ Schedule updated</strong>
+        <span style="margin-left:12px;font-size:0.85rem;color:var(--muted)">
+          ${r.roster_available ? 'Roster optimized and tactical constraints applied. All tabs refreshed.' : 'Roster optimiser unavailable — tactical constraints applied. All tabs refreshed.'}
+        </span>
+        ${r.error ? `<div style="font-size:0.8rem;color:var(--warn);margin-top:6px;">Reason: ${r.error}</div>` : ''}
+      </div>`;
+
     if (!r.roster_available) {
-      resultsEl.innerHTML = `
-        <div class="panel mt-16" style="padding:16px;border-left:4px solid var(--ok);">
-          <strong style="color:var(--ok)">✓ Schedule updated</strong>
-          <span style="margin-left:12px;font-size:0.85rem;color:var(--muted)">
-            Roster optimiser unavailable — tactical constraints applied. All tabs refreshed.
-          </span>
-          ${r.error ? `<div style="font-size:0.8rem;color:var(--warn);margin-top:6px;">Reason: ${r.error}</div>` : ''}
-        </div>`;
+      resultsEl.innerHTML = statusBanner;
       return;
     }
 
@@ -809,7 +819,7 @@ async function renderSTOptimization(container) {
             <span>${pct}% net</span>
           </div>
           <div style="height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin:4px 0;">
-            <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:2px;"></div>
+            <div style="width:${pct}%;height:100%;background:var(--info);border-radius:2px;"></div>
           </div>
           <div class="ro-skills-wrap">${chips}</div>
         </div>`;
@@ -866,6 +876,7 @@ async function renderSTOptimization(container) {
       </tr>`).join('');
 
     resultsEl.innerHTML = `
+      ${statusBanner}
       ${kpiHtml}
       <div class="row-2col mt-20" style="gap:20px;align-items:start;">
         <div>
