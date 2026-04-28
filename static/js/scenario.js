@@ -275,7 +275,7 @@ function _buildUI() {
 /* ── Staff spinners (extra permanent + contractor) ── */
 window.scExtraAdj = function(type, skill, delta) {
   const prefix = type === 'contr' ? 'sc-contr-' : 'sc-extra-';
-  const id = prefix + skill.replace(/ /g, '_');
+  const id = prefix + skill.replace(/ /g, '_').replace(/\//g, '_');
   const el = document.getElementById(id);
   if (!el) return;
   const v = Math.max(0, Math.min(50, parseInt(el.textContent || '0') + delta));
@@ -287,7 +287,7 @@ function _gatherConstraints() {
   const SKILLS = ['GNIB','CBP Pre-clearance','Arr Customer Service','Check-in/Trolleys','Dep / Trolleys','T1/T2 Trolleys L/UL','Transfer Corridor','Ramp / Marshalling','Bussing','PBZ','Mezz Operation','Litter Picking'];
   const extra = {}, contr = {};
   SKILLS.forEach(sk => {
-    const key = sk.replace(/ /g, '_');
+    const key = sk.replace(/ /g, '_').replace(/\//g, '_');
     const eEl = document.getElementById('sc-extra-' + key);
     const cEl = document.getElementById('sc-contr-' + key);
     extra[sk] = eEl ? parseInt(eEl.textContent || '0') : 0;
