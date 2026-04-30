@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TASK_SLOT_MINS = 30
 
 def read_csv(filename):
     path = os.path.join(BASE_DIR, 'data', filename)
@@ -1508,7 +1509,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
 
     # ── Density-based shift allocation ──────────────────────────────────────
     # Only allocate shifts WHEN THERE ARE FLIGHTS.
-    # Empty 1.5-hour windows are excluded from candidates entirely.
+    # Empty 30-minute windows are excluded from candidates entirely.
     # Busier windows attract proportionally more staff.
     density_shifts = None
     if not sh_options:
@@ -1524,9 +1525,9 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                         if t is not None:
                             flight_times.append(t)
 
-            # 1.5-hour blocks: 0..15
+            # 30-minute blocks: 0..47
             # block_density now stores WEIGHTED demand (proxy for FTE)
-            block_density = [0.0] * 16
+            block_density = [0.0] * 48
             with open(flt_path, encoding='cp1252') as ff:
                 for row in csv.DictReader(ff):
                     clean = {k: v.replace('\xa0', '').strip() for k, v in row.items()}
@@ -1541,7 +1542,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                             elif cat == 'E': weight = 2.0
                             elif cat == 'F': weight = 3.0
                             
-                            block_density[min(15, int(t) // 90)] += weight
+                            block_density[min(47, int(t) // TASK_SLOT_MINS)] += weight
 
             # Find the span of active blocks
             active_blocks = [bi for bi, cnt in enumerate(block_density) if cnt > 0]
@@ -1555,9 +1556,9 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                     s_end = min(1440, s_start + shift_duration_mins)
                     
                     # Coverage = weighted flights in the duration of this shift
-                    bi_start = s_start // 90
-                    bi_end = (s_end - 1) // 90
-                    coverage = sum(block_density[j] for j in range(bi_start, min(16, bi_end + 1)))
+                    bi_start = s_start // TASK_SLOT_MINS
+                    bi_end = (s_end - 1) // TASK_SLOT_MINS
+                    coverage = sum(block_density[j] for j in range(bi_start, min(48, bi_end + 1)))
                     
                     if coverage == 0:
                         continue
@@ -1854,6 +1855,179 @@ def schedule_staff_breaks(staff_list, custom_constraints=None):
     return planned
 
 
+def enforce_break_conflicts(result):
+    """Remove staff task assignments that overlap their break windows."""
+    staff = result.get('staff', []) if isinstance(result, dict) else []
+    if not staff:
+        return result
+
+    removed = set()
+    for s in staff:
+        sid = s.get('id')
+        if not sid:
+            continue
+        breaks = s.get('breaks') or []
+        kept = []
+        for a in s.get('assignments') or []:
+            overlaps_break = any(
+                a.get('start_mins', 0) < b.get('end_mins', b.get('end', 0))
+                and a.get('end_mins', 0) > b.get('start_mins', b.get('start', 0))
+                for b in breaks
+                if isinstance(b.get('start_mins'), int) and isinstance(b.get('end_mins'), int)
+            )
+            if overlaps_break:
+                removed.add((a.get('task_id'), sid))
+            else:
+                kept.append(a)
+        s['assignments'] = kept
+
+        shift_len = s.get('shift_end', 0) - s.get('shift_start', 0)
+        total_busy = sum(a.get('end_mins', 0) - a.get('start_mins', 0) for a in kept)
+        s['utilisation_pct'] = round(min(total_busy / shift_len * 100, 100), 1) if shift_len > 0 else 0
+
+    if not removed:
+        return result
+
+    for flight in result.get('flights', []) or []:
+        for task in flight.get('tasks', []) or []:
+            assigned = task.get('assigned') or []
+            new_assigned = [
+                sid for sid in assigned
+                if (task.get('id'), sid) not in removed
+            ]
+            if len(new_assigned) != len(assigned):
+                task['assigned'] = new_assigned
+                needed = task.get('staff_needed', 1)
+                if len(new_assigned) < needed and not task.get('is_past'):
+                    task['alert'] = (
+                        f'Under-staffed: need {needed}, assigned {len(new_assigned)} '
+                        f'(gap {needed - len(new_assigned)})'
+                    )
+
+    result['break_conflict_removals'] = len(removed)
+    return result
+
+
+def refill_unassigned_tasks(result):
+    """Fill task gaps after optimized shifts/breaks have been merged."""
+    staff = result.get('staff', []) if isinstance(result, dict) else []
+    tasks = result.get('tasks', []) if isinstance(result, dict) else []
+    if not staff or not tasks:
+        return result
+
+    staff_by_id = {s.get('id'): s for s in staff if s.get('id')}
+    priority_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
+
+    for s in staff:
+        s['assignments'] = sorted(s.get('assignments') or [], key=lambda a: (a.get('start_mins', 0), a.get('end_mins', 0)))
+
+    def has_skill(s, skill):
+        needed = TASK_SKILL.get(str(skill).strip(), str(skill).strip())
+        return any(
+            TASK_SKILL.get(str(s.get(f'skill{k}', '')).strip(), str(s.get(f'skill{k}', '')).strip()) == needed
+            for k in range(1, 5)
+            if s.get(f'skill{k}', '')
+        )
+
+    def can_take(s, task):
+        start = task.get('start_mins', 0)
+        end = task.get('end_mins', 0)
+        shift_start = s.get('shift_start', 0)
+        shift_end = s.get('shift_end', 0)
+        if start < shift_start or end > shift_end:
+            return False
+        for b in s.get('breaks') or []:
+            if start < b.get('end_mins', 0) and end > b.get('start_mins', 0):
+                return False
+        for a in s.get('assignments') or []:
+            if start < a.get('end_mins', 0) and end > a.get('start_mins', 0):
+                return False
+        return True
+
+    refilled = 0
+    for task in sorted(tasks, key=lambda t: (
+        0 if t.get('sharing_mode') == 'fixed' else 1,
+        priority_order.get(t.get('priority', 'Medium'), 2),
+        t.get('start_mins', 0),
+    )):
+        if task.get('is_past'):
+            continue
+        assigned = list(dict.fromkeys(
+            sid for sid in (task.get('assigned') or []) if sid in staff_by_id
+        ))
+        max_staff = task.get('staff_capacity', task.get('staff_needed', 1))
+        if len(assigned) > max_staff:
+            assigned = assigned[:max_staff]
+        task['assigned'] = assigned
+        needed = task.get('staff_needed', 1) - len(assigned)
+        if needed <= 0:
+            task['alert'] = None
+            continue
+
+        skill = task.get('skill', '')
+        skill_candidates = [
+            s for s in staff
+            if s.get('id') not in assigned and has_skill(s, skill) and can_take(s, task)
+        ]
+        fallback_candidates = [
+            s for s in staff
+            if s.get('id') not in assigned and s not in skill_candidates and can_take(s, task)
+        ]
+
+        for s in skill_candidates + fallback_candidates:
+            if needed <= 0:
+                break
+            sid = s.get('id')
+            assignment = {
+                'task_id':    task.get('id'),
+                'task':       task.get('task'),
+                'skill':      skill,
+                'terminal':   task.get('terminal', 'ALL'),
+                'start':      task.get('start'),
+                'end':        task.get('end'),
+                'start_mins': task.get('start_mins'),
+                'end_mins':   task.get('end_mins'),
+                'skill_mismatch': not has_skill(s, skill),
+            }
+            assigned.append(sid)
+            s.setdefault('assignments', []).append(assignment)
+            needed -= 1
+            refilled += 1
+
+        if needed <= 0:
+            task['alert'] = None
+        else:
+            total = task.get('staff_needed', 1)
+            task['alert'] = f'Under-staffed: need {total}, assigned {len(task["assigned"])} (gap {needed})'
+
+    for s in staff:
+        seen_assignments = set()
+        deduped = []
+        for a in s.get('assignments') or []:
+            key = (a.get('task_id'), a.get('start_mins'), a.get('end_mins'))
+            if key in seen_assignments:
+                continue
+            seen_assignments.add(key)
+            deduped.append(a)
+        s['assignments'] = sorted(deduped, key=lambda a: (a.get('start_mins', 0), a.get('end_mins', 0)))
+        shift_len = s.get('shift_end', 0) - s.get('shift_start', 0)
+        total_busy = sum(a.get('end_mins', 0) - a.get('start_mins', 0) for a in s['assignments'])
+        s['utilisation_pct'] = round(min(total_busy / shift_len * 100, 100), 1) if shift_len > 0 else 0
+
+    task_by_id = {t.get('id'): t for t in tasks}
+    for flight in result.get('flights', []) or []:
+        for ft in flight.get('tasks', []) or []:
+            src = task_by_id.get(ft.get('id'))
+            if not src:
+                continue
+            ft['assigned'] = list(src.get('assigned') or [])
+            ft['alert'] = src.get('alert')
+            ft['staff_needed'] = src.get('staff_needed', ft.get('staff_needed', 1))
+
+    result['refilled_assignments'] = result.get('refilled_assignments', 0) + refilled
+    return result
+
+
 
 # ---------------------------------------------------------------------------
 # Task-generation helper — applies sharing logic before greedy assignment
@@ -1895,8 +2069,8 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
     applies_to_departures, max_staff_count, priority.
 
     Scope:
-      'Terminal'    -> one pooled 1.5-hour block per (terminal, block_idx, direction)
-      'All Flights' -> one pooled 1.5-hour block per (terminal, pier, block_idx, direction)
+      'Terminal'    -> one pooled 30-minute block per (terminal, block_idx, direction)
+      'All Flights' -> one pooled 30-minute block per (terminal, pier, block_idx, direction)
       'US Flights'  -> like 'All Flights' but haul must be 'US/Canada'
       'Fixed'       -> handled in optimize_day() -- skipped here
     """
@@ -1932,7 +2106,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         terminal  = si["terminal"]
         pier      = si["pier"]
 
-        block_idx = t_mins // 90
+        block_idx = t_mins // TASK_SLOT_MINS
         direction = "ARR" if status == "Arrival" else "DEP"
         pax       = _pax_for_icao(icao_cat)
 
@@ -1990,8 +2164,8 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         rule      = data["rule"]
         total_pax = data["pax"]
         fns       = data["flights"]
-        blk_start = block_idx * 90
-        blk_end   = min(1440, blk_start + 90)
+        blk_start = block_idx * TASK_SLOT_MINS
+        blk_end   = min(1440, blk_start + TASK_SLOT_MINS)
         skill     = TASK_SKILL.get(task_name, "GNIB")
 
         if task_name in PAX_RATIOS and total_pax > 0:
@@ -2035,8 +2209,8 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         rule      = data["rule"]
         total_pax = data["pax"]
         fns       = data["flights"]
-        blk_start = block_idx * 90
-        blk_end   = min(1440, blk_start + 90)
+        blk_start = block_idx * TASK_SLOT_MINS
+        blk_end   = min(1440, blk_start + TASK_SLOT_MINS)
         skill     = TASK_SKILL.get(task_name, "GNIB")
 
         if task_name in PAX_RATIOS and total_pax > 0:
@@ -2325,17 +2499,21 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             shifts_to_run = [(240, 720), (720, 1200)]
             
         for _shift_idx, (_s, _e) in enumerate(shifts_to_run):
-            fixed_duties.append({
-                'id':            f"FIXED_{_task[:6].replace(' ', '')}_{_shift_idx}",
-                'task':          _task,
-                'role':          _task,
-                'skill':         _skill,
-                'priority':      _pri,
-                'start_mins':    _s,
-                'end_mins':      _e,
-                'staff_needed':  _needed,
-                'staff_capacity': _needed,
-            })
+            slot_idx = 0
+            for _slot_start in range(_s, _e, TASK_SLOT_MINS):
+                _slot_end = min(_e, _slot_start + TASK_SLOT_MINS)
+                fixed_duties.append({
+                    'id':            f"FIXED_{_task[:6].replace(' ', '')}_{_shift_idx}_{slot_idx}",
+                    'task':          _task,
+                    'role':          _task,
+                    'skill':         _skill,
+                    'priority':      _pri,
+                    'start_mins':    _slot_start,
+                    'end_mins':      _slot_end,
+                    'staff_needed':  _needed,
+                    'staff_capacity': _needed,
+                })
+                slot_idx += 1
     for fd in fixed_duties:
         fd.update({
             'flight_no':       'FIXED',
@@ -2391,8 +2569,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # In live intraday mode (prefer_early=True) start_mins leads so past-due tasks
     # are never skipped in favour of future high-priority ones.
     priority_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
+    def _fixed_rank(t):
+        return 0 if t.get('sharing_mode') == 'fixed' else 1
+
     if prefer_early:
         all_tasks.sort(key=lambda t: (
+            _fixed_rank(t),
             t['start_mins'],
             priority_order.get(t['priority'], 2),
             -len(t.get('flights_covered', [])),
@@ -2400,6 +2582,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         ))
     else:
         all_tasks.sort(key=lambda t: (
+            _fixed_rank(t),
             priority_order.get(t['priority'], 2),
             -len(t.get('flights_covered', [])),
             t['start_mins'],
@@ -2649,18 +2832,18 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 task['alert'] = f'Under-staffed: need {task["staff_needed"]}, assigned {len(task["assigned"])} (gap {remaining})'
 
     # ── Pass 4: Full staff utilisation ────────────────────────────────────────
-    # For every on-duty staff member, find 1.5-hour blocks within their shift where
+    # For every on-duty staff member, find 30-minute slots within their shift where
     # they have no assignment, and assign them to the highest-priority task in
     # that block that matches one of their skills and has spare capacity.
     # This ensures all staff are productive every hour they are on duty.
     _p4_priority = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
 
-    # Index tasks by 1.5-hour block index
+    # Index tasks by 30-minute slot index
     _blk_task_index: dict = defaultdict(list)
     for _t in all_tasks:
         if _t.get('is_past'):
             continue
-        _blk = _t['start_mins'] // 90
+        _blk = _t['start_mins'] // TASK_SLOT_MINS
         _blk_task_index[_blk].append(_t)
     # Sort each bucket: Critical first, then more-assigned tasks (fill existing slots)
     for _blk in _blk_task_index:
@@ -2677,12 +2860,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         sh_start = s['shift_start']
         sh_end   = s['shift_end']
 
-        first_blk = sh_start // 90
-        last_blk  = max(first_blk, (sh_end - 1) // 90)
+        first_blk = sh_start // TASK_SLOT_MINS
+        last_blk  = max(first_blk, (sh_end - 1) // TASK_SLOT_MINS)
 
         for blk in range(first_blk, last_blk + 1):
-            blk_start = blk * 90
-            blk_end   = min(1440, blk_start + 90)
+            blk_start = blk * TASK_SLOT_MINS
+            blk_end   = min(1440, blk_start + TASK_SLOT_MINS)
 
             # Skip if staff already has an assignment overlapping this block
             already_busy = any(
@@ -3321,6 +3504,9 @@ def intraday_optimise():
         except Exception as exc:
             roster_info = {'roster_available': False, 'error': str(exc)}
 
+    enforce_break_conflicts(result)
+    refill_unassigned_tasks(result)
+    enforce_break_conflicts(result)
     result['roster'] = roster_info
     result['constraints_applied'] = {
         k: _intraday_custom_constraints.get(k) for k in tactical_keys
@@ -3924,6 +4110,9 @@ def st_optimise():
         except Exception as exc:
             roster_info = {'roster_available': False, 'error': str(exc)}
 
+    enforce_break_conflicts(result)
+    refill_unassigned_tasks(result)
+    enforce_break_conflicts(result)
     result['roster'] = roster_info
     result['constraints_applied'] = {
         k: _st_custom_constraints.get(k) for k in tactical_keys
