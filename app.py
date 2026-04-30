@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, render_template
+﻿from flask import Flask, jsonify, request, render_template
 import csv
 import json
 import os
@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TASK_SLOT_MINS = 30
 
 def read_csv(filename):
     path = os.path.join(BASE_DIR, 'data', filename)
@@ -155,7 +156,7 @@ SKILL_SPLIT = {
 #  CBP Hall        : 3 staff × 300 min/session × 5 days / 3150 = 1.43 FTE
 #  PBZ (T2 pier)   : 4 roster slots (session-based, consistent) = ~1.27 FTE
 FIXED_FTE = {
-    'Mezz Operation':     0.95,
+    'Mezz Operation':     3.00,
     'Litter Picking':     1.07,
     'CBP Pre-clearance':  1.43,   # hall session staffing on top of per-movement GNIB/Ramp
     'PBZ':                1.27,
@@ -293,13 +294,25 @@ def weekly_staff_available():
     absences = load_absences()
     total_staff = len(staff)
 
-    # Build skill pool (all qualifications)
+    # Build employee -> skills map (normalized) and a skill pool.
+    # Employees who have only `Mezz Operation` are treated as mezz-only
+    # and counted exclusively against the Mezz Operation pool.
+    emp_skills = {}
     skill_pool = defaultdict(int)
     for s in staff:
+        emp = s.get('EMPLOYEE NUMBER', '').strip()
+        skills = set()
         for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
             sk_name = s.get(sk_col, '').strip()
             if sk_name:
-                skill_pool[sk_name] += 1
+                skills.add(normalize_skill(sk_name))
+        emp_skills[emp] = skills
+        # If the employee only holds Mezz Operation, count only towards Mezz
+        if skills == {'Mezz Operation'}:
+            skill_pool['Mezz Operation'] += 1
+        else:
+            for sk in skills:
+                skill_pool[sk] += 1
 
     # Build absence windows: {employee: [(from_date, to_date)]}
     absence_map = defaultdict(list)
@@ -330,15 +343,14 @@ def weekly_staff_available():
         net = total_staff - len(absent_emps)
         result[wk_key] = net
 
-        # Skill-level: subtract absent staff from their skill pool
+        # Skill-level: subtract absent staff from their skill pool using
+        # our precomputed employee->skills map so mezz-only staff remain
+        # exclusive to Mezz Operation.
         sk = dict(skill_pool)
         for emp_id in absent_emps:
-            emp_data = next((s for s in staff if s['EMPLOYEE NUMBER'] == emp_id), None)
-            if emp_data:
-                for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
-                    sk_name = emp_data.get(sk_col, '').strip()
-                    if sk_name:
-                        sk[sk_name] = max(0, sk.get(sk_name, 0) - 1)
+            skills = emp_skills.get(emp_id, set())
+            for sname in skills:
+                sk[sname] = max(0, sk.get(sname, 0) - 1)
         skill_result[wk_key] = sk
         d += timedelta(weeks=1)
 
@@ -1508,7 +1520,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
 
     # ── Density-based shift allocation ──────────────────────────────────────
     # Only allocate shifts WHEN THERE ARE FLIGHTS.
-    # Empty 1.5-hour windows are excluded from candidates entirely.
+    # Empty 30-minute windows are excluded from candidates entirely.
     # Busier windows attract proportionally more staff.
     density_shifts = None
     if not sh_options:
@@ -1524,9 +1536,9 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                         if t is not None:
                             flight_times.append(t)
 
-            # 1.5-hour blocks: 0..15
+            # 30-minute blocks: 0..47
             # block_density now stores WEIGHTED demand (proxy for FTE)
-            block_density = [0.0] * 16
+            block_density = [0.0] * 48
             with open(flt_path, encoding='cp1252') as ff:
                 for row in csv.DictReader(ff):
                     clean = {k: v.replace('\xa0', '').strip() for k, v in row.items()}
@@ -1541,7 +1553,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                             elif cat == 'E': weight = 2.0
                             elif cat == 'F': weight = 3.0
                             
-                            block_density[min(15, int(t) // 90)] += weight
+                            block_density[min(47, int(t) // TASK_SLOT_MINS)] += weight
 
             # Find the span of active blocks
             active_blocks = [bi for bi, cnt in enumerate(block_density) if cnt > 0]
@@ -1555,9 +1567,9 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                     s_end = min(1440, s_start + shift_duration_mins)
                     
                     # Coverage = weighted flights in the duration of this shift
-                    bi_start = s_start // 90
-                    bi_end = (s_end - 1) // 90
-                    coverage = sum(block_density[j] for j in range(bi_start, min(16, bi_end + 1)))
+                    bi_start = s_start // TASK_SLOT_MINS
+                    bi_end = (s_end - 1) // TASK_SLOT_MINS
+                    coverage = sum(block_density[j] for j in range(bi_start, min(48, bi_end + 1)))
                     
                     if coverage == 0:
                         continue
@@ -1690,23 +1702,44 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
 
 
 def schedule_breaks(staff, assigned_windows, custom_constraints=None):
-    """Schedule mandatory rest breaks respecting these exact rules:
-
-      1. A break MUST occur after every 3 hours (180 min) of continuous work.
-      2. No break may start earlier than shift_start + 180 min (3 hours).
-      3. The gap between the END of break-1 and the START of break-2 must
-         be at least 3 hours (180 min).
-      4. Maximum 2 breaks per shift.
-      5. Break durations: Break-1 = b1_duration_mins (default 30),
-                          Break-2 = b2_duration_mins (default 60).
-      6. Breaks are placed in the first free gap at or after the mandatory
-         trigger; last-resort fallback still respects the 3-hour minimum.
-    """
+    """Return mandatory shift-clock breaks for one staff member."""
     shift_start = staff['shift_start']
     shift_end   = staff['shift_end']
 
     if custom_constraints is None:
         custom_constraints = {}
+
+    b1_dur     = int(custom_constraints.get('b1_duration_mins', 30))
+    b2_dur     = int(custom_constraints.get('b2_duration_mins', 60))
+    delay      = int(staff.get('_break_delay_mins', 0))
+    work_limit = int(custom_constraints.get('break_after_work_mins', 180))
+    break_gap  = int(custom_constraints.get('break_gap_after_b1_mins', 180))
+
+    b1_start = shift_start + work_limit + delay
+    b1_end   = b1_start + b1_dur
+    b2_start = b1_end + break_gap
+    b2_end   = b2_start + b2_dur
+
+    if b2_end > shift_end:
+        return []
+
+    return [
+        {
+            'start_mins': b1_start,
+            'end_mins':   b1_end,
+            'start':      mins_to_time(b1_start),
+            'end':        mins_to_time(b1_end),
+            'type':       'Short Break',
+        },
+        {
+            'start_mins': b2_start,
+            'end_mins':   b2_end,
+            'start':      mins_to_time(b2_start),
+            'end':        mins_to_time(b2_end),
+            'type':       'Meal Break',
+        },
+    ]
+
     b1_dur          = int(custom_constraints.get('b1_duration_mins', 30))
     b2_dur          = int(custom_constraints.get('b2_duration_mins', 60))
     break_durations = [b1_dur, b2_dur]
@@ -1806,6 +1839,221 @@ def schedule_breaks(staff, assigned_windows, custom_constraints=None):
     return sorted(breaks, key=lambda b: b['start_mins'])
 
 
+def schedule_staff_breaks(staff_list, custom_constraints=None):
+    """Plan mandatory breaks for a full roster, staggering same-shift staff."""
+    if custom_constraints is None:
+        custom_constraints = {}
+
+    stagger_enabled = custom_constraints.get('stagger_breaks', True)
+    groups = defaultdict(list)
+    for s in staff_list:
+        groups[(s.get('shift_start'), s.get('shift_end'))].append(s)
+
+    planned = {}
+    for _shift_key, members in groups.items():
+        ordered = sorted(members, key=lambda s: str(s.get('id', s.get('name', ''))))
+        delay_count = (len(ordered) // 2) if stagger_enabled and len(ordered) > 1 else 0
+        delayed_ids = {
+            str(s.get('id', s.get('name', '')))
+            for s in ordered[-delay_count:]
+        } if delay_count else set()
+
+        for s in ordered:
+            sid = str(s.get('id', s.get('name', '')))
+            s['_break_delay_mins'] = 60 if sid in delayed_ids else 0
+            planned[sid] = schedule_breaks(s, [], custom_constraints)
+
+    return planned
+
+
+def enforce_break_conflicts(result):
+    """Remove staff task assignments that overlap their break windows."""
+    staff = result.get('staff', []) if isinstance(result, dict) else []
+    if not staff:
+        return result
+
+    removed = set()
+    for s in staff:
+        sid = s.get('id')
+        if not sid:
+            continue
+        breaks = s.get('breaks') or []
+        kept = []
+        for a in s.get('assignments') or []:
+            overlaps_break = any(
+                a.get('start_mins', 0) < b.get('end_mins', b.get('end', 0))
+                and a.get('end_mins', 0) > b.get('start_mins', b.get('start', 0))
+                for b in breaks
+                if isinstance(b.get('start_mins'), int) and isinstance(b.get('end_mins'), int)
+            )
+            if overlaps_break:
+                removed.add((a.get('task_id'), sid))
+            else:
+                kept.append(a)
+        s['assignments'] = kept
+
+        shift_len = s.get('shift_end', 0) - s.get('shift_start', 0)
+        total_busy = sum(a.get('end_mins', 0) - a.get('start_mins', 0) for a in kept)
+        s['utilisation_pct'] = round(min(total_busy / shift_len * 100, 100), 1) if shift_len > 0 else 0
+
+    if not removed:
+        return result
+
+    for flight in result.get('flights', []) or []:
+        for task in flight.get('tasks', []) or []:
+            assigned = task.get('assigned') or []
+            new_assigned = [
+                sid for sid in assigned
+                if (task.get('id'), sid) not in removed
+            ]
+            if len(new_assigned) != len(assigned):
+                task['assigned'] = new_assigned
+                needed = task.get('staff_needed', 1)
+                if len(new_assigned) < needed and not task.get('is_past'):
+                    task['alert'] = (
+                        f'Under-staffed: need {needed}, assigned {len(new_assigned)} '
+                        f'(gap {needed - len(new_assigned)})'
+                    )
+
+    result['break_conflict_removals'] = len(removed)
+    return result
+
+
+def refill_unassigned_tasks(result):
+    """Fill task gaps after optimized shifts/breaks have been merged."""
+    staff = result.get('staff', []) if isinstance(result, dict) else []
+    tasks = result.get('tasks', []) if isinstance(result, dict) else []
+    if not staff or not tasks:
+        return result
+
+    staff_by_id = {s.get('id'): s for s in staff if s.get('id')}
+    priority_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
+
+    for s in staff:
+        s['assignments'] = sorted(s.get('assignments') or [], key=lambda a: (a.get('start_mins', 0), a.get('end_mins', 0)))
+
+    def has_skill(s, skill):
+        needed = TASK_SKILL.get(str(skill).strip(), str(skill).strip())
+        return any(
+            TASK_SKILL.get(str(s.get(f'skill{k}', '')).strip(), str(s.get(f'skill{k}', '')).strip()) == needed
+            for k in range(1, 5)
+            if s.get(f'skill{k}', '')
+        )
+
+    def can_take(s, task):
+        start = task.get('start_mins', 0)
+        end = task.get('end_mins', 0)
+        shift_start = s.get('shift_start', 0)
+        shift_end = s.get('shift_end', 0)
+        if start < shift_start or end > shift_end:
+            return False
+        for b in s.get('breaks') or []:
+            if start < b.get('end_mins', 0) and end > b.get('start_mins', 0):
+                return False
+        for a in s.get('assignments') or []:
+            if start < a.get('end_mins', 0) and end > a.get('start_mins', 0):
+                return False
+        return True
+
+    refilled = 0
+    for task in sorted(tasks, key=lambda t: (
+        0 if t.get('sharing_mode') == 'fixed' else 1,
+        priority_order.get(t.get('priority', 'Medium'), 2),
+        t.get('start_mins', 0),
+    )):
+        if task.get('is_past'):
+            continue
+        # Re-evaluate existing assignments: drop any staff who are no longer
+        # able to cover the task due to a shift change (or missing staff).
+        orig_assigned = list(dict.fromkeys(task.get('assigned') or []))
+        assigned = []
+        for sid in orig_assigned:
+            s = staff_by_id.get(sid)
+            if not s:
+                # Staff not present for this date
+                continue
+            # If the staff's shift no longer covers the task window, remove the
+            # assignment from both the task and the staff member.
+            t_start = task.get('start_mins', 0)
+            t_end = task.get('end_mins', 0)
+            sh_start = s.get('shift_start', 0)
+            sh_end = s.get('shift_end', 0)
+            if t_start < sh_start or t_end > sh_end:
+                # Remove matching assignment entries from the staff record
+                s['assignments'] = [a for a in (s.get('assignments') or []) if a.get('task_id') != task.get('id')]
+                continue
+            assigned.append(sid)
+        max_staff = task.get('staff_capacity', task.get('staff_needed', 1))
+        if len(assigned) > max_staff:
+            assigned = assigned[:max_staff]
+        task['assigned'] = assigned
+        needed = task.get('staff_needed', 1) - len(assigned)
+        if needed <= 0:
+            task['alert'] = None
+            continue
+
+        skill = task.get('skill', '')
+        # Strict skill enforcement: only consider staff who actually have the
+        # required skill. Do not fall back to assigning unskilled staff here.
+        skill_candidates = [
+            s for s in staff
+            if s.get('id') not in assigned and has_skill(s, skill) and can_take(s, task)
+        ]
+
+        for s in skill_candidates:
+            if needed <= 0:
+                break
+            sid = s.get('id')
+            assignment = {
+                'task_id':    task.get('id'),
+                'task':       task.get('task'),
+                'skill':      skill,
+                'terminal':   task.get('terminal', 'ALL'),
+                'start':      task.get('start'),
+                'end':        task.get('end'),
+                'start_mins': task.get('start_mins'),
+                'end_mins':   task.get('end_mins'),
+                'skill_mismatch': False,
+            }
+            assigned.append(sid)
+            s.setdefault('assignments', []).append(assignment)
+            needed -= 1
+            refilled += 1
+
+        if needed <= 0:
+            task['alert'] = None
+        else:
+            total = task.get('staff_needed', 1)
+            task['alert'] = f'Under-staffed: need {total}, assigned {len(task["assigned"])} (gap {needed})'
+
+    for s in staff:
+        seen_assignments = set()
+        deduped = []
+        for a in s.get('assignments') or []:
+            key = (a.get('task_id'), a.get('start_mins'), a.get('end_mins'))
+            if key in seen_assignments:
+                continue
+            seen_assignments.add(key)
+            deduped.append(a)
+        s['assignments'] = sorted(deduped, key=lambda a: (a.get('start_mins', 0), a.get('end_mins', 0)))
+        shift_len = s.get('shift_end', 0) - s.get('shift_start', 0)
+        total_busy = sum(a.get('end_mins', 0) - a.get('start_mins', 0) for a in s['assignments'])
+        s['utilisation_pct'] = round(min(total_busy / shift_len * 100, 100), 1) if shift_len > 0 else 0
+
+    task_by_id = {t.get('id'): t for t in tasks}
+    for flight in result.get('flights', []) or []:
+        for ft in flight.get('tasks', []) or []:
+            src = task_by_id.get(ft.get('id'))
+            if not src:
+                continue
+            ft['assigned'] = list(src.get('assigned') or [])
+            ft['alert'] = src.get('alert')
+            ft['staff_needed'] = src.get('staff_needed', ft.get('staff_needed', 1))
+
+    result['refilled_assignments'] = result.get('refilled_assignments', 0) + refilled
+    return result
+
+
 
 # ---------------------------------------------------------------------------
 # Task-generation helper — applies sharing logic before greedy assignment
@@ -1847,8 +2095,8 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
     applies_to_departures, max_staff_count, priority.
 
     Scope:
-      'Terminal'    -> one pooled 1.5-hour block per (terminal, block_idx, direction)
-      'All Flights' -> one pooled 1.5-hour block per (terminal, pier, block_idx, direction)
+      'Terminal'    -> one pooled 30-minute block per (terminal, block_idx, direction)
+      'All Flights' -> one pooled 30-minute block per (terminal, pier, block_idx, direction)
       'US Flights'  -> like 'All Flights' but haul must be 'US/Canada'
       'Fixed'       -> handled in optimize_day() -- skipped here
     """
@@ -1884,7 +2132,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         terminal  = si["terminal"]
         pier      = si["pier"]
 
-        block_idx = t_mins // 90
+        block_idx = t_mins // TASK_SLOT_MINS
         direction = "ARR" if status == "Arrival" else "DEP"
         pax       = _pax_for_icao(icao_cat)
 
@@ -1942,8 +2190,8 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         rule      = data["rule"]
         total_pax = data["pax"]
         fns       = data["flights"]
-        blk_start = block_idx * 90
-        blk_end   = min(1440, blk_start + 90)
+        blk_start = block_idx * TASK_SLOT_MINS
+        blk_end   = min(1440, blk_start + TASK_SLOT_MINS)
         skill     = TASK_SKILL.get(task_name, "GNIB")
 
         if task_name in PAX_RATIOS and total_pax > 0:
@@ -1987,8 +2235,8 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
         rule      = data["rule"]
         total_pax = data["pax"]
         fns       = data["flights"]
-        blk_start = block_idx * 90
-        blk_end   = min(1440, blk_start + 90)
+        blk_start = block_idx * TASK_SLOT_MINS
+        blk_end   = min(1440, blk_start + TASK_SLOT_MINS)
         skill     = TASK_SKILL.get(task_name, "GNIB")
 
         if task_name in PAX_RATIOS and total_pax > 0:
@@ -2140,6 +2388,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
     # busy_map: emp_id → [(start, end, terminal, skill)]
     busy_map = defaultdict(list)
+    planned_breaks_by_id = schedule_staff_breaks(on_duty, custom_constraints)
+    for s in on_duty:
+        sid = str(s.get('id', s.get('name', '')))
+        s['breaks'] = planned_breaks_by_id.get(sid, [])
+        for br in s['breaks']:
+            busy_map[sid].append((br['start_mins'], br['end_mins'], 'BREAK', 'BREAK'))
 
     def available(s, task_start, task_end, task_terminal, task_skill):
         """Check if staff member s is available for window [task_start, task_end)."""
@@ -2164,9 +2418,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         # Check busy map for overlaps with buffer
         for (ws, we, term, sk) in busy_map[s['id']]:
             buffer_mins = 0
-            if term != task_terminal and term != 'ALL' and task_terminal != 'ALL':
+            if term != 'BREAK' and term != task_terminal and term != 'ALL' and task_terminal != 'ALL':
                 buffer_mins = max(buffer_mins, tt_t1_t2)
-            if sk != task_skill:
+            if sk != 'BREAK' and sk != task_skill:
                 buffer_mins = max(buffer_mins, tt_skill_switch)
             
             # Normalize busy window to shift-relative coordinates
@@ -2271,17 +2525,21 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             shifts_to_run = [(240, 720), (720, 1200)]
             
         for _shift_idx, (_s, _e) in enumerate(shifts_to_run):
-            fixed_duties.append({
-                'id':            f"FIXED_{_task[:6].replace(' ', '')}_{_shift_idx}",
-                'task':          _task,
-                'role':          _task,
-                'skill':         _skill,
-                'priority':      _pri,
-                'start_mins':    _s,
-                'end_mins':      _e,
-                'staff_needed':  _needed,
-                'staff_capacity': _needed,
-            })
+            slot_idx = 0
+            for _slot_start in range(_s, _e, TASK_SLOT_MINS):
+                _slot_end = min(_e, _slot_start + TASK_SLOT_MINS)
+                fixed_duties.append({
+                    'id':            f"FIXED_{_task[:6].replace(' ', '')}_{_shift_idx}_{slot_idx}",
+                    'task':          _task,
+                    'role':          _task,
+                    'skill':         _skill,
+                    'priority':      _pri,
+                    'start_mins':    _slot_start,
+                    'end_mins':      _slot_end,
+                    'staff_needed':  _needed,
+                    'staff_capacity': _needed,
+                })
+                slot_idx += 1
     for fd in fixed_duties:
         fd.update({
             'flight_no':       'FIXED',
@@ -2313,6 +2571,21 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 # Find staff member
                 s = next((x for x in on_duty if x['id'] == emp_id), None)
                 if s and emp_id not in task['assigned']:
+                    # Respect staff skills: only apply manual assigns when the
+                    # employee holds the required task skill (skill1..skill4).
+                    task_skill = task.get('skill', 'GNIB')
+                    staff_skills = {
+                        _skill_norm(s.get('skill1', '')).strip(),
+                        _skill_norm(s.get('skill2', '')).strip(),
+                        _skill_norm(s.get('skill3', '')).strip(),
+                        _skill_norm(s.get('skill4', '')).strip(),
+                    }
+                    staff_skills.discard('')
+                    if task_skill not in staff_skills:
+                        # Skip invalid manual assign (staff lacks skill)
+                        print(f"[WARN] Skipping manual assign: {emp_id} lacks skill '{task_skill}' for task {tid}")
+                        continue
+
                     task['assigned'].append(emp_id)
                     s['assignments'].append({
                         'task_id':    tid,
@@ -2337,8 +2610,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # In live intraday mode (prefer_early=True) start_mins leads so past-due tasks
     # are never skipped in favour of future high-priority ones.
     priority_order = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
+    def _fixed_rank(t):
+        return 0 if t.get('sharing_mode') == 'fixed' else 1
+
     if prefer_early:
         all_tasks.sort(key=lambda t: (
+            _fixed_rank(t),
             t['start_mins'],
             priority_order.get(t['priority'], 2),
             -len(t.get('flights_covered', [])),
@@ -2346,6 +2623,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         ))
     else:
         all_tasks.sort(key=lambda t: (
+            _fixed_rank(t),
             priority_order.get(t['priority'], 2),
             -len(t.get('flights_covered', [])),
             t['start_mins'],
@@ -2365,6 +2643,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 'b1_duration_mins':       int(custom_constraints.get('b1_duration_mins', 30)),
                 'b2_duration_mins':       int(custom_constraints.get('b2_duration_mins', 60)),
                 'max_overtime_per_day_hrs': 2,
+                'planned_breaks':          planned_breaks_by_id,
             }
             # Only pass tasks that still need staff (manual assigns may have
             # already covered some or all slots for a task)
@@ -2594,18 +2873,18 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 task['alert'] = f'Under-staffed: need {task["staff_needed"]}, assigned {len(task["assigned"])} (gap {remaining})'
 
     # ── Pass 4: Full staff utilisation ────────────────────────────────────────
-    # For every on-duty staff member, find 1.5-hour blocks within their shift where
+    # For every on-duty staff member, find 30-minute slots within their shift where
     # they have no assignment, and assign them to the highest-priority task in
     # that block that matches one of their skills and has spare capacity.
     # This ensures all staff are productive every hour they are on duty.
     _p4_priority = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
 
-    # Index tasks by 1.5-hour block index
+    # Index tasks by 30-minute slot index
     _blk_task_index: dict = defaultdict(list)
     for _t in all_tasks:
         if _t.get('is_past'):
             continue
-        _blk = _t['start_mins'] // 90
+        _blk = _t['start_mins'] // TASK_SLOT_MINS
         _blk_task_index[_blk].append(_t)
     # Sort each bucket: Critical first, then more-assigned tasks (fill existing slots)
     for _blk in _blk_task_index:
@@ -2622,12 +2901,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         sh_start = s['shift_start']
         sh_end   = s['shift_end']
 
-        first_blk = sh_start // 90
-        last_blk  = max(first_blk, (sh_end - 1) // 90)
+        first_blk = sh_start // TASK_SLOT_MINS
+        last_blk  = max(first_blk, (sh_end - 1) // TASK_SLOT_MINS)
 
         for blk in range(first_blk, last_blk + 1):
-            blk_start = blk * 90
-            blk_end   = min(1440, blk_start + 90)
+            blk_start = blk * TASK_SLOT_MINS
+            blk_end   = min(1440, blk_start + TASK_SLOT_MINS)
 
             # Skip if staff already has an assignment overlapping this block
             already_busy = any(
@@ -2670,8 +2949,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # Schedule breaks and compute utilisation
     print(f"[DEBUG] Scheduling breaks for staff...")
     for s in on_duty:
-        windows = [(ws, we) for (ws, we, t, sk) in busy_map[s['id']]]
-        s['breaks'] = schedule_breaks(s, windows, custom_constraints)
+        windows = [(ws, we) for (ws, we, t, sk) in busy_map[s['id']] if t != 'BREAK']
+        s['breaks'] = planned_breaks_by_id.get(str(s.get('id', s.get('name', ''))), schedule_breaks(s, windows, custom_constraints))
         total_busy = sum(e - st for (st, e) in windows)
         shift_len = s['shift_end'] - s['shift_start']
         s['utilisation_pct'] = round(min(total_busy / shift_len * 100, 100), 1) if shift_len > 0 else 0
@@ -2807,7 +3086,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # gates_active derived from processed_flights (overrides already applied)
     gates_active  = len(set(pf['gate'] for pf in processed_flights if pf['gate']))
 
-    return {
+    result = {
         'date':          iso_date_key,
         'date_label':    date_label,
         'kpis': {
@@ -2826,6 +3105,19 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         'alerts':        alerts,
         'overrides':     overrides,
     }
+
+    # Ensure assignments respect breaks and shift windows even when callers
+    # call the optimizer without running the roster optimiser path. This keeps
+    # the schedule shown on initial model open consistent with shift times.
+    try:
+        enforce_break_conflicts(result)
+        refill_unassigned_tasks(result)
+        enforce_break_conflicts(result)
+    except Exception:
+        # Defensive: don't let a cleanup error break the API response.
+        pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -3241,10 +3533,14 @@ def intraday_optimise():
                     s['pattern_id']       = entry.get('pattern_id', '')
                     s['skill_match']      = entry.get('skill_match', 'primary')
                     s['utilisation_pct']  = entry.get('utilisation_pct', 0)
-                    if entry.get('shift_start_mins') is not None:
-                        s['shift_start_mins'] = entry['shift_start_mins']
-                    if entry.get('shift_end_mins') is not None:
-                        s['shift_end_mins'] = entry['shift_end_mins']
+                    entry_shift_start = entry.get('shift_start_mins', entry.get('shift_start'))
+                    entry_shift_end = entry.get('shift_end_mins', entry.get('shift_end'))
+                    if entry_shift_start is not None:
+                        s['shift_start_mins'] = entry_shift_start
+                        s['shift_start'] = entry_shift_start
+                    if entry_shift_end is not None:
+                        s['shift_end_mins'] = entry_shift_end
+                        s['shift_end'] = entry_shift_end
                     if entry.get('breaks'):
                         s['breaks'] = entry['breaks']
 
@@ -3262,6 +3558,9 @@ def intraday_optimise():
         except Exception as exc:
             roster_info = {'roster_available': False, 'error': str(exc)}
 
+    enforce_break_conflicts(result)
+    refill_unassigned_tasks(result)
+    enforce_break_conflicts(result)
     result['roster'] = roster_info
     result['constraints_applied'] = {
         k: _intraday_custom_constraints.get(k) for k in tactical_keys
@@ -3840,10 +4139,14 @@ def st_optimise():
                     s['pattern_id']       = entry.get('pattern_id', '')
                     s['skill_match']      = entry.get('skill_match', 'primary')
                     s['utilisation_pct']  = entry.get('utilisation_pct', 0)
-                    if entry.get('shift_start_mins') is not None:
-                        s['shift_start_mins'] = entry['shift_start_mins']
-                    if entry.get('shift_end_mins') is not None:
-                        s['shift_end_mins'] = entry['shift_end_mins']
+                    entry_shift_start = entry.get('shift_start_mins', entry.get('shift_start'))
+                    entry_shift_end = entry.get('shift_end_mins', entry.get('shift_end'))
+                    if entry_shift_start is not None:
+                        s['shift_start_mins'] = entry_shift_start
+                        s['shift_start'] = entry_shift_start
+                    if entry_shift_end is not None:
+                        s['shift_end_mins'] = entry_shift_end
+                        s['shift_end'] = entry_shift_end
                     if entry.get('breaks'):
                         s['breaks'] = entry['breaks']
 
@@ -3861,6 +4164,9 @@ def st_optimise():
         except Exception as exc:
             roster_info = {'roster_available': False, 'error': str(exc)}
 
+    enforce_break_conflicts(result)
+    refill_unassigned_tasks(result)
+    enforce_break_conflicts(result)
     result['roster'] = roster_info
     result['constraints_applied'] = {
         k: _st_custom_constraints.get(k) for k in tactical_keys
