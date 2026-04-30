@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, render_template
+﻿from flask import Flask, jsonify, request, render_template
 import csv
 import json
 import os
@@ -156,7 +156,7 @@ SKILL_SPLIT = {
 #  CBP Hall        : 3 staff × 300 min/session × 5 days / 3150 = 1.43 FTE
 #  PBZ (T2 pier)   : 4 roster slots (session-based, consistent) = ~1.27 FTE
 FIXED_FTE = {
-    'Mezz Operation':     0.95,
+    'Mezz Operation':     3.00,
     'Litter Picking':     1.07,
     'CBP Pre-clearance':  1.43,   # hall session staffing on top of per-movement GNIB/Ramp
     'PBZ':                1.27,
@@ -294,13 +294,25 @@ def weekly_staff_available():
     absences = load_absences()
     total_staff = len(staff)
 
-    # Build skill pool (all qualifications)
+    # Build employee -> skills map (normalized) and a skill pool.
+    # Employees who have only `Mezz Operation` are treated as mezz-only
+    # and counted exclusively against the Mezz Operation pool.
+    emp_skills = {}
     skill_pool = defaultdict(int)
     for s in staff:
+        emp = s.get('EMPLOYEE NUMBER', '').strip()
+        skills = set()
         for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
             sk_name = s.get(sk_col, '').strip()
             if sk_name:
-                skill_pool[sk_name] += 1
+                skills.add(normalize_skill(sk_name))
+        emp_skills[emp] = skills
+        # If the employee only holds Mezz Operation, count only towards Mezz
+        if skills == {'Mezz Operation'}:
+            skill_pool['Mezz Operation'] += 1
+        else:
+            for sk in skills:
+                skill_pool[sk] += 1
 
     # Build absence windows: {employee: [(from_date, to_date)]}
     absence_map = defaultdict(list)
@@ -331,15 +343,14 @@ def weekly_staff_available():
         net = total_staff - len(absent_emps)
         result[wk_key] = net
 
-        # Skill-level: subtract absent staff from their skill pool
+        # Skill-level: subtract absent staff from their skill pool using
+        # our precomputed employee->skills map so mezz-only staff remain
+        # exclusive to Mezz Operation.
         sk = dict(skill_pool)
         for emp_id in absent_emps:
-            emp_data = next((s for s in staff if s['EMPLOYEE NUMBER'] == emp_id), None)
-            if emp_data:
-                for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
-                    sk_name = emp_data.get(sk_col, '').strip()
-                    if sk_name:
-                        sk[sk_name] = max(0, sk.get(sk_name, 0) - 1)
+            skills = emp_skills.get(emp_id, set())
+            for sname in skills:
+                sk[sname] = max(0, sk.get(sname, 0) - 1)
         skill_result[wk_key] = sk
         d += timedelta(weeks=1)
 
@@ -1952,9 +1963,26 @@ def refill_unassigned_tasks(result):
     )):
         if task.get('is_past'):
             continue
-        assigned = list(dict.fromkeys(
-            sid for sid in (task.get('assigned') or []) if sid in staff_by_id
-        ))
+        # Re-evaluate existing assignments: drop any staff who are no longer
+        # able to cover the task due to a shift change (or missing staff).
+        orig_assigned = list(dict.fromkeys(task.get('assigned') or []))
+        assigned = []
+        for sid in orig_assigned:
+            s = staff_by_id.get(sid)
+            if not s:
+                # Staff not present for this date
+                continue
+            # If the staff's shift no longer covers the task window, remove the
+            # assignment from both the task and the staff member.
+            t_start = task.get('start_mins', 0)
+            t_end = task.get('end_mins', 0)
+            sh_start = s.get('shift_start', 0)
+            sh_end = s.get('shift_end', 0)
+            if t_start < sh_start or t_end > sh_end:
+                # Remove matching assignment entries from the staff record
+                s['assignments'] = [a for a in (s.get('assignments') or []) if a.get('task_id') != task.get('id')]
+                continue
+            assigned.append(sid)
         max_staff = task.get('staff_capacity', task.get('staff_needed', 1))
         if len(assigned) > max_staff:
             assigned = assigned[:max_staff]
@@ -1965,16 +1993,14 @@ def refill_unassigned_tasks(result):
             continue
 
         skill = task.get('skill', '')
+        # Strict skill enforcement: only consider staff who actually have the
+        # required skill. Do not fall back to assigning unskilled staff here.
         skill_candidates = [
             s for s in staff
             if s.get('id') not in assigned and has_skill(s, skill) and can_take(s, task)
         ]
-        fallback_candidates = [
-            s for s in staff
-            if s.get('id') not in assigned and s not in skill_candidates and can_take(s, task)
-        ]
 
-        for s in skill_candidates + fallback_candidates:
+        for s in skill_candidates:
             if needed <= 0:
                 break
             sid = s.get('id')
@@ -1987,7 +2013,7 @@ def refill_unassigned_tasks(result):
                 'end':        task.get('end'),
                 'start_mins': task.get('start_mins'),
                 'end_mins':   task.get('end_mins'),
-                'skill_mismatch': not has_skill(s, skill),
+                'skill_mismatch': False,
             }
             assigned.append(sid)
             s.setdefault('assignments', []).append(assignment)
@@ -2545,6 +2571,21 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 # Find staff member
                 s = next((x for x in on_duty if x['id'] == emp_id), None)
                 if s and emp_id not in task['assigned']:
+                    # Respect staff skills: only apply manual assigns when the
+                    # employee holds the required task skill (skill1..skill4).
+                    task_skill = task.get('skill', 'GNIB')
+                    staff_skills = {
+                        _skill_norm(s.get('skill1', '')).strip(),
+                        _skill_norm(s.get('skill2', '')).strip(),
+                        _skill_norm(s.get('skill3', '')).strip(),
+                        _skill_norm(s.get('skill4', '')).strip(),
+                    }
+                    staff_skills.discard('')
+                    if task_skill not in staff_skills:
+                        # Skip invalid manual assign (staff lacks skill)
+                        print(f"[WARN] Skipping manual assign: {emp_id} lacks skill '{task_skill}' for task {tid}")
+                        continue
+
                     task['assigned'].append(emp_id)
                     s['assignments'].append({
                         'task_id':    tid,
@@ -3045,7 +3086,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # gates_active derived from processed_flights (overrides already applied)
     gates_active  = len(set(pf['gate'] for pf in processed_flights if pf['gate']))
 
-    return {
+    result = {
         'date':          iso_date_key,
         'date_label':    date_label,
         'kpis': {
@@ -3064,6 +3105,19 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         'alerts':        alerts,
         'overrides':     overrides,
     }
+
+    # Ensure assignments respect breaks and shift windows even when callers
+    # call the optimizer without running the roster optimiser path. This keeps
+    # the schedule shown on initial model open consistent with shift times.
+    try:
+        enforce_break_conflicts(result)
+        refill_unassigned_tasks(result)
+        enforce_break_conflicts(result)
+    except Exception:
+        # Defensive: don't let a cleanup error break the API response.
+        pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
