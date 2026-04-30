@@ -1690,23 +1690,44 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
 
 
 def schedule_breaks(staff, assigned_windows, custom_constraints=None):
-    """Schedule mandatory rest breaks respecting these exact rules:
-
-      1. A break MUST occur after every 3 hours (180 min) of continuous work.
-      2. No break may start earlier than shift_start + 180 min (3 hours).
-      3. The gap between the END of break-1 and the START of break-2 must
-         be at least 3 hours (180 min).
-      4. Maximum 2 breaks per shift.
-      5. Break durations: Break-1 = b1_duration_mins (default 30),
-                          Break-2 = b2_duration_mins (default 60).
-      6. Breaks are placed in the first free gap at or after the mandatory
-         trigger; last-resort fallback still respects the 3-hour minimum.
-    """
+    """Return mandatory shift-clock breaks for one staff member."""
     shift_start = staff['shift_start']
     shift_end   = staff['shift_end']
 
     if custom_constraints is None:
         custom_constraints = {}
+
+    b1_dur     = int(custom_constraints.get('b1_duration_mins', 30))
+    b2_dur     = int(custom_constraints.get('b2_duration_mins', 60))
+    delay      = int(staff.get('_break_delay_mins', 0))
+    work_limit = int(custom_constraints.get('break_after_work_mins', 180))
+    break_gap  = int(custom_constraints.get('break_gap_after_b1_mins', 180))
+
+    b1_start = shift_start + work_limit + delay
+    b1_end   = b1_start + b1_dur
+    b2_start = b1_end + break_gap
+    b2_end   = b2_start + b2_dur
+
+    if b2_end > shift_end:
+        return []
+
+    return [
+        {
+            'start_mins': b1_start,
+            'end_mins':   b1_end,
+            'start':      mins_to_time(b1_start),
+            'end':        mins_to_time(b1_end),
+            'type':       'Short Break',
+        },
+        {
+            'start_mins': b2_start,
+            'end_mins':   b2_end,
+            'start':      mins_to_time(b2_start),
+            'end':        mins_to_time(b2_end),
+            'type':       'Meal Break',
+        },
+    ]
+
     b1_dur          = int(custom_constraints.get('b1_duration_mins', 30))
     b2_dur          = int(custom_constraints.get('b2_duration_mins', 60))
     break_durations = [b1_dur, b2_dur]
@@ -1804,6 +1825,33 @@ def schedule_breaks(staff, assigned_windows, custom_constraints=None):
             earliest_b2 = b_end + BREAK_GAP
 
     return sorted(breaks, key=lambda b: b['start_mins'])
+
+
+def schedule_staff_breaks(staff_list, custom_constraints=None):
+    """Plan mandatory breaks for a full roster, staggering same-shift staff."""
+    if custom_constraints is None:
+        custom_constraints = {}
+
+    stagger_enabled = custom_constraints.get('stagger_breaks', True)
+    groups = defaultdict(list)
+    for s in staff_list:
+        groups[(s.get('shift_start'), s.get('shift_end'))].append(s)
+
+    planned = {}
+    for _shift_key, members in groups.items():
+        ordered = sorted(members, key=lambda s: str(s.get('id', s.get('name', ''))))
+        delay_count = (len(ordered) // 2) if stagger_enabled and len(ordered) > 1 else 0
+        delayed_ids = {
+            str(s.get('id', s.get('name', '')))
+            for s in ordered[-delay_count:]
+        } if delay_count else set()
+
+        for s in ordered:
+            sid = str(s.get('id', s.get('name', '')))
+            s['_break_delay_mins'] = 60 if sid in delayed_ids else 0
+            planned[sid] = schedule_breaks(s, [], custom_constraints)
+
+    return planned
 
 
 
@@ -2140,6 +2188,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
     # busy_map: emp_id → [(start, end, terminal, skill)]
     busy_map = defaultdict(list)
+    planned_breaks_by_id = schedule_staff_breaks(on_duty, custom_constraints)
+    for s in on_duty:
+        sid = str(s.get('id', s.get('name', '')))
+        s['breaks'] = planned_breaks_by_id.get(sid, [])
+        for br in s['breaks']:
+            busy_map[sid].append((br['start_mins'], br['end_mins'], 'BREAK', 'BREAK'))
 
     def available(s, task_start, task_end, task_terminal, task_skill):
         """Check if staff member s is available for window [task_start, task_end)."""
@@ -2164,9 +2218,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         # Check busy map for overlaps with buffer
         for (ws, we, term, sk) in busy_map[s['id']]:
             buffer_mins = 0
-            if term != task_terminal and term != 'ALL' and task_terminal != 'ALL':
+            if term != 'BREAK' and term != task_terminal and term != 'ALL' and task_terminal != 'ALL':
                 buffer_mins = max(buffer_mins, tt_t1_t2)
-            if sk != task_skill:
+            if sk != 'BREAK' and sk != task_skill:
                 buffer_mins = max(buffer_mins, tt_skill_switch)
             
             # Normalize busy window to shift-relative coordinates
@@ -2365,6 +2419,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 'b1_duration_mins':       int(custom_constraints.get('b1_duration_mins', 30)),
                 'b2_duration_mins':       int(custom_constraints.get('b2_duration_mins', 60)),
                 'max_overtime_per_day_hrs': 2,
+                'planned_breaks':          planned_breaks_by_id,
             }
             # Only pass tasks that still need staff (manual assigns may have
             # already covered some or all slots for a task)
@@ -2670,8 +2725,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # Schedule breaks and compute utilisation
     print(f"[DEBUG] Scheduling breaks for staff...")
     for s in on_duty:
-        windows = [(ws, we) for (ws, we, t, sk) in busy_map[s['id']]]
-        s['breaks'] = schedule_breaks(s, windows, custom_constraints)
+        windows = [(ws, we) for (ws, we, t, sk) in busy_map[s['id']] if t != 'BREAK']
+        s['breaks'] = planned_breaks_by_id.get(str(s.get('id', s.get('name', ''))), schedule_breaks(s, windows, custom_constraints))
         total_busy = sum(e - st for (st, e) in windows)
         shift_len = s['shift_end'] - s['shift_start']
         s['utilisation_pct'] = round(min(total_busy / shift_len * 100, 100), 1) if shift_len > 0 else 0
@@ -3241,10 +3296,14 @@ def intraday_optimise():
                     s['pattern_id']       = entry.get('pattern_id', '')
                     s['skill_match']      = entry.get('skill_match', 'primary')
                     s['utilisation_pct']  = entry.get('utilisation_pct', 0)
-                    if entry.get('shift_start_mins') is not None:
-                        s['shift_start_mins'] = entry['shift_start_mins']
-                    if entry.get('shift_end_mins') is not None:
-                        s['shift_end_mins'] = entry['shift_end_mins']
+                    entry_shift_start = entry.get('shift_start_mins', entry.get('shift_start'))
+                    entry_shift_end = entry.get('shift_end_mins', entry.get('shift_end'))
+                    if entry_shift_start is not None:
+                        s['shift_start_mins'] = entry_shift_start
+                        s['shift_start'] = entry_shift_start
+                    if entry_shift_end is not None:
+                        s['shift_end_mins'] = entry_shift_end
+                        s['shift_end'] = entry_shift_end
                     if entry.get('breaks'):
                         s['breaks'] = entry['breaks']
 
@@ -3840,10 +3899,14 @@ def st_optimise():
                     s['pattern_id']       = entry.get('pattern_id', '')
                     s['skill_match']      = entry.get('skill_match', 'primary')
                     s['utilisation_pct']  = entry.get('utilisation_pct', 0)
-                    if entry.get('shift_start_mins') is not None:
-                        s['shift_start_mins'] = entry['shift_start_mins']
-                    if entry.get('shift_end_mins') is not None:
-                        s['shift_end_mins'] = entry['shift_end_mins']
+                    entry_shift_start = entry.get('shift_start_mins', entry.get('shift_start'))
+                    entry_shift_end = entry.get('shift_end_mins', entry.get('shift_end'))
+                    if entry_shift_start is not None:
+                        s['shift_start_mins'] = entry_shift_start
+                        s['shift_start'] = entry_shift_start
+                    if entry_shift_end is not None:
+                        s['shift_end_mins'] = entry_shift_end
+                        s['shift_end'] = entry_shift_end
                     if entry.get('breaks'):
                         s['breaks'] = entry['breaks']
 

@@ -120,6 +120,9 @@ def optimize_intraday_assignments(
     shift_end   = [_get_shift_mins(s, "end")   for s in staff]
     # Total shift duration (handles night-shift midnight wrap)
     shift_dur   = [_shift_duration(shift_start[j], shift_end[j]) for j in range(S)]
+    planned_breaks = _planned_breaks_for_staff(
+        staff, shift_start, shift_end, b1_mins, b2_mins, constraints
+    )
     # Net capacity for overtime penalty calculation (after breaks)
     net_cap     = [max(0, shift_dur[j] - break_mins) for j in range(S)]
 
@@ -201,10 +204,14 @@ def optimize_intraday_assignments(
         # Break 1: mandatory after 180 mins of shift
         model.Add(b1_start[j] >= s_start + 180)
         model.Add(b1_start[j] + b1_mins <= s_end)
+        if planned_breaks[j]:
+            model.Add(b1_start[j] == planned_breaks[j][0]["start"])
         
         # Break 2: mandatory 180 mins after B1 ends
         model.Add(b2_start[j] >= b1_start[j] + b1_mins + 180)
         model.Add(b2_start[j] + b2_mins <= s_end)
+        if planned_breaks[j]:
+            model.Add(b2_start[j] == planned_breaks[j][1]["start"])
 
         # No-overlap between tasks and breaks for staff j
         for i in range(T):
@@ -457,6 +464,54 @@ def _get_shift_mins(s: dict, endpoint: str) -> int:
     if "NIGHT" in label:
         return 720 if endpoint == "start" else 1440  # 12:00 -> 24:00
     return 0 if endpoint == "start" else 720         # 00:00 -> 12:00
+
+
+def _planned_breaks_for_staff(
+    staff: list[dict],
+    shift_start: list[int],
+    shift_end: list[int],
+    b1_mins: int,
+    b2_mins: int,
+    constraints: dict,
+) -> list[list[dict]]:
+    """Build fixed mandatory breaks, with optional same-shift staggering."""
+    supplied = constraints.get("planned_breaks") or {}
+    planned: list[list[dict]] = []
+    if supplied:
+        for s in staff:
+            brks = supplied.get(str(s.get("id", ""))) or supplied.get(s.get("id", ""))
+            planned.append([
+                {"type": b.get("type", "Break"), "start": int(b["start_mins"]), "end": int(b["end_mins"])}
+                for b in (brks or [])
+            ])
+        return planned
+
+    groups: dict[tuple[int, int], list[int]] = {}
+    for j in range(len(staff)):
+        groups.setdefault((shift_start[j], shift_end[j]), []).append(j)
+
+    delay_by_index = [0] * len(staff)
+    if constraints.get("stagger_breaks", True):
+        for members in groups.values():
+            ordered = sorted(members, key=lambda j: str(staff[j].get("id", "")))
+            for j in ordered[-(len(ordered) // 2):]:
+                delay_by_index[j] = 60
+
+    work_limit = int(constraints.get("break_after_work_mins", 180))
+    gap_after_b1 = int(constraints.get("break_gap_after_b1_mins", 180))
+    for j in range(len(staff)):
+        b1_start = shift_start[j] + work_limit + delay_by_index[j]
+        b1_end = b1_start + b1_mins
+        b2_start = b1_end + gap_after_b1
+        b2_end = b2_start + b2_mins
+        if b2_end > shift_end[j]:
+            planned.append([])
+        else:
+            planned.append([
+                {"type": "Short Break", "start": b1_start, "end": b1_end},
+                {"type": "Meal Break", "start": b2_start, "end": b2_end},
+            ])
+    return planned
 
 
 def _shift_duration(s_start: int, s_end: int) -> int:

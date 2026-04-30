@@ -75,7 +75,7 @@ _B1_MINS            = 30    # first break (Short Break)
 _B2_MINS            = 60    # second break (Meal Break)
 _B1_EARLIEST_AFTER  = 180   # earliest after shift-start break-1 may begin (min 3 h work first)
 _B1_LATEST_AFTER    = 360   # latest  after shift-start break-1 must begin
-_B2_EARLIEST_AFTER_B1_END = 120   # gap before break-2 may start
+_B2_EARLIEST_AFTER_B1_END = 180   # gap before break-2 may start
 _NET_WORKING_MINS   = 630   # gross 720 − 30 − 60
 
 _PATTERN_RESOLUTION = 60    # candidate window spacing (minutes)
@@ -298,10 +298,7 @@ def assign_greedy(
     """
     min_rest = int(constraints.get("min_rest_mins", _MIN_REST_MINS))
 
-    # Build demand totals per pattern to know how many staff each needs
-    pattern_demand: dict[str, int] = {}
-    for p in patterns:
-        pattern_demand[p.pat_id] = max(1, int(sum(p.demand_profile.values())))
+    pattern_demand = _pattern_staff_targets(patterns, len(staff))
 
     # Sort patterns: highest coverage first
     sorted_pats = sorted(patterns, key=lambda p: -p.coverage_score)
@@ -326,11 +323,12 @@ def assign_greedy(
             if sid not in unassigned:
                 continue
 
-            # Hard: 11-hour rest rule
-            prev_end = prev_shift_ends.get(sid, 0)
-            rest_gap = (pat.start_mins - prev_end) % 1440
-            if rest_gap < min_rest:
-                continue  # rest breach — skip
+            # Hard: 11-hour rest rule, only when a previous shift is known.
+            prev_end = prev_shift_ends.get(sid)
+            if prev_end is not None:
+                rest_gap = (pat.start_mins - prev_end) % 1440
+                if rest_gap < min_rest:
+                    continue
 
             # Skill fit: score 2 for primary match, 1 for any secondary match
             skill_fit = _skill_fit(s, pat.demand_profile)
@@ -353,15 +351,25 @@ def assign_greedy(
             unassigned.discard(sid)
             assigned_this += 1
 
-    # Remaining unassigned staff: give them the canonical DAY shift (P0000)
-    # so they still appear in the roster with a valid shift window.
-    canonical_day_id = "P0000"
-    fallback_pat = next((p for p in patterns if p.pat_id == canonical_day_id), patterns[0])
+    # Remaining unassigned staff: place them into the most under-target
+    # feasible shift so every rostered employee keeps a valid shift window.
+    assigned_counts = defaultdict(int)
+    for pid in assignment.values():
+        assigned_counts[pid] += 1
     for sid in list(unassigned):
-        prev_end = prev_shift_ends.get(sid, 0)
-        rest_gap = (fallback_pat.start_mins - prev_end) % 1440
-        if rest_gap >= min_rest:
+        feasible_pats = []
+        for p in patterns:
+            prev_end = prev_shift_ends.get(sid)
+            if prev_end is not None:
+                rest_gap = (p.start_mins - prev_end) % 1440
+                if rest_gap < min_rest:
+                    continue
+            target = max(1, pattern_demand.get(p.pat_id, 1))
+            feasible_pats.append((assigned_counts[p.pat_id] / target, -p.coverage_score, p))
+        if feasible_pats:
+            _, _, fallback_pat = sorted(feasible_pats, key=lambda x: (x[0], x[1]))[0]
             assignment[sid] = fallback_pat.pat_id
+            assigned_counts[fallback_pat.pat_id] += 1
             staff_load[sid] += fallback_pat.net_working_mins
 
     return assignment
@@ -391,6 +399,37 @@ def _skill_fit(staff_member: dict, demand_profile: dict[str, float]) -> int:
         elif skill in secondary:
             score += 1
     return score
+
+
+def _pattern_staff_targets(patterns: list[ShiftPattern], total_staff: int) -> dict[str, int]:
+    """Allocate available staff across shift patterns by coverage weight."""
+    if total_staff <= 0 or not patterns:
+        return {}
+
+    active = [p for p in patterns if p.coverage_score > 0] or list(patterns)
+    active.sort(key=lambda p: (-p.coverage_score, p.start_mins))
+
+    if total_staff <= len(active):
+        selected_ids = {p.pat_id for p in active[:total_staff]}
+        return {p.pat_id: (1 if p.pat_id in selected_ids else 0) for p in patterns}
+
+    targets = {p.pat_id: (1 if p in active else 0) for p in patterns}
+    remaining = total_staff - len(active)
+    score_total = sum(max(p.coverage_score, 0) for p in active) or len(active)
+
+    remainders = []
+    assigned_extra = 0
+    for p in active:
+        raw = remaining * ((max(p.coverage_score, 0) or 1) / score_total)
+        whole = int(raw)
+        targets[p.pat_id] += whole
+        assigned_extra += whole
+        remainders.append((raw - whole, p.coverage_score, p.pat_id))
+
+    for _, _, pid in sorted(remainders, reverse=True)[:remaining - assigned_extra]:
+        targets[pid] += 1
+
+    return targets
 
 
 # ===========================================================================
@@ -447,10 +486,12 @@ def refine_with_mip(
     feasible: dict[tuple[str, str], pulp.LpVariable] = {}
     for s in staff:
         sid = s["id"]
-        prev_end = prev_shift_ends.get(sid, 0)
+        prev_end = prev_shift_ends.get(sid)
         for p in patterns:
-            rest_gap = (p.start_mins - prev_end) % 1440
-            if rest_gap >= min_rest:
+            rest_ok = True
+            if prev_end is not None:
+                rest_ok = (p.start_mins - prev_end) % 1440 >= min_rest
+            if rest_ok:
                 var_name = f"y_{sid.replace('-','_')}_{p.pat_id}"
                 feasible[sid, p.pat_id] = pulp.LpVariable(var_name, cat="Binary")
 
@@ -466,6 +507,12 @@ def refine_with_mip(
         staff_vars = [feasible[sid, pid] for pid in pat_ids if (sid, pid) in feasible]
         if staff_vars:
             prob += pulp.lpSum(staff_vars) == 1, f"one_pattern_{sid.replace('-','_')}"
+
+    pattern_targets = _pattern_staff_targets(patterns, total_staff)
+    for p in patterns:
+        pat_vars = [feasible[s["id"], p.pat_id] for s in staff if (s["id"], p.pat_id) in feasible]
+        if pat_vars and p.pat_id in pattern_targets:
+            prob += pulp.lpSum(pat_vars) <= pattern_targets[p.pat_id], f"pattern_target_{p.pat_id}"
 
     # -------------------------------------------------------------------
     # Workload balance via L1 deviation from mean
@@ -717,6 +764,7 @@ def generate_roster(
     staff_by_id = {s["id"]: s for s in staff_list}
     roster: list[dict] = []
     util_pcts: list[float] = []
+    delayed_break_staff = _delayed_break_staff_by_pattern(assignment, staff_list, cfg)
 
     for s in staff_list:
         sid   = s["id"]
@@ -742,13 +790,15 @@ def generate_roster(
         util = round(pat.net_working_mins / max(1, pat.end_mins - pat.start_mins) * 100, 1)
         util_pcts.append(util)
 
-        # Pre-compute break list in the format schedule_breaks() produces
-        breaks = [
-            {"type": "Short Break",  "start": pat.b1_start, "end": pat.b1_end,
-             "start_str": _fmt_mins(pat.b1_start), "end_str": _fmt_mins(pat.b1_end)},
-            {"type": "Meal Break",   "start": pat.b2_start, "end": pat.b2_end,
-             "start_str": _fmt_mins(pat.b2_start), "end_str": _fmt_mins(pat.b2_end)},
-        ]
+        # Pre-compute break list in the format schedule_breaks() produces.
+        # Up to half of same-pattern staff are delayed by one hour for cover.
+        breaks = _breaks_for_pattern(
+            pat,
+            b1_mins=int(cfg.get("b1_duration_mins", _B1_MINS)),
+            b2_mins=int(cfg.get("b2_duration_mins", _B2_MINS)),
+            delayed=sid in delayed_break_staff,
+            constraints=cfg,
+        )
 
         roster.append(_make_roster_entry(s, pat, skill_match, util, breaks))
 
@@ -854,6 +904,56 @@ def format_as_on_duty(roster_result: dict) -> list[dict]:
 # Private helpers
 # ===========================================================================
 
+def _delayed_break_staff_by_pattern(
+    assignment: dict[str, str],
+    staff_list: list[dict],
+    constraints: dict,
+) -> set[str]:
+    """Return staff ids whose same-shift breaks should be delayed by 1 hour."""
+    if not constraints.get("stagger_breaks", True):
+        return set()
+
+    members_by_pattern: dict[str, list[str]] = defaultdict(list)
+    valid_ids = {s["id"] for s in staff_list}
+    for sid, pid in assignment.items():
+        if sid in valid_ids and pid:
+            members_by_pattern[pid].append(sid)
+
+    delayed: set[str] = set()
+    for members in members_by_pattern.values():
+        ordered = sorted(members)
+        delayed.update(ordered[-(len(ordered) // 2):])
+    return delayed
+
+
+def _breaks_for_pattern(
+    pat: ShiftPattern,
+    b1_mins: int,
+    b2_mins: int,
+    delayed: bool,
+    constraints: dict,
+) -> list[dict]:
+    delay = 60 if delayed else 0
+    work_limit = int(constraints.get("break_after_work_mins", _B1_EARLIEST_AFTER))
+    gap_after_b1 = int(constraints.get("break_gap_after_b1_mins", _B2_EARLIEST_AFTER_B1_END))
+
+    b1_start = pat.start_mins + work_limit + delay
+    b1_end = b1_start + b1_mins
+    b2_start = b1_end + gap_after_b1
+    b2_end = b2_start + b2_mins
+    if b2_end > pat.end_mins:
+        return []
+
+    return [
+        {"type": "Short Break", "start_mins": b1_start, "end_mins": b1_end,
+         "start": _fmt_mins(b1_start), "end": _fmt_mins(b1_end),
+         "start_str": _fmt_mins(b1_start), "end_str": _fmt_mins(b1_end)},
+        {"type": "Meal Break", "start_mins": b2_start, "end_mins": b2_end,
+         "start": _fmt_mins(b2_start), "end": _fmt_mins(b2_end),
+         "start_str": _fmt_mins(b2_start), "end_str": _fmt_mins(b2_end)},
+    ]
+
+
 def _make_roster_entry(
     s:           dict,
     pat:         ShiftPattern | None,
@@ -914,9 +1014,9 @@ def _build_flags(
             continue
 
         # REST_BREACH check
-        prev_end = prev_ends.get(sid, 0)
-        rest_gap = (pat.start_mins - prev_end) % 1440
-        if 0 < rest_gap < min_rest:
+        prev_end = prev_ends.get(sid)
+        rest_gap = (pat.start_mins - prev_end) % 1440 if prev_end is not None else None
+        if rest_gap is not None and 0 < rest_gap < min_rest:
             flags.append({
                 "flag_id":  "REST_BREACH",
                 "severity": "CRITICAL",
