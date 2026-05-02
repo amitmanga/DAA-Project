@@ -2983,8 +2983,10 @@ canvas { display: block; }
 }
 .badge-mip   { background: #1d4ed820; color: #1d4ed8; border: 1px solid #1d4ed840; }
 .badge-greedy{ background: #d9770620; color: #d97706; border: 1px solid #d9770640; }
+.badge-cpsat { background: #7c3aed20; color: #7c3aed; border: 1px solid #7c3aed40; }
 [data-theme="dark"] .badge-mip    { background: #3b82f630; color: #93c5fd; border-color: #3b82f650; }
 [data-theme="dark"] .badge-greedy { background: #f59e0b30; color: #fcd34d; border-color: #f59e0b50; }
+[data-theme="dark"] .badge-cpsat  { background: #8b5cf630; color: #c4b5fd; border-color: #8b5cf650; }
 
 /* Shift pattern cards grid */
 .ro-patterns-grid {

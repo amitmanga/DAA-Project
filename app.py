@@ -3447,7 +3447,7 @@ def intraday_optimise():
     """Apply all constraints + run roster optimiser → return full updated intraday schedule.
 
     Body:
-      use_mip, min_rest_hrs,
+      use_cpsat, min_rest_hrs,
       tt_t1_t2, tt_skill_switch, use_primary_first, allow_overlaps,
       shift_duration_hrs, b1_duration_mins, b2_duration_mins,
       leave_types_excluded, permitted_shifts
@@ -3456,7 +3456,7 @@ def intraday_optimise():
 
     body = request.get_json(force=True) or {}
 
-    use_mip = bool(body.get('use_mip', True))
+    use_cpsat = bool(body.get('use_cpsat', False))
     min_rest_hrs = float(body.get('min_rest_hrs', 11))
 
     # ── 1. Persist tactical constraints ──────────────────────────────
@@ -3521,7 +3521,7 @@ def intraday_optimise():
                 demand_windows=demand_windows,
                 staff_list=staff_norm,
                 constraints=roster_constraints,
-                use_mip=use_mip
+                use_mip=False  # Intraday always uses Greedy for roster phase
             )
 
             roster_map = {e['id']: e for e in (rr.get('roster') or [])}
@@ -3544,10 +3544,12 @@ def intraday_optimise():
                     if entry.get('breaks'):
                         s['breaks'] = entry['breaks']
 
+            task_solver = 'CP-SAT' if (use_cpsat and _CPSAT_AVAILABLE) else 'Greedy'
             roster_info = {
                 'roster_available': True,
                 'solver_used':   rr.get('solver_used', 'greedy'),
-                'mip_available': _ROSTER_SOLVER_AVAILABLE,
+                'task_solver':   task_solver,
+                'cpsat_available': _CPSAT_AVAILABLE,
                 'pattern_count': rr.get('pattern_count', 0),
                 'patterns':      rr.get('patterns', []),
                 'fairness':      rr.get('fairness', {}),

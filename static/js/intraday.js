@@ -1477,7 +1477,7 @@ async function renderIDOptimization(container) {
           <h2 class="panel-title" style="margin:0;font-size:1.4rem;color:var(--text);text-transform:none;">⚙ Unified Optimiser</h2>
           <p class="section-hint" style="margin:6px 0 0;font-size:0.88rem;">
             Adjust all constraints then run — results are applied live across all tabs.
-            &nbsp;·&nbsp; <em>Phase 1</em>: schedule tasks by skill &nbsp;·&nbsp; <em>Phase 2</em>: assign shifts via Greedy + MIP
+            &nbsp;·&nbsp; <em>Phase 1</em>: tasks via Greedy / CP-SAT &nbsp;·&nbsp; <em>Phase 2</em>: shift patterns via Greedy
           </p>
         </div>
         <button class="btn-update-fluid" id="id-opt-run" style="min-width:180px;">⚡ Run &amp; Apply</button>
@@ -1518,10 +1518,20 @@ async function renderIDOptimization(container) {
         <!-- Solver -->
         <div class="opt-card">
           <div class="opt-card-title"><span style="color:var(--ok)">🧮</span> Solver</div>
-          <p class="opt-hint">MIP (CBC) minimises skill mismatch + workload inequality after greedy pass. Requires PuLP.</p>
+          <p class="opt-hint">
+            <strong>Phase 1 — Task Assignment:</strong> Greedy (fast) or CP-SAT (optimal, requires OR-Tools).<br/>
+            <strong>Phase 2 — Shift Patterns:</strong> Greedy (always).
+          </p>
           <div style="display:flex;align-items:center;gap:12px;margin:12px 0;">
-            <input type="checkbox" id="opt-mip" style="width:20px;height:20px;accent-color:var(--info);cursor:pointer" checked/>
-            <label for="opt-mip" class="opt-label" style="margin:0;cursor:pointer">Enable MIP Refinement</label>
+            <input type="checkbox" id="opt-cpsat"
+              style="width:20px;height:20px;accent-color:var(--purple);cursor:pointer"
+              ${constraints.cpsat_available ? (constraints.use_cpsat ? 'checked' : '') : 'disabled'}/>
+            <label for="opt-cpsat" class="opt-label" style="margin:0;cursor:pointer">
+              Use CP-SAT for Task Assignment
+              ${constraints.cpsat_available
+                ? '<span style="font-size:0.68rem;color:var(--ok);margin-left:6px;font-weight:600">● Available</span>'
+                : '<span style="font-size:0.68rem;color:var(--muted);margin-left:6px">(OR-Tools not installed)</span>'}
+            </label>
           </div>
           <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;">
             <div style="display:flex;align-items:center;gap:12px;">
@@ -1596,7 +1606,7 @@ async function renderIDOptimization(container) {
     ]);
 
     const payload = {
-      use_mip:              document.getElementById('opt-mip').checked,
+      use_cpsat:            document.getElementById('opt-cpsat') ? document.getElementById('opt-cpsat').checked : false,
       min_rest_hrs:         parseFloat(document.getElementById('opt-rest-hrs').value),
       shift_duration_hrs:   parseInt(document.getElementById('opt-shift-hrs').value, 10),
       b1_duration_mins:     parseInt(document.getElementById('opt-b1-dur').value, 10),
@@ -1657,8 +1667,9 @@ async function renderIDOptimization(container) {
     const gini      = fairness.gini_coefficient ?? '—';
     const giniLabel = fairness.interpretation  || '—';
     const giniColor = giniLabel==='excellent'?'var(--ok)':giniLabel==='good'?'var(--info)':giniLabel==='moderate'?'var(--warn)':'var(--crit)';
-    const solverBadge = (r.solver_used||'').includes('MIP')||(r.solver_used||'').includes('CBC')
-      ? `<span class="badge-solver badge-mip">MIP CBC</span>`
+    const taskSolver  = r.task_solver || 'Greedy';
+    const solverBadge = taskSolver === 'CP-SAT'
+      ? `<span class="badge-solver badge-cpsat">CP-SAT</span><span class="badge-solver badge-greedy" style="margin-left:4px">Greedy</span>`
       : `<span class="badge-solver badge-greedy">Greedy</span>`;
 
     const staffCount = (data.staff||[]).length;
@@ -1669,7 +1680,7 @@ async function renderIDOptimization(container) {
         <div class="ro-kpi"><div class="ro-kpi-val">${staffCount}</div><div class="ro-kpi-lbl">Staff On Duty</div></div>
         <div class="ro-kpi"><div class="ro-kpi-val" style="color:${giniColor}">${typeof gini==='number'?gini.toFixed(3):gini}</div><div class="ro-kpi-lbl">Gini (${giniLabel})</div></div>
         <div class="ro-kpi"><div class="ro-kpi-val">${fairness.mean_utilisation_pct??'—'}%</div><div class="ro-kpi-lbl">Mean Util</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${solverBadge}</div><div class="ro-kpi-lbl">Solver</div></div>
+        <div class="ro-kpi"><div class="ro-kpi-val">${solverBadge}</div><div class="ro-kpi-lbl">Task Solver</div></div>
         <div class="ro-kpi"><div class="ro-kpi-val">${(r.flags||[]).length}</div><div class="ro-kpi-lbl">Flags</div></div>
       </div>`;
 
