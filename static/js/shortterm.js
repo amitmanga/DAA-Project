@@ -282,20 +282,35 @@ window.closeSTAlertDetail = closeSTAlertDetail;
 renderSTAlerts = function(alerts, date) {
   const panel = document.getElementById('st-alerts-panel');
   if (!alerts || alerts.length === 0) {
-    panel.innerHTML = `<div class="alert-panel alert-ok"><span>âœ…</span> All tasks fully covered â€” no staffing gaps.</div>`;
+    panel.innerHTML = `<div class="alert-row alert-ok" style="padding:14px 18px;border-radius:var(--radius);font-size:0.83rem;">&#x2705; All tasks fully covered &mdash; no staffing gaps.</div>`;
     return;
   }
-  const crit = alerts.filter(a => a.priority === 'Critical');
-  const high = alerts.filter(a => a.priority !== 'Critical');
+
+  const byCrit = alerts.filter(a => a.priority === 'Critical').length;
+  const byHigh = alerts.filter(a => a.priority === 'High').length;
+  const byMed  = alerts.filter(a => a.priority === 'Medium').length;
+  const byLow  = alerts.filter(a => a.priority === 'Low').length;
+  const total  = alerts.length;
+
+  const severityCls = byCrit ? '--crit' : byHigh ? '--high' : byMed ? '--warn' : '--low';
+
+  const countChips = [
+    byCrit ? `<span class="badge badge-crit">${byCrit} Critical</span>` : '',
+    byHigh ? `<span class="badge badge-high">${byHigh} High</span>` : '',
+    byMed  ? `<span class="badge badge-warn">${byMed} Medium</span>` : '',
+    byLow  ? `<span class="badge badge-ok">${byLow} Low</span>` : '',
+  ].filter(Boolean).join('');
+
+  const critDot = byCrit ? '<span class="alerts-crit-dot"></span>' : '';
+
   panel.innerHTML = `
-    <div class="alerts-container">
+    <div class="alerts-container alerts-container${severityCls}">
       <div class="alerts-header">
-        <span class="alerts-title">âš  Staffing Alerts &amp; Recommendations</span>
-        <span class="alerts-count">
-          ${crit.length ? `<span class="badge badge-crit">${crit.length} Critical</span>` : ''}
-          ${high.length ? `<span class="badge badge-warn">${high.length} High</span>` : ''}
-        </span>
-        <button class="btn-ghost" id="st-alerts-toggle">Show top 10 â–¾</button>
+        ${critDot}
+        <span style="font-size:1rem;line-height:1">&#x26A0;&#xFE0F;</span>
+        <span class="alerts-title">Staffing Alerts &amp; Recommendations</span>
+        <span style="display:flex;gap:5px;align-items:center">${countChips}</span>
+        <button class="btn-ghost" id="st-alerts-toggle" style="margin-left:6px;white-space:nowrap">Show top 10 &#9660;</button>
       </div>
       <div id="st-alerts-list"></div>
     </div>`;
@@ -304,31 +319,64 @@ renderSTAlerts = function(alerts, date) {
   let expanded = false;
   const list = document.getElementById('st-alerts-list');
 
+  const CARD_CLASS  = { Critical: 'crit', High: 'high', Medium: 'warn', Low: 'low' };
+  const BADGE_CLASS = { Critical: 'badge-crit', High: 'badge-high', Medium: 'badge-warn', Low: 'badge-ok' };
+
+  function cleanTaskName(raw) {
+    // Strip trailing " - HH:MM-HH:MM - ..." time/staffing info if present
+    return (raw || '').replace(/\s*-\s*\d{2}:\d{2}-\d{2}:\d{2}.*$/, '').trim() || raw;
+  }
+
   function renderAlertsList(items) {
     list.innerHTML = items.map((a, idx) => {
-      const flights = a.covered_flights || [];
-      const flightLabel = flights.length
-        ? flights.slice(0, 2).map(f => f.flight_no).join(', ') + (flights.length > 2 ? ` +${flights.length - 2}` : '')
-        : (a.flight_no || 'No linked flight');
+      const flights   = a.covered_flights || [];
+      const flightStr = flights.length
+        ? flights.slice(0, 3).map(f => f.flight_no).join(', ') + (flights.length > 3 ? ` +${flights.length - 3}` : '')
+        : (a.flight_no || '');
+      const cardCls  = CARD_CLASS[a.priority]  || 'warn';
+      const badgeCls = BADGE_CLASS[a.priority] || 'badge-warn';
+      const termLoc  = `${a.terminal || 'ALL'} / ${a.pier || 'ALL'}`;
+      const taskName = cleanTaskName(a.task);
+      const subDesc  = flightStr
+        ? `&#x2708; ${flightStr} &mdash; ${a.message}`
+        : (a.message || '');
+
+      const staffPct = a.staff_needed > 0
+        ? Math.min(100, Math.round((a.assigned_count / a.staff_needed) * 100))
+        : 0;
+
+      const recHtml = (a.rec_staff && a.rec_staff.length)
+        ? `<div class="alert-rec-chips">${a.rec_staff.map(s => `<span class="alert-rec-chip">${s}</span>`).join('')}</div>
+           <button class="btn-apply-rec"
+             data-date="${date}"
+             data-task="${a.task_id}"
+             data-staff='${JSON.stringify(a.rec_staff)}'>&#x25B6; Apply</button>`
+        : `<span class="alert-no-staff">No available staff</span>`;
+
       return `
-        <div class="alert-row alert-${a.priority === 'Critical' ? 'crit' : 'warn'} alert-row-clickable" data-alert-idx="${idx}">
-          <div class="alert-row-left alert-row-detail">
-            <span class="badge ${a.priority === 'Critical' ? 'badge-crit' : 'badge-warn'}">${a.priority}</span>
-            <div class="alert-msg">
-              <div class="alert-msg-title">${flightLabel} · ${a.task}</div>
-              <div class="alert-msg-sub">${a.start}–${a.end} · ${a.terminal || 'ALL'} / ${a.pier || 'ALL'} · Need ${a.staff_needed}, assigned ${a.assigned_count}, gap ${a.gap}</div>
-              <div class="alert-msg-body">${a.message}</div>
+        <div class="alert-card alert-card-${cardCls}" data-alert-idx="${idx}">
+          <div class="alert-card-stripe"></div>
+          <div class="alert-card-body">
+            <div class="alert-card-toprow">
+              <span class="badge ${badgeCls}" style="flex-shrink:0">${a.priority}</span>
+              <span class="alert-task-label">${taskName}</span>
+              <span class="alert-time-chip">${a.start}&ndash;${a.end}</span>
+              <span class="alert-loc-chip">${termLoc}</span>
             </div>
+            <div class="alert-card-subrow">${subDesc}</div>
           </div>
-          <div class="alert-row-right">
-            ${a.rec_staff && a.rec_staff.length
-              ? `<span class="alert-rec">Rec: ${a.rec_staff.join(', ')}</span>
-                 <button class="btn-apply-rec"
-                   data-date="${date}"
-                   data-task="${a.task_id}"
-                   data-staff='${JSON.stringify(a.rec_staff)}'>Apply â–¶</button>`
-              : '<span class="alert-rec muted">No available staff</span>'}
+          <div class="alert-staffing-col">
+            <div class="alert-staff-ratio">
+              <span class="alert-staff-cur">${a.assigned_count}</span>
+              <span class="alert-staff-total">/${a.staff_needed}</span>
+            </div>
+            <div class="alert-staffing-bar">
+              <div class="alert-staffing-bar-fill" style="width:${staffPct}%"></div>
+            </div>
+            <div class="alert-staff-lbl">staff</div>
+            <div class="alert-gap-pill">&minus;${a.gap} gap</div>
           </div>
+          <div class="alert-rec-col">${recHtml}</div>
         </div>`;
     }).join('');
 
@@ -337,8 +385,8 @@ renderSTAlerts = function(alerts, date) {
         e.stopPropagation();
         applySTRecommendation(btn);
       }));
-    list.querySelectorAll('.alert-row[data-alert-idx]').forEach(row =>
-      row.addEventListener('click', () => showSTAlertDetail(items[Number(row.dataset.alertIdx)])));
+    list.querySelectorAll('.alert-card[data-alert-idx]').forEach(card =>
+      card.addEventListener('click', () => showSTAlertDetail(items[Number(card.dataset.alertIdx)])));
   }
 
   renderAlertsList(shown);
@@ -346,7 +394,7 @@ renderSTAlerts = function(alerts, date) {
   document.getElementById('st-alerts-toggle').addEventListener('click', function() {
     expanded = !expanded;
     renderAlertsList(expanded ? alerts : shown);
-    this.textContent = expanded ? `Show top 10 â–´` : `Show top 10 â–¾`;
+    this.textContent = expanded ? 'Show top 10 ▲' : 'Show top 10 ▼';
   });
 };
 
