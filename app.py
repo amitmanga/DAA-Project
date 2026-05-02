@@ -1720,7 +1720,11 @@ def schedule_breaks(staff, assigned_windows, custom_constraints=None):
     b2_start = b1_end + break_gap
     b2_end   = b2_start + b2_dur
 
-    if b2_end > shift_end:
+    # Use absolute end (shift_start + duration) so night shifts crossing midnight
+    # are handled correctly — raw shift_end can be < shift_start for night workers.
+    shift_dur     = (shift_end - shift_start) % 1440 or 1440
+    shift_abs_end = shift_start + shift_dur
+    if b2_end > shift_abs_end:
         return []
 
     return [
@@ -3454,120 +3458,126 @@ def intraday_optimise():
     """
     global _intraday_custom_constraints
 
-    body = request.get_json(force=True) or {}
+    try:
+        body = request.get_json(force=True) or {}
 
-    use_cpsat = bool(body.get('use_cpsat', False))
-    min_rest_hrs = float(body.get('min_rest_hrs', 11))
+        use_cpsat = bool(body.get('use_cpsat', False))
+        min_rest_hrs = float(body.get('min_rest_hrs', 11))
 
-    # ── 1. Persist tactical constraints ──────────────────────────────
-    tactical_keys = [
-        'tt_t1_t2', 'tt_skill_switch', 'use_primary_first', 'allow_overlaps',
-        'allow_overlap', 'shift_duration_hrs', 'b1_duration_mins', 'b2_duration_mins',
-        'leave_types_excluded', 'permitted_shifts', 'use_cpsat',
-    ]
-    for k in tactical_keys:
-        if k in body:
-            _intraday_custom_constraints[k] = body[k]
+        # ── 1. Persist tactical constraints ──────────────────────────────
+        tactical_keys = [
+            'tt_t1_t2', 'tt_skill_switch', 'use_primary_first', 'allow_overlaps',
+            'allow_overlap', 'shift_duration_hrs', 'b1_duration_mins', 'b2_duration_mins',
+            'leave_types_excluded', 'permitted_shifts', 'use_cpsat',
+        ]
+        for k in tactical_keys:
+            if k in body:
+                _intraday_custom_constraints[k] = body[k]
 
-    # ── 2. Re-run intraday schedule with updated constraints ──────────
-    now = datetime.now()
-    today_str = now.strftime('%Y-%m-%d')
-    man = _manual_assigns.get(today_str, {})
-    current_time_mins = now.hour * 60 + now.minute
-    result = optimize_day(today_str, _intraday_overrides, man,
-                          current_time_mins=current_time_mins,
-                          prefer_early=True,
-                          custom_constraints=_intraday_custom_constraints)
-    if 'error' in result:
-        return jsonify(result), 404
+        # ── 2. Re-run intraday schedule with updated constraints ──────────
+        now = datetime.now()
+        today_str = now.strftime('%Y-%m-%d')
+        man = _manual_assigns.get(today_str, {})
+        current_time_mins = now.hour * 60 + now.minute
+        result = optimize_day(today_str, _intraday_overrides, man,
+                              current_time_mins=current_time_mins,
+                              prefer_early=True,
+                              custom_constraints=_intraday_custom_constraints)
+        if 'error' in result:
+            return jsonify(result), 404
 
-    roster_info = {'roster_available': False, 'solver_used': 'none'}
+        roster_info = {'roster_available': False, 'solver_used': 'none'}
 
-    # ── 3. Run roster optimiser and merge assignments ─────────────────
-    if _ROSTER_AVAILABLE:
-        try:
-            on_duty = result.get('staff', [])
-            flights = result.get('flights', [])
+        # ── 3. Run roster optimiser and merge assignments ─────────────────
+        if _ROSTER_AVAILABLE:
+            try:
+                on_duty = result.get('staff', [])
+                flights = result.get('flights', [])
 
-            all_tasks = [t for f in flights for t in f.get('tasks', [])]
-            demand_windows = _roster_tasks_to_dw(all_tasks) if all_tasks else []
+                all_tasks = [t for f in flights for t in f.get('tasks', [])]
+                demand_windows = _roster_tasks_to_dw(all_tasks) if all_tasks else []
 
-            if not demand_windows:
-                anchor_skill = on_duty[0].get('skill1', 'GNIB') if on_duty else 'GNIB'
-                demand_windows = [
-                    _RosterDemandWindow(240,  960,  anchor_skill, 1, 'Standard'),
-                    _RosterDemandWindow(960, 1440,  anchor_skill, 1, 'Standard'),
+                if not demand_windows:
+                    anchor_skill = on_duty[0].get('skill1', 'GNIB') if on_duty else 'GNIB'
+                    demand_windows = [
+                        _RosterDemandWindow(240,  960,  anchor_skill, 1, 'Standard'),
+                        _RosterDemandWindow(960, 1440,  anchor_skill, 1, 'Standard'),
+                    ]
+
+                staff_norm = [
+                    {
+                        'id':               s.get('id', s.get('name', '')),
+                        'skill1':           s.get('skill1', ''),
+                        'skill2':           s.get('skill2', ''),
+                        'shift_start_mins': s.get('shift_start_mins', 240),
+                        'shift_end_mins':   s.get('shift_end_mins',   960),
+                    }
+                    for s in on_duty
                 ]
 
-            staff_norm = [
-                {
-                    'id':               s.get('id', s.get('name', '')),
-                    'skill1':           s.get('skill1', ''),
-                    'skill2':           s.get('skill2', ''),
-                    'shift_start_mins': s.get('shift_start_mins', 240),
-                    'shift_end_mins':   s.get('shift_end_mins',   960),
+                roster_constraints = {
+                    'shift_duration_hrs': _intraday_custom_constraints.get('shift_duration_hrs', 12),
+                    'min_rest_mins':      int(min_rest_hrs * 60),
+                    'b1_duration_mins':   _intraday_custom_constraints.get('b1_duration_mins', 30),
+                    'b2_duration_mins':   _intraday_custom_constraints.get('b2_duration_mins', 60),
                 }
-                for s in on_duty
-            ]
 
-            roster_constraints = {
-                'shift_duration_hrs': _intraday_custom_constraints.get('shift_duration_hrs', 12),
-                'min_rest_mins':      int(min_rest_hrs * 60),
-                'b1_duration_mins':   _intraday_custom_constraints.get('b1_duration_mins', 30),
-                'b2_duration_mins':   _intraday_custom_constraints.get('b2_duration_mins', 60),
-            }
+                rr = _roster_generate(
+                    demand_windows=demand_windows,
+                    staff_list=staff_norm,
+                    constraints=roster_constraints,
+                    use_mip=False  # Intraday always uses Greedy for roster phase
+                )
 
-            rr = _roster_generate(
-                demand_windows=demand_windows,
-                staff_list=staff_norm,
-                constraints=roster_constraints,
-                use_mip=False  # Intraday always uses Greedy for roster phase
-            )
+                roster_map = {e['id']: e for e in (rr.get('roster') or [])}
+                for s in result['staff']:
+                    sid = s.get('id', s.get('name', ''))
+                    entry = roster_map.get(sid)
+                    if entry and entry.get('pattern_id') != 'unassigned':
+                        s['shift_label']      = entry.get('shift_label', s.get('shift', ''))
+                        s['pattern_id']       = entry.get('pattern_id', '')
+                        s['skill_match']      = entry.get('skill_match', 'primary')
+                        s['utilisation_pct']  = entry.get('utilisation_pct', 0)
+                        entry_shift_start = entry.get('shift_start_mins', entry.get('shift_start'))
+                        entry_shift_end = entry.get('shift_end_mins', entry.get('shift_end'))
+                        if entry_shift_start is not None:
+                            s['shift_start_mins'] = entry_shift_start
+                            s['shift_start'] = entry_shift_start
+                        if entry_shift_end is not None:
+                            s['shift_end_mins'] = entry_shift_end
+                            s['shift_end'] = entry_shift_end
+                        if entry.get('breaks'):
+                            s['breaks'] = entry['breaks']
 
-            roster_map = {e['id']: e for e in (rr.get('roster') or [])}
-            for s in result['staff']:
-                sid = s.get('id', s.get('name', ''))
-                entry = roster_map.get(sid)
-                if entry and entry.get('pattern_id') != 'unassigned':
-                    s['shift_label']      = entry.get('shift_label', s.get('shift', ''))
-                    s['pattern_id']       = entry.get('pattern_id', '')
-                    s['skill_match']      = entry.get('skill_match', 'primary')
-                    s['utilisation_pct']  = entry.get('utilisation_pct', 0)
-                    entry_shift_start = entry.get('shift_start_mins', entry.get('shift_start'))
-                    entry_shift_end = entry.get('shift_end_mins', entry.get('shift_end'))
-                    if entry_shift_start is not None:
-                        s['shift_start_mins'] = entry_shift_start
-                        s['shift_start'] = entry_shift_start
-                    if entry_shift_end is not None:
-                        s['shift_end_mins'] = entry_shift_end
-                        s['shift_end'] = entry_shift_end
-                    if entry.get('breaks'):
-                        s['breaks'] = entry['breaks']
+                task_solver = 'CP-SAT' if (use_cpsat and _CPSAT_AVAILABLE) else 'Greedy'
+                roster_info = {
+                    'roster_available': True,
+                    'solver_used':   rr.get('solver_used', 'greedy'),
+                    'task_solver':   task_solver,
+                    'cpsat_available': _CPSAT_AVAILABLE,
+                    'pattern_count': rr.get('pattern_count', 0),
+                    'patterns':      rr.get('patterns', []),
+                    'fairness':      rr.get('fairness', {}),
+                    'coverage':      rr.get('coverage', {}),
+                    'flags':         rr.get('flags', []),
+                    'utilisation':   rr.get('utilisation', {}),
+                }
+            except Exception as exc:
+                roster_info = {'roster_available': False, 'error': str(exc)}
 
-            task_solver = 'CP-SAT' if (use_cpsat and _CPSAT_AVAILABLE) else 'Greedy'
-            roster_info = {
-                'roster_available': True,
-                'solver_used':   rr.get('solver_used', 'greedy'),
-                'task_solver':   task_solver,
-                'cpsat_available': _CPSAT_AVAILABLE,
-                'pattern_count': rr.get('pattern_count', 0),
-                'patterns':      rr.get('patterns', []),
-                'fairness':      rr.get('fairness', {}),
-                'coverage':      rr.get('coverage', {}),
-                'flags':         rr.get('flags', []),
-                'utilisation':   rr.get('utilisation', {}),
-            }
-        except Exception as exc:
-            roster_info = {'roster_available': False, 'error': str(exc)}
+        enforce_break_conflicts(result)
+        refill_unassigned_tasks(result)
+        enforce_break_conflicts(result)
+        result['roster'] = roster_info
+        result['constraints_applied'] = {
+            k: _intraday_custom_constraints.get(k) for k in tactical_keys
+        }
+        return jsonify(result)
 
-    enforce_break_conflicts(result)
-    refill_unassigned_tasks(result)
-    enforce_break_conflicts(result)
-    result['roster'] = roster_info
-    result['constraints_applied'] = {
-        k: _intraday_custom_constraints.get(k) for k in tactical_keys
-    }
-    return jsonify(result)
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(exc)}), 500
 
 
 # ===========================================================================

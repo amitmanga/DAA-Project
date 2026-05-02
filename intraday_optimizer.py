@@ -120,8 +120,12 @@ def optimize_intraday_assignments(
     shift_end   = [_get_shift_mins(s, "end")   for s in staff]
     # Total shift duration (handles night-shift midnight wrap)
     shift_dur   = [_shift_duration(shift_start[j], shift_end[j]) for j in range(S)]
+    # Absolute end minute — may exceed 1440 for shifts that cross midnight.
+    # Using shift_start + shift_dur instead of shift_end avoids invalid CP-SAT
+    # IntVar domains when shift_end < shift_start (e.g. 22:00–06:00 → 1320 < 360).
+    shift_abs_end = [shift_start[j] + shift_dur[j] for j in range(S)]
     planned_breaks = _planned_breaks_for_staff(
-        staff, shift_start, shift_end, b1_mins, b2_mins, constraints
+        staff, shift_start, shift_abs_end, b1_mins, b2_mins, constraints
     )
     # Net capacity for overtime penalty calculation (after breaks)
     net_cap     = [max(0, shift_dur[j] - break_mins) for j in range(S)]
@@ -194,23 +198,23 @@ def optimize_intraday_assignments(
     #      Each staff member gets two mandatory breaks (B1, B2) if their
     #      shift duration permits.
     # ------------------------------------------------------------------
-    b1_start = [model.NewIntVar(shift_start[j] + 180, shift_end[j], f"b1_s_{j}") for j in range(S)]
-    b2_start = [model.NewIntVar(shift_start[j] + 180, shift_end[j], f"b2_s_{j}") for j in range(S)]
+    b1_start = [model.NewIntVar(shift_start[j] + 180, shift_abs_end[j], f"b1_s_{j}") for j in range(S)]
+    b2_start = [model.NewIntVar(shift_start[j] + 180, shift_abs_end[j], f"b2_s_{j}") for j in range(S)]
 
     for j in range(S):
-        s_start = shift_start[j]
-        s_end   = shift_end[j]
-        
+        s_start   = shift_start[j]
+        s_abs_end = shift_abs_end[j]
+
         # Break 1: mandatory after 180 mins of shift
         model.Add(b1_start[j] >= s_start + 180)
-        model.Add(b1_start[j] + b1_mins <= s_end)
-        if planned_breaks[j]:
+        model.Add(b1_start[j] + b1_mins <= s_abs_end)
+        if planned_breaks[j] and len(planned_breaks[j]) >= 1:
             model.Add(b1_start[j] == planned_breaks[j][0]["start"])
-        
+
         # Break 2: mandatory 180 mins after B1 ends
         model.Add(b2_start[j] >= b1_start[j] + b1_mins + 180)
-        model.Add(b2_start[j] + b2_mins <= s_end)
-        if planned_breaks[j]:
+        model.Add(b2_start[j] + b2_mins <= s_abs_end)
+        if planned_breaks[j] and len(planned_breaks[j]) >= 2:
             model.Add(b2_start[j] == planned_breaks[j][1]["start"])
 
         # No-overlap between tasks and breaks for staff j

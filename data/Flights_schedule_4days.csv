@@ -1160,7 +1160,8 @@ date,sta,flight_no,origin,origin_code,airline_name,aircraft_type,tail_reg,icao_c
 04-May-26,13:35,EI608,Amsterdam (AMS),AMS,Aer Lingus,A320,EI-DEP,C,FALSE,14:03,Actual,413,Departure
 04-May-26,13:35,UA316,New York (EWR),EWR,United Airlines,B752,N17126,D,FALSE,13:53,Actual,519,Departure
 04-May-26,13:40,FR118,London (LGW),LGW,Ryanair,B38M,EI-IHC,C,FALSE,14:27,Actual,204,Departure
-04-May-26,13:40,FR444,Liverpool (LPL),LPL,Ryanair,B738,EI-DLD,C,FALSE,14:07,Actual,204,Departure
+04-May-26,13:40,FR444,,,,,,,,,,,
+PL),LPL,Ryanair,B738,EI-DLD,C,FALSE,14:07,Actual,204,Departure,,,
 04-May-26,13:45,EA3256,Edinburgh (EDI),EDI,Aer Lingus Regional,AT76,EI-GPO,B,FALSE,13:55,Actual,420,Departure
 04-May-26,13:50,EI121,Orlando (MCO),MCO,Aer Lingus,A333,EI-EIL,E,FALSE,14:09,Actual,510,Departure
 04-May-26,14:00,FR9473,Nantes (NTE),NTE,Ryanair,B38M,EI-IHY,C,FALSE,14:18,Actual,209,Departure
@@ -2156,7 +2157,7 @@ date,sta,flight_no,origin,origin_code,airline_name,aircraft_type,tail_reg,icao_c
 06-May-26,05:10,EI122,Chicago (ORD),ORD,Aer Lingus,A333,EI-EIL,E,TRUE,04:45,Actual,506,Arrival
 06-May-26,05:10,EI126,Toronto (YYZ),YYZ,Aer Lingus,A333,EI-EDY,E,TRUE,05:32,Actual,507,Arrival
 06-May-26,05:15,EI100,New York (EWR),EWR,Aer Lingus,A21N,EI-LRC,C,TRUE,04:27,Actual,508,Arrival
-06-May-26,05:15,EI116,Washington (IAD),IAD,Aer Lingus,A21N,EI-LRE,C,TRUE,04:07,Actual,509,Arrival
+06-May-26,05:15,EI116,Washington (IAD),IAD,Aer Lingus,A21N,EI-LRE,C,TRUE,04:07,Actual,509,Arriv
 06-May-26,05:15,EI130,Windsor Locks (BDL),BDL,Aer Lingus,A21N,EI-LRG,C,TRUE,04:30,Actual,510,Arrival
 06-May-26,05:24,QY2882,Leipzig (LEJ),LEJ,Titan Airways,A321,9H-ZTB,C,FALSE,05:21,Actual,R101,Arrival
 06-May-26,05:53,FX5202,Paris (CDG),CDG,FedEx,B763,N107FE,D,FALSE,05:36,Actual,R101,Arrival
