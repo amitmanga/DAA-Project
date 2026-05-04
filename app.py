@@ -168,7 +168,7 @@ FIXED_FTE_TOTAL = sum(FIXED_FTE.values())  # = 6.58 FTE
 # Calculated from actual 2025 movements × STAFF_MINS_PER_MOVEMENT above.
 # Represents the demand that the current 50-person workforce is calibrated against.
 HISTORICAL_AVG_STAFF_MINS = 763_301.0
-BASELINE_STAFF = 50
+BASELINE_STAFF = 60
 NET_WORKING_MINS_PER_WEEK = 630 * 5  # 3150 mins per FTE per week
 
 
