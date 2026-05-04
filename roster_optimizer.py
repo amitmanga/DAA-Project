@@ -624,7 +624,7 @@ def refine_with_mip(
                     1 if p.pat_id == greedy_pid else 0
                 )
 
-    solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=90, warmStart=True)
+    solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=int(constraints.get("solver_time_limit_secs", 15)), warmStart=True)
     prob.solve(solver)
 
     status = pulp.LpStatus[prob.status]

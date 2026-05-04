@@ -1601,6 +1601,43 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
 
 
     # Current Day
+    mezz_shifts_map = {}
+    mezz_staff_list = [
+        r for r in day_staff
+        if 'Mezz Operation' in [
+            r.get('Skill1', '').strip(),
+            r.get('Skill2', '').strip(),
+            r.get('Skill3', '').strip(),
+            r.get('Skill4', '').strip()
+        ]
+        and r.get('EMPLOYEE NUMBER', '').strip() not in absent_set
+    ]
+    if mezz_staff_list:
+        # Mandatory 24-hour coverage anchors (hard constraint):
+        #   Worker 0 → 00:00-12:00 (covers midnight-to-noon)
+        #   Worker 1 → 12:00-24:00 (covers noon-to-midnight)
+        # Additional Mezz workers may overlap freely with any start time.
+        mezz_coverage_anchors = [
+            (0,   720,  '00:00'),  # anchor 1: must-have for 0:00-12:00 coverage
+            (720, 1440, '12:00'),  # anchor 2: must-have for 12:00-24:00 coverage
+        ]
+        mezz_extra_starts = [
+            (0,   720,  '00:00'),
+            (180, 900,  '03:00'),
+            (420, 1140, '07:00'),
+            (720, 1440, '12:00'),
+            (360, 1080, '06:00'),
+        ]
+        for idx, r_mezz in enumerate(mezz_staff_list):
+            if idx < len(mezz_coverage_anchors):
+                # First two workers must fill the 24h coverage anchors
+                st_m, en_m, lb_m = mezz_coverage_anchors[idx]
+            else:
+                # Additional workers overlap freely across all start options
+                extra_idx = (idx - len(mezz_coverage_anchors)) % len(mezz_extra_starts)
+                st_m, en_m, lb_m = mezz_extra_starts[extra_idx]
+            mezz_shifts_map[r_mezz.get('EMPLOYEE NUMBER', '').strip()] = (st_m, en_m, lb_m)
+
     for i, r in enumerate(day_staff):
         emp_id = r.get('EMPLOYEE NUMBER', '').strip()
         skill1 = r.get('Skill1', '').strip()
@@ -1613,7 +1650,9 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
             absent_staff.append({'id': emp_id, 'skill1': skill1, 'leave_type': absent_set[emp_id], 'absent': True})
             continue
 
-        if sh_options and len(sh_options) > 0:
+        if emp_id in mezz_shifts_map:
+            st, en, lb = mezz_shifts_map[emp_id]
+        elif sh_options and len(sh_options) > 0:
             sh_data = sh_options[i % len(sh_options)]
             st, en, lb = sh_data[0], sh_data[1], sh_data[2]
         elif density_shifts:
@@ -1672,10 +1711,21 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                 use_mip         = use_mip,
             )
 
-            # Merge optimiser assignments back onto the on_duty list
+            # Merge optimiser assignments back onto the on_duty list.
+            # Mezz Operation staff keep their 24h-coverage-anchored shifts
+            # (set above in mezz_shifts_map) and are NOT overridden by the
+            # roster optimizer, which assigns generic demand-driven patterns.
+            # This preserves the hard 0:00-24:00 coverage guarantee for Mezz.
             optimised_lookup = {e['id']: e for e in roster_result.get('roster', [])}
             merged = []
             for s in on_duty:
+                is_mezz = 'Mezz Operation' in [s.get('skill1', ''), s.get('skill2', ''), s.get('skill3', ''), s.get('skill4', '')]
+                if is_mezz:
+                    # Mezz workers always keep their 24h-anchored shifts;
+                    # overlapping workers are also kept as-is (no dedup).
+                    merged.append(s)
+                    continue
+
                 oe = optimised_lookup.get(s['id'])
                 if oe and oe.get('pattern_id') != 'unassigned':
                     s = dict(s)
@@ -1884,6 +1934,9 @@ def enforce_break_conflicts(result):
         breaks = s.get('breaks') or []
         kept = []
         for a in s.get('assignments') or []:
+            if a.get('task') == 'Mezz Operation' or a.get('skill') == 'Mezz Operation':
+                kept.append(a)
+                continue
             overlaps_break = any(
                 a.get('start_mins', 0) < b.get('end_mins', b.get('end', 0))
                 and a.get('end_mins', 0) > b.get('start_mins', b.get('start', 0))
@@ -1902,6 +1955,21 @@ def enforce_break_conflicts(result):
 
     if not removed:
         return result
+
+    for task in result.get('tasks', []) or []:
+        assigned = task.get('assigned') or []
+        new_assigned = [
+            sid for sid in assigned
+            if (task.get('id'), sid) not in removed
+        ]
+        if len(new_assigned) != len(assigned):
+            task['assigned'] = new_assigned
+            needed = task.get('staff_needed', 1)
+            if len(new_assigned) < needed and not task.get('is_past'):
+                task['alert'] = (
+                    f'Under-staffed: need {needed}, assigned {len(new_assigned)} '
+                    f'(gap {needed - len(new_assigned)})'
+                )
 
     for flight in result.get('flights', []) or []:
         for task in flight.get('tasks', []) or []:
@@ -1951,9 +2019,10 @@ def refill_unassigned_tasks(result):
         shift_end = s.get('shift_end', 0)
         if start < shift_start or end > shift_end:
             return False
-        for b in s.get('breaks') or []:
-            if start < b.get('end_mins', 0) and end > b.get('start_mins', 0):
-                return False
+        if not task.get('post_coverage', False):
+            for b in s.get('breaks') or []:
+                if start < b.get('end_mins', 0) and end > b.get('start_mins', 0):
+                    return False
         for a in s.get('assignments') or []:
             if start < a.get('end_mins', 0) and end > a.get('start_mins', 0):
                 return False
@@ -2399,8 +2468,13 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         for br in s['breaks']:
             busy_map[sid].append((br['start_mins'], br['end_mins'], 'BREAK', 'BREAK'))
 
-    def available(s, task_start, task_end, task_terminal, task_skill):
-        """Check if staff member s is available for window [task_start, task_end)."""
+    def available(s, task_start, task_end, task_terminal, task_skill, skip_break_check=False):
+        """Check if staff member s is available for window [task_start, task_end).
+
+        skip_break_check=True is used for post-coverage tasks (e.g. Mezz Operation)
+        where the post is permanently manned and workers rotate breaks while a
+        colleague covers — so a worker's own break does not block them from the post.
+        """
 
         # Shift window
         S, E = s['shift_start'], s['shift_end']
@@ -2419,8 +2493,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         if allow_overlap:
             return True
             
-        # Check busy map for overlaps with buffer
-        for (ws, we, term, sk) in busy_map[s['id']]:
+        # Check busy map for overlaps with buffer.
+        # For post-coverage tasks: skip BREAK entries — breaks are covered by
+        # rotating staff at the post, so a worker's break doesn't vacate the post.
+        for (ws, we, term, sk) in busy_map[str(s['id'])]:
+            if skip_break_check and term == 'BREAK':
+                continue
             buffer_mins = 0
             if term != 'BREAK' and term != task_terminal and term != 'ALL' and task_terminal != 'ALL':
                 buffer_mins = max(buffer_mins, tt_t1_t2)
@@ -2436,6 +2514,18 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             if ts_rel < (ws_rel + w_dur + buffer_mins) and (ts_rel + task_dur) > (ws_rel - buffer_mins):
                 return False
         return True
+
+    def _within_shift(s, task_start, task_end):
+        """Shift-window-only check (no busy_map). Used for Mezz pre-assignment."""
+        S, E = s['shift_start'], s['shift_end']
+        D_shift = (E - S) % 1440
+        if D_shift == 0 and E == S:
+            D_shift = 1440
+        task_dur = (task_end - task_start) % 1440
+        if task_dur == 0 and task_end != task_start:
+            task_dur = 1440
+        ts_rel = (task_start - S) % 1440
+        return (ts_rel + task_dur) <= D_shift
 
     # ── Build processed-flight list (apply overrides once, reuse everywhere) ──
     # Each entry carries enough info for _generate_day_tasks and flights_map.
@@ -2514,17 +2604,29 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
     # ── Fixed duties — generated from Config.csv rows with scope='Fixed' ──────
     # Each Fixed rule runs two standard shifts (AM 04:00-12:00 / PM 12:00-20:00).
+    # Mezz Operation is included as a 24-hour fixed post.
     _fixed_rules = [r for r in rules if r['scope'] == 'Fixed']
     fixed_duties = []
     for _fr in _fixed_rules:
         _task   = _fr['task']
         _skill  = TASK_SKILL.get(_task, _task)
-        _pri    = _fr['priority']
+        _pri    = 'Critical' if _task == 'Mezz Operation' else (_fr['priority'] or 'Medium')
+        # Use the configured max_staff_count as the required headcount for
+        # fixed duties so Mezz Operation slots can be manned by multiple
+        # workers concurrently (e.g., max 3 as defined in Config.csv).
         _needed = _fr['max_staff_count']
+        _cap    = _fr['max_staff_count']
         
         if _task == 'Litter Picking':
             # 2 hrs daytime, 2 hrs nighttime at 2 FTE
             shifts_to_run = [(600, 720), (1320, 1440)]
+        elif _task == 'Mezz Operation':
+            # Full 24h coverage: 00:00-12:00 and 12:00-24:00.
+            # Multiple workers may be assigned to the same slot (overlapping
+            # is permitted for Mezz); staff_capacity = max_staff_count = 3.
+            # post_coverage=True: breaks do not block Mezz workers from the post
+            # (rotating coverage means someone else covers during a break).
+            shifts_to_run = [(0, 720), (720, 1440)]
         else:
             shifts_to_run = [(240, 720), (720, 1200)]
             
@@ -2541,7 +2643,10 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                     'start_mins':    _slot_start,
                     'end_mins':      _slot_end,
                     'staff_needed':  _needed,
-                    'staff_capacity': _needed,
+                    'staff_capacity': _cap,
+                    # post_coverage tasks (e.g. Mezz) are continuously manned:
+                    # workers rotate breaks so a break does not vacate the post.
+                    'post_coverage': (_task == 'Mezz Operation'),
                 })
                 slot_idx += 1
     for fd in fixed_duties:
@@ -2654,7 +2759,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             _open_tasks = [
                 t for t in all_tasks
                 if len(t.get('assigned', [])) < t.get('staff_needed', 1)
-                and not t.get('is_past')
+                and (not t.get('is_past') or t.get('post_coverage', False))
             ]
             _cpsat_result = _cpsat_optimize(_open_tasks, on_duty, _cpsat_cons)
 
@@ -2741,7 +2846,11 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                     break
                 if s['id'] in task['assigned']:
                     continue
-                if not available(s, start, end, task.get('terminal', 'ALL'), task.get('skill', 'GNIB')):
+                # Post-coverage tasks (Mezz): skip break-conflict check so that
+                # a worker's own break doesn't prevent them from being rostered
+                # at the permanently-manned post.
+                _skip_br = task.get('post_coverage', False)
+                if not available(s, start, end, task.get('terminal', 'ALL'), task.get('skill', 'GNIB'), skip_break_check=_skip_br):
                     continue
 
                 assignment = {
@@ -3011,6 +3120,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             'time_window':      task.get('time_window', ''),
             'terminal':         task.get('terminal', ''),
             'pier':             task.get('pier', ''),
+            'post_coverage':    task.get('post_coverage', False),
         }
         for fn in task.get('flights_covered', [task.get('flight_no', '')]):
             if fn in flights_map:
@@ -3532,6 +3642,12 @@ def intraday_optimise():
                 roster_map = {e['id']: e for e in (rr.get('roster') or [])}
                 for s in result['staff']:
                     sid = s.get('id', s.get('name', ''))
+                    is_mezz = 'Mezz Operation' in [
+                        s.get('skill1', ''), s.get('skill2', ''),
+                        s.get('skill3', ''), s.get('skill4', ''),
+                    ]
+                    if is_mezz:
+                        continue
                     entry = roster_map.get(sid)
                     if entry and entry.get('pattern_id') != 'unassigned':
                         s['shift_label']      = entry.get('shift_label', s.get('shift', ''))
@@ -4141,10 +4257,20 @@ def st_optimise():
                 use_mip=use_mip
             )
 
-            # Merge optimised shift/break assignments back into the staff list
+            # Merge optimised shift/break assignments back into the staff list.
+            # Mezz Operation workers are exempt: their 24h-coverage anchors
+            # (00:00-12:00 and 12:00-24:00) must not be overridden by the
+            # demand-driven roster optimizer.
             roster_map = {e['id']: e for e in (rr.get('roster') or [])}
             for s in result['staff']:
                 sid = s.get('id', s.get('name', ''))
+                # Preserve Mezz workers' 24h-anchored shift assignments
+                is_mezz = 'Mezz Operation' in [
+                    s.get('skill1', ''), s.get('skill2', ''),
+                    s.get('skill3', ''), s.get('skill4', ''),
+                ]
+                if is_mezz:
+                    continue
                 entry = roster_map.get(sid)
                 if entry and entry.get('pattern_id') != 'unassigned':
                     s['shift_label']      = entry.get('shift_label', s.get('shift', ''))

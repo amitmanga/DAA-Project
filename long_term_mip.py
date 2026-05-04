@@ -285,7 +285,7 @@ def _solve_pulp(
     # ------------------------------------------------------------------
     # Solve
     # ------------------------------------------------------------------
-    solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=120)
+    solver = pulp.PULP_CBC_CMD(msg=0, timeLimit=int((constraints or {}).get("solver_time_limit_secs", 15)))
     prob.solve(solver)
 
     status = pulp.LpStatus[prob.status]

@@ -54,7 +54,7 @@ _SECONDARY_SKILL_WEIGHT = 100   # per assignment that uses a secondary skill
 _OVERTIME_WEIGHT        =   5   # per overtime minute above net capacity
 
 # Maximum solver wall-clock time before returning the best feasible solution
-_SOLVER_TIME_LIMIT_SECS = 60
+_SOLVER_TIME_LIMIT_SECS = 15
 
 
 # ===========================================================================
@@ -220,6 +220,8 @@ def optimize_intraday_assignments(
         # No-overlap between tasks and breaks for staff j
         for i in range(T):
             if x[j][i] is not None:
+                if tasks[i].get("post_coverage", False):
+                    continue
                 t_start = tasks[i]["start_mins"]
                 t_end   = tasks[i]["end_mins"]
                 
@@ -278,33 +280,26 @@ def optimize_intraday_assignments(
     #     Pairs that always have sufficient clearance are skipped to keep
     #     the model lean (most pairs don't overlap).
     # ------------------------------------------------------------------
+    conflicting_task_pairs = []
+    for a in range(T):
+        t1 = tasks[a]
+        for b in range(a + 1, T):
+            t2 = tasks[b]
+            buf = _travel_buffer(t1, t2, tt_t1_t2, tt_skill_sw)
+            if t1["start_mins"] <= t2["start_mins"]:
+                earlier_end  = t1["end_mins"]
+                later_start  = t2["start_mins"]
+            else:
+                earlier_end  = t2["end_mins"]
+                later_start  = t1["start_mins"]
+
+            if earlier_end + buf > later_start:
+                conflicting_task_pairs.append((a, b))
+
     for j in range(S):
-        feasible_i = [i for i in range(T) if x[j][i] is not None]
-        for a in range(len(feasible_i)):
-            i1 = feasible_i[a]
-            t1 = tasks[i1]
-            for b in range(a + 1, len(feasible_i)):
-                i2 = feasible_i[b]
-                t2 = tasks[i2]
-
-                # Required buffer: terminal change + skill-switch (max of both)
-                buf = _travel_buffer(t1, t2, tt_t1_t2, tt_skill_sw)
-
-                # Order the pair so earlier_end / later_start are unambiguous
-                if t1["start_mins"] <= t2["start_mins"]:
-                    earlier_end  = t1["end_mins"]
-                    later_start  = t2["start_mins"]
-                else:
-                    earlier_end  = t2["end_mins"]
-                    later_start  = t1["start_mins"]
-
-                # If the gap between the two tasks always exceeds the buffer,
-                # these tasks can never conflict → no constraint needed.
-                if earlier_end + buf <= later_start:
-                    continue
-
-                # Otherwise: staff j cannot be assigned to both tasks
-                model.Add(x[j][i1] + x[j][i2] <= 1)
+        for i1, i2 in conflicting_task_pairs:
+            if x[j][i1] is not None and x[j][i2] is not None:
+                model.AddAtMostOne([x[j][i1], x[j][i2]])
 
     # ------------------------------------------------------------------
     # 6.  Hard constraint — shift capacity (break-aware)
@@ -362,8 +357,8 @@ def optimize_intraday_assignments(
     # 8.  Solve
     # ------------------------------------------------------------------
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = _SOLVER_TIME_LIMIT_SECS
-    solver.parameters.num_search_workers  = 4
+    solver.parameters.max_time_in_seconds = int(constraints.get("solver_time_limit_secs", _SOLVER_TIME_LIMIT_SECS))
+    solver.parameters.num_search_workers  = 1
     solver.parameters.log_search_progress = False
 
     status      = solver.Solve(model)
