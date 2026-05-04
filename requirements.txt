@@ -2,3 +2,5 @@ flask
 gunicorn
 ortools
 pulp
+scipy
+numpy
