@@ -7,8 +7,8 @@ app = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(app)
 
 # Choose date
-date_str = '02-05-2026'
-res = app.optimize_day(date_str, manual_assigns={}, prefer_early=True, custom_constraints={})
+date_str = '04-05-2026'
+res = app.optimize_day(date_str, overrides={}, manual_assigns={}, prefer_early=True, custom_constraints={'use_cpsat': True})
 violations = []
 staff_map = {s['id']: s for s in res.get('staff', [])}
 for t in res.get('tasks', []):

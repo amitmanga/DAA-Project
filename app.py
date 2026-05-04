@@ -1,4 +1,4 @@
-﻿from flask import Flask, jsonify, request, render_template
+from flask import Flask, jsonify, request, render_template
 import csv
 import json
 import os
@@ -1991,6 +1991,47 @@ def enforce_break_conflicts(result):
     return result
 
 
+def enforce_fte_shift_containment(result):
+    """Ensure FTE staff do not have any assignments that fall outside their shift."""
+    staff = result.get('staff', []) if isinstance(result, dict) else []
+    tasks = result.get('tasks', []) if isinstance(result, dict) else []
+    if not staff or not tasks:
+        return result
+
+    for s in staff:
+        is_fte = s.get('employment', '').strip().lower() in ('full-time', 'full time', 'fte', 'permanent')
+        if not is_fte:
+            continue
+        
+        sh_start = s.get('shift_start', 0)
+        sh_end = s.get('shift_end', 0)
+        D_shift = (sh_end - sh_start) % 1440
+        if D_shift == 0 and sh_end == sh_start:
+            D_shift = 1440
+
+        valid_assignments = []
+        for a in s.get('assignments') or []:
+            t_start = a.get('start_mins', 0)
+            t_end = a.get('end_mins', 0)
+            task_dur = (t_end - t_start) % 1440
+            if task_dur == 0 and t_end != t_start:
+                task_dur = 1440
+            ts_rel = (t_start - sh_start) % 1440
+
+            if ts_rel + task_dur > D_shift:
+                # Task falls outside the shift of the FTE staff member
+                for task in tasks:
+                    if task.get('id') == a.get('task_id'):
+                        if s['id'] in task.get('assigned', []):
+                            task['assigned'].remove(s['id'])
+            else:
+                valid_assignments.append(a)
+
+        s['assignments'] = valid_assignments
+
+    return result
+
+
 def refill_unassigned_tasks(result):
     """Fill task gaps after optimized shifts/breaks have been merged."""
     staff = result.get('staff', []) if isinstance(result, dict) else []
@@ -2017,7 +2058,14 @@ def refill_unassigned_tasks(result):
         end = task.get('end_mins', 0)
         shift_start = s.get('shift_start', 0)
         shift_end = s.get('shift_end', 0)
-        if start < shift_start or end > shift_end:
+        D_shift = (shift_end - shift_start) % 1440
+        if D_shift == 0 and shift_end == shift_start:
+            D_shift = 1440
+        task_dur = (end - start) % 1440
+        if task_dur == 0 and end != start:
+            task_dur = 1440
+        ts_rel = (start - shift_start) % 1440
+        if ts_rel + task_dur > D_shift:
             return False
         if not task.get('post_coverage', False):
             for b in s.get('breaks') or []:
@@ -2051,7 +2099,14 @@ def refill_unassigned_tasks(result):
             t_end = task.get('end_mins', 0)
             sh_start = s.get('shift_start', 0)
             sh_end = s.get('shift_end', 0)
-            if t_start < sh_start or t_end > sh_end:
+            D_shift = (sh_end - sh_start) % 1440
+            if D_shift == 0 and sh_end == sh_start:
+                D_shift = 1440
+            task_dur = (t_end - t_start) % 1440
+            if task_dur == 0 and t_end != t_start:
+                task_dur = 1440
+            ts_rel = (t_start - sh_start) % 1440
+            if ts_rel + task_dur > D_shift:
                 # Remove matching assignment entries from the staff record
                 s['assignments'] = [a for a in (s.get('assignments') or []) if a.get('task_id') != task.get('id')]
                 continue
@@ -2963,7 +3018,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                     break
                 if s['id'] in task['assigned']:
                     continue
-                if not _available_no_buffer(s, start, end, extend_shift_mins=90):
+                is_fte = s.get('employment', '').strip().lower() in ('full-time', 'full time', 'fte', 'permanent')
+                ext_mins = 0 if is_fte else 90
+                if not _available_no_buffer(s, start, end, extend_shift_mins=ext_mins):
                     continue
                 task['assigned'].append(s['id'])
                 s['assignments'].append({
@@ -3014,10 +3071,14 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         sh_start = s['shift_start']
         sh_end   = s['shift_end']
 
+        s_dur = (sh_end - sh_start) % 1440
+        if s_dur == 0 and sh_end != sh_start:
+            s_dur = 1440
         first_blk = sh_start // TASK_SLOT_MINS
-        last_blk  = max(first_blk, (sh_end - 1) // TASK_SLOT_MINS)
+        num_blks = s_dur // TASK_SLOT_MINS
 
-        for blk in range(first_blk, last_blk + 1):
+        for blk_offset in range(num_blks):
+            blk = (first_blk + blk_offset) % 48
             blk_start = blk * TASK_SLOT_MINS
             blk_end   = min(1440, blk_start + TASK_SLOT_MINS)
 
@@ -3226,6 +3287,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     try:
         enforce_break_conflicts(result)
         refill_unassigned_tasks(result)
+        enforce_fte_shift_containment(result)
         enforce_break_conflicts(result)
     except Exception:
         # Defensive: don't let a cleanup error break the API response.
@@ -3683,6 +3745,7 @@ def intraday_optimise():
 
         enforce_break_conflicts(result)
         refill_unassigned_tasks(result)
+        enforce_fte_shift_containment(result)
         enforce_break_conflicts(result)
         result['roster'] = roster_info
         result['constraints_applied'] = {
