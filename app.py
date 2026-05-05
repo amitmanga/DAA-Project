@@ -298,7 +298,7 @@ def weekly_staff_available():
     # Employees who have only `Mezz Operation` are treated as mezz-only
     # and counted exclusively against the Mezz Operation pool.
     emp_skills = {}
-    skill_pool = defaultdict(int)
+    skill_pool = defaultdict(float)
     for s in staff:
         emp = s.get('EMPLOYEE NUMBER', '').strip()
         skills = set()
@@ -309,10 +309,11 @@ def weekly_staff_available():
         emp_skills[emp] = skills
         # If the employee only holds Mezz Operation, count only towards Mezz
         if skills == {'Mezz Operation'}:
-            skill_pool['Mezz Operation'] += 1
-        else:
+            skill_pool['Mezz Operation'] += 1.0
+        elif len(skills) > 0:
+            weight = 1.0 / len(skills)
             for sk in skills:
-                skill_pool[sk] += 1
+                skill_pool[sk] += weight
 
     # Build absence windows: {employee: [(from_date, to_date)]}
     absence_map = defaultdict(list)
@@ -349,8 +350,12 @@ def weekly_staff_available():
         sk = dict(skill_pool)
         for emp_id in absent_emps:
             skills = emp_skills.get(emp_id, set())
-            for sname in skills:
-                sk[sname] = max(0, sk.get(sname, 0) - 1)
+            if skills == {'Mezz Operation'}:
+                sk['Mezz Operation'] = max(0.0, sk.get('Mezz Operation', 0.0) - 1.0)
+            elif len(skills) > 0:
+                weight = 1.0 / len(skills)
+                for sname in skills:
+                    sk[sname] = max(0.0, sk.get(sname, 0.0) - weight)
         skill_result[wk_key] = sk
         d += timedelta(weeks=1)
 
@@ -895,18 +900,34 @@ def lt_merged_gap_skill():
     # Summary by skill (average across all weeks)
     skill_summary = []
     for sk in all_skills:
-        gaps = [w['skill_gaps'].get(sk, 0) for w in weekly_data]
-        reqs = [w['skill_reqs'].get(sk, 0) for w in weekly_data]
-        avails = [w['skill_avails'].get(sk, 0) for w in weekly_data]
+        # Extract data for this skill across all weeks
+        weeks_data = []
+        for w in weekly_data:
+            weeks_data.append({
+                'gap': w['skill_gaps'].get(sk, 0),
+                'req': w['skill_reqs'].get(sk, 0),
+                'avail': w['skill_avails'].get(sk, 0)
+            })
         
-        avg_gap = round(sum(gaps) / len(gaps), 1) if gaps else 0
-        peak_gap = round(max(gaps), 1) if gaps else 0
-        min_gap = round(min(gaps), 1) if gaps else 0
+        if not weeks_data:
+            continue
+            
+        gaps = [d['gap'] for d in weeks_data]
+        reqs = [d['req'] for d in weeks_data]
+        avails = [d['avail'] for d in weeks_data]
         
-        avg_req = round(sum(reqs) / len(reqs), 1) if reqs else 0
-        avg_avail = round(sum(avails) / len(avails), 1) if avails else 0
-        peak_req = round(max(reqs), 1) if reqs else 0
-        peak_avail = round(max(avails), 1) if avails else 0
+        avg_req = round(sum(reqs) / len(reqs), 1)
+        avg_avail = round(sum(avails) / len(avails), 1)
+        avg_gap = round(avg_avail - avg_req, 1)
+        
+        # Define "Peak" as the week with the maximum demand (highest requirement)
+        # This ensures that Peak Avail - Peak Req = Peak Gap
+        peak_week = max(weeks_data, key=lambda x: x['req'])
+        peak_req = round(peak_week['req'], 1)
+        peak_avail = round(peak_week['avail'], 1)
+        peak_gap = round(peak_avail - peak_req, 1)
+        
+        min_gap = round(min(gaps), 1)
 
         skill_summary.append({
             'skill': sk,
