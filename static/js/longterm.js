@@ -1217,11 +1217,9 @@ let _rosterData = null;
 let _rosterActiveWeekIdx = 0;
 
 async function initFourWeekRoster() {
-  // Only fetch once
-  if (_rosterData) {
-    renderRoster(_rosterData);
-    return;
-  }
+  // Reset cache each session open so updated API fields are always fetched
+  _rosterData = null;
+  _rosterActiveWeekIdx = 0;
 
   // Show loading
   document.getElementById('roster-loading').style.display = 'flex';
@@ -1259,14 +1257,34 @@ function renderRoster(data) {
   // ── Week Navigation Pills ───────────────────────────────────
   const nav = document.getElementById('roster-week-nav');
   nav.style.display = 'flex';
-  nav.innerHTML = data.weeks.map((wk, i) => `
-    <button class="roster-week-pill ${i === _rosterActiveWeekIdx ? 'active' : ''}"
+  nav.innerHTML = data.weeks.map((wk, i) => {
+    const isCurrent = wk.is_current_week;
+    const thisWeekBadge = isCurrent
+      ? `<span class="rw-pill-badge rw-badge-current">This Week</span>`
+      : '';
+    const coverageSummary = isCurrent ? (() => {
+      const intraday  = wk.days.filter(d => d.coverage === 'intraday').length;
+      const stDays    = wk.days.filter(d => d.coverage === 'short_term').length;
+      const rosterOnly = wk.days.filter(d => d.coverage === 'roster_only').length;
+      const parts = [];
+      if (intraday)   parts.push(`<span class="rw-cov rw-cov-intraday">${intraday}d Intraday</span>`);
+      if (stDays)     parts.push(`<span class="rw-cov rw-cov-st">${stDays}d Short Term</span>`);
+      if (rosterOnly) parts.push(`<span class="rw-cov rw-cov-ro">${rosterOnly}d Roster Only</span>`);
+      return `<div class="rw-pill-coverage">${parts.join('')}</div>`;
+    })() : '';
+    return `
+    <button class="roster-week-pill ${i === _rosterActiveWeekIdx ? 'active' : ''} ${isCurrent ? 'rw-current-week' : ''}"
             id="roster-wpill-${i}"
             onclick="switchRosterWeek(${i})">
-      <span class="rw-pill-wk">${wk.week}</span>
+      <div class="rw-pill-top">
+        <span class="rw-pill-wk">${wk.week}</span>
+        ${thisWeekBadge}
+      </div>
       <span class="rw-pill-dates">${wk.start_date} – ${wk.end_date}</span>
       <span class="rw-pill-fte">${wk.weekly_fte} FTE</span>
-    </button>`).join('');
+      ${coverageSummary}
+    </button>`;
+  }).join('');
 
   // ── Render selected week ────────────────────────────────────
   renderRosterWeek(data, _rosterActiveWeekIdx);
@@ -1289,63 +1307,127 @@ function renderRosterWeek(data, weekIdx) {
   const days = wk.days;
 
   // Update panel titles
+  const weekLabel = wk.is_current_week
+    ? `This Week (${wk.week}) — ${wk.start_date} to ${wk.end_date}`
+    : `${wk.week} — ${wk.start_date} to ${wk.end_date}`;
   document.getElementById('roster-demand-title').textContent =
-    `Daily Demand Breakdown — ${wk.week} (${wk.start_date} to ${wk.end_date})`;
+    `Daily Demand Breakdown — ${weekLabel}`;
   document.getElementById('roster-shift-title').textContent =
-    `Shift Plan — ${wk.week} (${wk.start_date} to ${wk.end_date})`;
+    `Shift Plan — ${weekLabel}`;
+
+  // Coverage badge helper
+  const COV_BADGES = {
+    intraday:    `<span class="day-cov-badge cov-intraday" title="Covered by Intraday view">Live</span>`,
+    short_term:  `<span class="day-cov-badge cov-short-term" title="Covered by Short Term view">ST</span>`,
+    roster_only: `<span class="day-cov-badge cov-roster-only" title="Roster-level estimate only">Roster</span>`,
+  };
+  const isCurrent = wk.is_current_week;
 
   // ── Table 1: Daily Demand by Skill ─────────────────────────
   const dHead = document.getElementById('roster-demand-head');
   const dBody = document.getElementById('roster-demand-body');
 
-  // Header: Role + 7 day columns + Weekly FTE
+  // Header: Role + day columns + Weekly FTE
+  // Row 1: labels; Row 2 (current week only): coverage badges
+  let headRow2 = isCurrent
+    ? `<tr class="rdth-cov-row"><th></th>${days.map(d =>
+        `<th class="rdth-cov-cell">${COV_BADGES[d.coverage] || ''}</th>`
+      ).join('')}<th></th></tr>`
+    : '';
+
   dHead.innerHTML = `<tr>
     <th class="rdth-role">Role</th>
-    ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''}">${d.label}</th>`).join('')}
+    ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''} rdth-cov-${d.coverage || 'roster_only'}">${d.label}</th>`).join('')}
     <th class="rdth-weekly">Weekly FTE</th>
-  </tr>`;
+  </tr>${headRow2}`;
 
-  // Find global max FTE for heat colouring
+  // Find global max FTE for heat colouring (required only)
   let maxFte = 0;
   skills.forEach(sk => {
     days.forEach(d => { if ((d.skill_fte[sk] || 0) > maxFte) maxFte = d.skill_fte[sk] || 0; });
   });
 
-  // Skill rows
+  // Helper: colour a gap value
+  function gapCls(g) {
+    if (g > 0)  return 'rdc-gap-ok';
+    if (g < 0)  return 'rdc-gap-crit';
+    return 'rdc-gap-zero';
+  }
+
+  // Build skill rows — three sub-rows per skill: Required / Available / Gap
   let rowsHtml = skills.map(sk => {
     const color = SKILL_COLOR[sk] || '#888';
-    const weeklyFte = Object.keys(data.weeks[weekIdx] ? {} : {}).length > 0
-      ? 0
-      : days.reduce((s, d) => s + (d.skill_fte[sk] || 0), 0) / 7 * 7;
 
-    // Actually sum up all days for the weekly ref
-    const weekTotal = days.reduce((s, d) => s + (d.skill_fte[sk] || 0), 0);
-    const weeklyRef = (weekTotal / 7).toFixed(1);  // avg daily
+    // Compute week totals for the summary column
+    const weekReq   = days.reduce((s, d) => s + (d.skill_fte[sk]   || 0), 0);
+    const weekAvail = days.reduce((s, d) => s + (d.skill_avail[sk] || 0), 0);
+    const weekGap   = weekAvail - weekReq;
 
-    const cells = days.map(d => {
+    // Req cells
+    const reqCells = days.map(d => {
       const v = d.skill_fte[sk] || 0;
       const intensity = maxFte > 0 ? v / maxFte : 0;
       const cellCls = intensity > 0.8 ? 'rdc-high' : intensity > 0.5 ? 'rdc-med' : intensity > 0.2 ? 'rdc-low' : 'rdc-zero';
-      return `<td class="roster-demand-cell ${cellCls}" title="${sk}: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
+      const covCls = isCurrent ? `rdc-cov-${d.coverage}` : '';
+      return `<td class="roster-demand-cell ${cellCls} ${covCls}" title="${sk} Req: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
     }).join('');
 
-    return `<tr>
-      <td class="rdth-role-cell">
-        <span class="rd-skill-dot" style="background:${color}"></span>${sk}
-      </td>
-      ${cells}
-      <td class="rdc-weekly">${weekTotal.toFixed(1)}</td>
-    </tr>`;
+    // Avail cells
+    const availCells = days.map(d => {
+      const v = d.skill_avail[sk] || 0;
+      const covCls = isCurrent ? `rdc-cov-${d.coverage}` : '';
+      return `<td class="roster-demand-cell rdc-avail ${covCls}" title="${sk} Avail: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
+    }).join('');
+
+    // Gap cells
+    const gapCells = days.map(d => {
+      const g = d.skill_gap[sk] || 0;
+      const covCls = isCurrent ? `rdc-cov-${d.coverage}` : '';
+      return `<td class="roster-demand-cell ${gapCls(g)} ${covCls}" title="${sk} Gap: ${g.toFixed(2)}">${g > 0 ? '+' + g.toFixed(1) : g === 0 ? '0' : g.toFixed(1)}</td>`;
+    }).join('');
+
+    return `
+      <tr class="rd-skill-group-start">
+        <td class="rdth-role-cell" rowspan="3" style="border-right:2px solid var(--border)">
+          <span class="rd-skill-dot" style="background:${color}"></span>${sk}
+        </td>
+        ${reqCells}
+        <td class="rdc-weekly rdc-req-lbl" title="Weekly Required">Req ${weekReq.toFixed(1)}</td>
+      </tr>
+      <tr class="rd-avail-row">
+        ${availCells}
+        <td class="rdc-weekly rdc-avail-lbl" title="Weekly Available">Avl ${weekAvail.toFixed(1)}</td>
+      </tr>
+      <tr class="rd-gap-row">
+        ${gapCells}
+        <td class="rdc-weekly ${gapCls(weekGap)}" title="Weekly Gap">${weekGap > 0 ? '+' : ''}${weekGap.toFixed(1)}</td>
+      </tr>`;
   }).join('');
 
-  // Total row
-  const totals = days.map(d => d.total_fte);
-  const grandTotal = totals.reduce((s, v) => s + v, 0);
-  rowsHtml += `<tr class="rd-total-row">
-    <td class="rdth-role-cell"><strong>Total FTE</strong></td>
-    ${totals.map(v => `<td class="rdc-total">${v.toFixed(1)}</td>`).join('')}
-    <td class="rdc-weekly"><strong>${grandTotal.toFixed(1)}</strong></td>
-  </tr>`;
+  // ── Summary rows (Total Required / Total Available / Total Gap) ──────────
+  const totalsReq   = days.map(d => d.total_fte);
+  const totalsAvail = days.map(d => d.total_avail);
+  const totalsGap   = days.map(d => d.total_gap);
+  const grandReq    = totalsReq.reduce((s, v) => s + v, 0);
+  const grandAvail  = totalsAvail.reduce((s, v) => s + v, 0);
+  const grandGap    = grandAvail - grandReq;
+
+  rowsHtml += `
+    <tr class="rd-total-row rd-sep-row">
+      <td class="rdth-role-cell"><strong>Total Required</strong></td>
+      ${totalsReq.map(v => `<td class="rdc-total">${v.toFixed(1)}</td>`).join('')}
+      <td class="rdc-weekly"><strong>${grandReq.toFixed(1)}</strong></td>
+    </tr>
+    <tr class="rd-total-row rd-avail-total-row">
+      <td class="rdth-role-cell"><strong>Total Available</strong></td>
+      ${totalsAvail.map(v => `<td class="rdc-total rdc-avail">${v.toFixed(1)}</td>`).join('')}
+      <td class="rdc-weekly rdc-avail"><strong>${grandAvail.toFixed(1)}</strong></td>
+    </tr>
+    <tr class="rd-total-row rd-gap-total-row">
+      <td class="rdth-role-cell"><strong>Total Gap</strong></td>
+      ${totalsGap.map(g => `<td class="rdc-total ${gapCls(g)}">${g > 0 ? '+' : ''}${g.toFixed(1)}</td>`).join('')}
+      <td class="rdc-weekly ${gapCls(grandGap)}"><strong>${grandGap > 0 ? '+' : ''}${grandGap.toFixed(1)}</strong></td>
+    </tr>`;
 
   dBody.innerHTML = rowsHtml;
 
@@ -1353,11 +1435,18 @@ function renderRosterWeek(data, weekIdx) {
   const sHead = document.getElementById('roster-shift-head');
   const sBody = document.getElementById('roster-shift-body');
 
+  // Add coverage badge row if current week
+  const covRow2 = isCurrent
+    ? `<tr class="rdth-cov-row"><th></th>${days.map(d =>
+        `<th class="rdth-cov-cell">${COV_BADGES[d.coverage] || ''}</th>`
+      ).join('')}<th></th></tr>`
+    : '';
+
   sHead.innerHTML = `<tr>
     <th class="rdth-role">Shift</th>
-    ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''}">${d.label}</th>`).join('')}
+    ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''} rdth-cov-${d.coverage || 'roster_only'}">${d.label}</th>`).join('')}
     <th class="rdth-weekly">Avg/Day</th>
-  </tr>`;
+  </tr>${covRow2}`;
 
   // Each shift band row
   const shiftBands = data.shift_bands;

@@ -3457,3 +3457,137 @@ canvas { display: block; }
 .roster-shift-table tr:not(.rd-total-row):hover td {
   background: rgba(255,255,255,0.04) !important;
 }
+
+/* ── Current-week pill enhancements ──────────────────────────── */
+.rw-current-week {
+  border-color: var(--teal) !important;
+}
+.rw-current-week.active {
+  background: rgba(14,165,233,0.12) !important;
+  box-shadow: 0 0 0 1px var(--teal) !important;
+  border-color: var(--teal) !important;
+}
+.rw-pill-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rw-pill-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.rw-badge-current {
+  background: rgba(14,165,233,0.18);
+  color: var(--teal);
+  border: 1px solid rgba(14,165,233,0.35);
+}
+.rw-pill-coverage {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.rw-cov {
+  font-size: 0.6rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.rw-cov-intraday  { background: rgba(239,68,68,0.15);   color: #fca5a5; }
+.rw-cov-st        { background: rgba(245,158,11,0.15);  color: #fcd34d; }
+.rw-cov-ro        { background: rgba(16,185,129,0.12);  color: #6ee7b7; }
+
+/* ── Day coverage badges in table header ─────────────────────── */
+.rdth-cov-row th {
+  padding: 4px 6px 6px;
+  border-bottom: 2px solid var(--border);
+  background: var(--bg);
+}
+.rdth-cov-cell {
+  text-align: center;
+}
+.day-cov-badge {
+  display: inline-block;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+.cov-intraday   { background: rgba(239,68,68,0.18);   color: #fca5a5; }
+.cov-short-term { background: rgba(245,158,11,0.18);  color: #fcd34d; }
+.cov-roster-only{ background: rgba(16,185,129,0.12);  color: #6ee7b7; }
+
+/* ── Column-level dimming for already-covered days ───────────── */
+/* Intraday day header: red-tinted, slightly dimmed */
+.rdth-cov-intraday {
+  opacity: 0.72;
+  background: rgba(239,68,68,0.06) !important;
+}
+/* Short-term day header: amber-tinted */
+.rdth-cov-short_term {
+  opacity: 0.80;
+  background: rgba(245,158,11,0.06) !important;
+}
+/* Roster-only header: normal */
+.rdth-cov-roster_only { }
+
+/* Cell-level dimming */
+.rdc-cov-intraday  { opacity: 0.55; }
+.rdc-cov-short_term { opacity: 0.72; }
+.rdc-cov-roster_only { }
+
+/* ── Available FTE / Gap rows ─────────────────────────────────── */
+
+/* Req row — first in a skill group: slightly bolder top border */
+.rd-skill-group-start td {
+  border-top: 2px solid var(--border);
+}
+/* role label cell (rowspan=3) — vertically centred */
+.rd-skill-group-start .rdth-role-cell {
+  vertical-align: middle;
+  border-top: 2px solid var(--border);
+}
+
+/* Available row — teal tint */
+.rd-avail-row td {
+  border-bottom: none;
+  background: rgba(14,165,233,0.05);
+}
+.rdc-avail {
+  color: var(--teal) !important;
+  background: rgba(14,165,233,0.07) !important;
+}
+
+/* Gap row — coloured by sign */
+.rd-gap-row td {
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.rdc-gap-ok   { color: var(--ok)  !important; background: var(--ok-light)   !important; }
+.rdc-gap-crit { color: var(--crit)!important; background: var(--crit-light) !important; }
+.rdc-gap-zero { color: var(--muted); }
+
+/* Weekly column sub-labels for skill groups */
+.rdc-req-lbl   { font-size: 0.68rem; color: var(--muted); font-weight: 600; }
+.rdc-avail-lbl { font-size: 0.68rem; color: var(--teal);  font-weight: 600; }
+
+/* Total summary rows */
+.rd-sep-row td { border-top: 3px solid var(--accent) !important; }
+.rd-avail-total-row td {
+  background: rgba(14,165,233,0.08) !important;
+  color: var(--teal) !important;
+  font-weight: 700 !important;
+  border-top: none !important;
+}
+.rd-gap-total-row td {
+  font-weight: 700 !important;
+  border-bottom: 2px solid var(--border) !important;
+  border-top: none !important;
+}

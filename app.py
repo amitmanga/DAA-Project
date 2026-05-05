@@ -1059,67 +1059,136 @@ def lt_four_week_roster():
         {'name': 'Night (22:00–06:00)', 'ratio': 0.20, 'color': '#8b5cf6'},
     ]
 
-    # ── 3. Build 4-week output ──────────────────────────────────────────────
-    weeks_output = []
+    # ── 3. Helper: build day objects for a given week ─────────────────────
+    def _build_day(date, dow_idx, weekly_skill_fte, weekly_total_fte,
+                   weekly_skill_avail=None, weekly_total_avail=0,
+                   coverage='roster_only'):
+        weight = dow_weights[dow_idx]
+        skill_fte_day = {}
+        for sk in all_skills:
+            skill_fte_day[sk] = round(weekly_skill_fte.get(sk, 0) * weight * 7, 2)
+
+        daily_total_fte = round(weekly_total_fte * weight * 7, 2)
+
+        # Availability (same DOW decomposition)
+        skill_avail_day = {}
+        wsa = weekly_skill_avail or {}
+        for sk in all_skills:
+            skill_avail_day[sk] = round(wsa.get(sk, 0) * weight * 7, 2)
+        daily_total_avail = round(weekly_total_avail * weight * 7, 2)
+
+        # Gap = Available − Required  (positive = surplus, negative = shortfall)
+        skill_gap_day = {sk: round(skill_avail_day[sk] - skill_fte_day[sk], 2)
+                         for sk in all_skills}
+        daily_total_gap = round(daily_total_avail - daily_total_fte, 2)
+
+        shifts = []
+        for band in SHIFT_BANDS:
+            shift_total = round(daily_total_fte * band['ratio'], 2)
+            shift_skills = {sk: round(skill_fte_day.get(sk, 0) * band['ratio'], 2)
+                            for sk in all_skills}
+            headcount = max(1, round(shift_total)) if shift_total > 0.5 else 0
+            shifts.append({
+                'name':      band['name'],
+                'ratio':     band['ratio'],
+                'color':     band['color'],
+                'total_fte': shift_total,
+                'headcount': headcount,
+                'skills':    shift_skills,
+            })
+
+        return {
+            'date':           date.strftime('%Y-%m-%d'),
+            'label':          date.strftime('%a %d %b'),
+            'dow':            dow_idx,
+            'dow_label':      DOW_LABELS[dow_idx],
+            'weight':         weight,
+            'total_fte':      daily_total_fte,
+            'skill_fte':      skill_fte_day,
+            'total_avail':    daily_total_avail,
+            'skill_avail':    skill_avail_day,
+            'total_gap':      daily_total_gap,
+            'skill_gap':      skill_gap_day,
+            'shifts':         shifts,
+            'coverage':       coverage,
+        }
+
+    # ── 4. Current-week partial block ──────────────────────────────────────
+    #   Intraday  = today
+    #   Short-term = today + 0..3  (4-day CSV: Flights_schedule_4days.csv)
+    #   Roster-only = today+4 .. Sunday of current ISO week
+    today_date = today.date() if hasattr(today, 'date') else today
+    today_d    = today if not hasattr(today, 'date') else today.replace(hour=0, minute=0, second=0, microsecond=0)
+    cur_week_monday = today_d - timedelta(days=today_d.weekday())
+    cur_week_sunday = cur_week_monday + timedelta(days=6)
+    cur_wk_key      = cur_week_monday.strftime('%Y-W%V')
+
+    cur_weekly_skill_fte   = skill_req_all.get(cur_wk_key, {})
+    cur_weekly_total_fte   = staff_req_all.get(cur_wk_key, 0)
+    cur_weekly_skill_avail = skill_avail_all.get(cur_wk_key, {})
+    cur_week_avail         = _staff_avail_all.get(cur_wk_key, 0)
+
+    # Short term covers 4 days: today (day 0) through today+3
+    ST_WINDOW = 4  # days covered by Flights_schedule_4days.csv
+
+    current_week_days = []
+    curr_d = today_d  # start from today itself
+    while curr_d <= cur_week_sunday:
+        delta = (curr_d - today_d).days
+        if delta == 0:
+            coverage = 'intraday'
+        elif delta < ST_WINDOW:
+            coverage = 'short_term'
+        else:
+            coverage = 'roster_only'
+
+        dow_idx = curr_d.weekday()  # 0=Mon … 6=Sun
+        current_week_days.append(
+            _build_day(curr_d, dow_idx,
+                       cur_weekly_skill_fte, cur_weekly_total_fte,
+                       cur_weekly_skill_avail, cur_week_avail,
+                       coverage)
+        )
+        curr_d += timedelta(days=1)
+
+    current_week_block = {
+        'week':         cur_wk_key,
+        'start_date':   cur_week_monday.strftime('%d %b %Y'),
+        'end_date':     cur_week_sunday.strftime('%d %b %Y'),
+        'weekly_fte':   round(cur_weekly_total_fte, 1),
+        'weekly_avail': cur_week_avail,
+        'days':         current_week_days,
+        'is_current_week': True,
+    }
+
+    # ── 5. Build full 4-week output ─────────────────────────────────────────
+    weeks_output = [current_week_block]  # prepend current week
+
     for wk_info in target_weeks:
         monday = wk_info['monday']
         wk_key = wk_info['wk_key']
 
-        weekly_skill_fte = skill_req_all.get(wk_key, {})
+        weekly_skill_fte   = skill_req_all.get(wk_key, {})
+        weekly_total_fte   = staff_req_all.get(wk_key, 0)
         weekly_skill_avail = skill_avail_all.get(wk_key, {})
-        weekly_total_fte = staff_req_all.get(wk_key, 0)
+        week_avail         = _staff_avail_all.get(wk_key, 0)
 
         days = []
         for dow_idx in range(7):
-            weight = dow_weights[dow_idx]
             date = monday + timedelta(days=dow_idx)
-
-            # Daily skill FTE
-            skill_fte_day = {}
-            for sk in all_skills:
-                wk_sk_fte = weekly_skill_fte.get(sk, 0)
-                skill_fte_day[sk] = round(wk_sk_fte * weight * 7, 2)
-
-            daily_total = round(weekly_total_fte * weight * 7, 2)
-
-            # Shift plan for this day
-            shifts = []
-            for band in SHIFT_BANDS:
-                shift_total = round(daily_total * band['ratio'], 2)
-                shift_skills = {sk: round(skill_fte_day.get(sk, 0) * band['ratio'], 2)
-                                for sk in all_skills}
-                # headcount = ceil(shift_total), min 1 if any demand
-                headcount = max(1, round(shift_total)) if shift_total > 0.5 else 0
-                shifts.append({
-                    'name':      band['name'],
-                    'ratio':     band['ratio'],
-                    'color':     band['color'],
-                    'total_fte': shift_total,
-                    'headcount': headcount,
-                    'skills':    shift_skills,
-                })
-
-            days.append({
-                'date':      date.strftime('%Y-%m-%d'),
-                'label':     date.strftime('%a %d %b'),
-                'dow':       dow_idx,
-                'dow_label': DOW_LABELS[dow_idx],
-                'weight':    weight,
-                'total_fte': daily_total,
-                'skill_fte': skill_fte_day,
-                'shifts':    shifts,
-            })
-
-        # Week availability for reference
-        week_avail = _staff_avail_all.get(wk_key, 0)
+            days.append(_build_day(date, dow_idx,
+                                   weekly_skill_fte, weekly_total_fte,
+                                   weekly_skill_avail, week_avail,
+                                   'roster_only'))
 
         weeks_output.append({
-            'week':          wk_key,
-            'start_date':    monday.strftime('%d %b %Y'),
-            'end_date':      (monday + timedelta(days=6)).strftime('%d %b %Y'),
-            'weekly_fte':    round(weekly_total_fte, 1),
-            'weekly_avail':  week_avail,
-            'days':          days,
+            'week':            wk_key,
+            'start_date':      monday.strftime('%d %b %Y'),
+            'end_date':        (monday + timedelta(days=6)).strftime('%d %b %Y'),
+            'weekly_fte':      round(weekly_total_fte, 1),
+            'weekly_avail':    week_avail,
+            'days':            days,
+            'is_current_week': False,
         })
 
     return jsonify({
@@ -1128,6 +1197,7 @@ def lt_four_week_roster():
         'skills':      all_skills,
         'shift_bands': [{'name': b['name'], 'color': b['color'], 'ratio': b['ratio']}
                         for b in SHIFT_BANDS],
+        'st_window_days': ST_WINDOW,
     })
 
 
