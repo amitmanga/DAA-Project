@@ -978,6 +978,160 @@ def lt_merged_gap_skill():
 
 
 # ---------------------------------------------------------------------------
+# Four-Week Roster endpoint
+# ---------------------------------------------------------------------------
+
+@app.route('/api/long-term/four-week-roster')
+def lt_four_week_roster():
+    """Return daily FTE breakdown and shift plan for the next 4 ISO weeks.
+
+    Methodology:
+    1. Compute day-of-week weights from the ratio of Peak_Day_Movements /
+       Weekly_Movements across all historical rows, then normalise a canonical
+       aviation DOW distribution to those weights.
+    2. Retrieve weekly skill FTE for the next 4 ISO weeks via
+       weekly_staff_required().
+    3. Expand each week to 7 days using the DOW weights.
+    4. Derive Early / Late / Night shift headcount from daily totals.
+    """
+    # ── 1. Day-of-week weights from historical peak-day ratios ──────────────
+    # Aviation baseline weights (Mon–Sun index 0–6).
+    # These reflect typical airport traffic patterns (Fri/Sat peaks, Tue troughs).
+    _BASE_DOW = [0.150, 0.120, 0.135, 0.145, 0.170, 0.165, 0.115]
+
+    rows = load_weekly_demand()
+    # Collect peak_day / weekly ratios per row to compute average "peakiness"
+    ratios = []
+    for r in rows:
+        dtype = r.get('Data_type', '').strip()
+        if dtype != 'Historical':
+            continue
+        try:
+            wm = float(r.get('Weekly_Movements', 0) or 0)
+            pd_val = float(r.get('Peak_Day_Movements', 0) or 0)
+            if wm > 0 and pd_val > 0:
+                ratios.append(pd_val / wm)
+        except (ValueError, TypeError):
+            pass
+
+    # Average peak-day share across historical rows
+    avg_peak_ratio = sum(ratios) / len(ratios) if ratios else 1.0 / 7
+
+    # The peak DOW (index 4 = Fri) should equal avg_peak_ratio.
+    # Scale the base weights so that peak matches, then re-normalise.
+    peak_idx = _BASE_DOW.index(max(_BASE_DOW))  # Fri = index 4
+    scale = avg_peak_ratio / _BASE_DOW[peak_idx] if _BASE_DOW[peak_idx] > 0 else 1.0
+    scaled = [w * scale for w in _BASE_DOW]
+    total_w = sum(scaled)
+    dow_weights = [round(w / total_w, 4) for w in scaled]  # Mon–Sun, sum=1.0
+
+    DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+    # ── 2. Next 4 ISO weeks' weekly skill FTE ──────────────────────────────
+    today = datetime.now()
+    # Compute start of next full ISO week (Monday)
+    days_until_monday = (7 - today.weekday()) % 7
+    if days_until_monday == 0:
+        days_until_monday = 7  # always start next week
+    next_monday = today + timedelta(days=days_until_monday)
+
+    target_weeks = []
+    for i in range(4):
+        monday = next_monday + timedelta(weeks=i)
+        wk_key = monday.strftime('%Y-W%V')
+        target_weeks.append({'monday': monday, 'wk_key': wk_key})
+
+    # Fetch weekly demand data for those weeks
+    demand_all = weekly_demand_2026()
+    staff_req_all, skill_req_all = weekly_staff_required(demand_all)
+    _staff_avail_all, skill_avail_all = weekly_staff_available()
+
+    # Collect all skill names
+    all_skills_set = set()
+    for wk_data in skill_req_all.values():
+        all_skills_set.update(wk_data.keys())
+    all_skills = sorted(all_skills_set)
+
+    # Shift split ratios (% of daily FTE per shift band)
+    SHIFT_BANDS = [
+        {'name': 'Early (06:00–14:00)', 'ratio': 0.40, 'color': '#f97316'},
+        {'name': 'Late  (14:00–22:00)', 'ratio': 0.40, 'color': '#3b82f6'},
+        {'name': 'Night (22:00–06:00)', 'ratio': 0.20, 'color': '#8b5cf6'},
+    ]
+
+    # ── 3. Build 4-week output ──────────────────────────────────────────────
+    weeks_output = []
+    for wk_info in target_weeks:
+        monday = wk_info['monday']
+        wk_key = wk_info['wk_key']
+
+        weekly_skill_fte = skill_req_all.get(wk_key, {})
+        weekly_skill_avail = skill_avail_all.get(wk_key, {})
+        weekly_total_fte = staff_req_all.get(wk_key, 0)
+
+        days = []
+        for dow_idx in range(7):
+            weight = dow_weights[dow_idx]
+            date = monday + timedelta(days=dow_idx)
+
+            # Daily skill FTE
+            skill_fte_day = {}
+            for sk in all_skills:
+                wk_sk_fte = weekly_skill_fte.get(sk, 0)
+                skill_fte_day[sk] = round(wk_sk_fte * weight * 7, 2)
+
+            daily_total = round(weekly_total_fte * weight * 7, 2)
+
+            # Shift plan for this day
+            shifts = []
+            for band in SHIFT_BANDS:
+                shift_total = round(daily_total * band['ratio'], 2)
+                shift_skills = {sk: round(skill_fte_day.get(sk, 0) * band['ratio'], 2)
+                                for sk in all_skills}
+                # headcount = ceil(shift_total), min 1 if any demand
+                headcount = max(1, round(shift_total)) if shift_total > 0.5 else 0
+                shifts.append({
+                    'name':      band['name'],
+                    'ratio':     band['ratio'],
+                    'color':     band['color'],
+                    'total_fte': shift_total,
+                    'headcount': headcount,
+                    'skills':    shift_skills,
+                })
+
+            days.append({
+                'date':      date.strftime('%Y-%m-%d'),
+                'label':     date.strftime('%a %d %b'),
+                'dow':       dow_idx,
+                'dow_label': DOW_LABELS[dow_idx],
+                'weight':    weight,
+                'total_fte': daily_total,
+                'skill_fte': skill_fte_day,
+                'shifts':    shifts,
+            })
+
+        # Week availability for reference
+        week_avail = _staff_avail_all.get(wk_key, 0)
+
+        weeks_output.append({
+            'week':          wk_key,
+            'start_date':    monday.strftime('%d %b %Y'),
+            'end_date':      (monday + timedelta(days=6)).strftime('%d %b %Y'),
+            'weekly_fte':    round(weekly_total_fte, 1),
+            'weekly_avail':  week_avail,
+            'days':          days,
+        })
+
+    return jsonify({
+        'weeks':       weeks_output,
+        'dow_weights': dict(zip(DOW_LABELS, dow_weights)),
+        'skills':      all_skills,
+        'shift_bands': [{'name': b['name'], 'color': b['color'], 'ratio': b['ratio']}
+                        for b in SHIFT_BANDS],
+    })
+
+
+# ---------------------------------------------------------------------------
 # Long-term MIP optimised staffing endpoint
 # ---------------------------------------------------------------------------
 

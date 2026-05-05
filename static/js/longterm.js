@@ -144,6 +144,7 @@ document.querySelectorAll('.sub-tab').forEach(tab => {
     if (tab.dataset.sub === 'scenario' && typeof initScenario === 'function') initScenario();
 
     if (tab.dataset.sub === 'gap-skill') initGapSkillAnalysis();
+    if (tab.dataset.sub === 'four-week-roster') initFourWeekRoster();
   });
 });
 
@@ -1207,3 +1208,202 @@ function renderMergedAbsenceBar(d) {
     }
   });
 }
+
+// ═════════════════════════════════════════════════════════════
+// 4 WEEKS ROSTER
+// ═════════════════════════════════════════════════════════════
+
+let _rosterData = null;
+let _rosterActiveWeekIdx = 0;
+
+async function initFourWeekRoster() {
+  // Only fetch once
+  if (_rosterData) {
+    renderRoster(_rosterData);
+    return;
+  }
+
+  // Show loading
+  document.getElementById('roster-loading').style.display = 'flex';
+  document.getElementById('roster-week-nav').style.display = 'none';
+  document.getElementById('roster-demand-panel').style.display = 'none';
+  document.getElementById('roster-shift-panel').style.display = 'none';
+
+  try {
+    _rosterData = await api('/api/long-term/four-week-roster');
+    renderRoster(_rosterData);
+  } catch (e) {
+    document.getElementById('roster-loading').innerHTML =
+      '<span style="color:var(--crit)">Failed to load roster data. Please try again.</span>';
+  }
+}
+
+function renderRoster(data) {
+  document.getElementById('roster-loading').style.display = 'none';
+
+  // ── DOW Weight Bar ─────────────────────────────────────────
+  const dowBar = document.getElementById('dow-weight-bar');
+  const dowOrder = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const dowColors = ['#3b82f6','#8b5cf6','#06b6d4','#10b981','#f97316','#ef4444','#f59e0b'];
+  dowBar.innerHTML = dowOrder.map((d, i) => {
+    const w = ((data.dow_weights[d] || 0) * 100).toFixed(1);
+    const barH = Math.round((data.dow_weights[d] / Math.max(...Object.values(data.dow_weights))) * 60);
+    return `
+      <div class="dow-chip" style="--dow-color:${dowColors[i]}">
+        <div class="dow-chip-bar" style="height:${barH}px;background:${dowColors[i]}"></div>
+        <div class="dow-chip-label">${d}</div>
+        <div class="dow-chip-pct">${w}%</div>
+      </div>`;
+  }).join('');
+
+  // ── Week Navigation Pills ───────────────────────────────────
+  const nav = document.getElementById('roster-week-nav');
+  nav.style.display = 'flex';
+  nav.innerHTML = data.weeks.map((wk, i) => `
+    <button class="roster-week-pill ${i === _rosterActiveWeekIdx ? 'active' : ''}"
+            id="roster-wpill-${i}"
+            onclick="switchRosterWeek(${i})">
+      <span class="rw-pill-wk">${wk.week}</span>
+      <span class="rw-pill-dates">${wk.start_date} – ${wk.end_date}</span>
+      <span class="rw-pill-fte">${wk.weekly_fte} FTE</span>
+    </button>`).join('');
+
+  // ── Render selected week ────────────────────────────────────
+  renderRosterWeek(data, _rosterActiveWeekIdx);
+
+  document.getElementById('roster-demand-panel').style.display = '';
+  document.getElementById('roster-shift-panel').style.display = '';
+}
+
+function switchRosterWeek(idx) {
+  _rosterActiveWeekIdx = idx;
+  document.querySelectorAll('.roster-week-pill').forEach((p, i) => {
+    p.classList.toggle('active', i === idx);
+  });
+  renderRosterWeek(_rosterData, idx);
+}
+
+function renderRosterWeek(data, weekIdx) {
+  const wk = data.weeks[weekIdx];
+  const skills = data.skills;
+  const days = wk.days;
+
+  // Update panel titles
+  document.getElementById('roster-demand-title').textContent =
+    `Daily Demand Breakdown — ${wk.week} (${wk.start_date} to ${wk.end_date})`;
+  document.getElementById('roster-shift-title').textContent =
+    `Shift Plan — ${wk.week} (${wk.start_date} to ${wk.end_date})`;
+
+  // ── Table 1: Daily Demand by Skill ─────────────────────────
+  const dHead = document.getElementById('roster-demand-head');
+  const dBody = document.getElementById('roster-demand-body');
+
+  // Header: Role + 7 day columns + Weekly FTE
+  dHead.innerHTML = `<tr>
+    <th class="rdth-role">Role</th>
+    ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''}">${d.label}</th>`).join('')}
+    <th class="rdth-weekly">Weekly FTE</th>
+  </tr>`;
+
+  // Find global max FTE for heat colouring
+  let maxFte = 0;
+  skills.forEach(sk => {
+    days.forEach(d => { if ((d.skill_fte[sk] || 0) > maxFte) maxFte = d.skill_fte[sk] || 0; });
+  });
+
+  // Skill rows
+  let rowsHtml = skills.map(sk => {
+    const color = SKILL_COLOR[sk] || '#888';
+    const weeklyFte = Object.keys(data.weeks[weekIdx] ? {} : {}).length > 0
+      ? 0
+      : days.reduce((s, d) => s + (d.skill_fte[sk] || 0), 0) / 7 * 7;
+
+    // Actually sum up all days for the weekly ref
+    const weekTotal = days.reduce((s, d) => s + (d.skill_fte[sk] || 0), 0);
+    const weeklyRef = (weekTotal / 7).toFixed(1);  // avg daily
+
+    const cells = days.map(d => {
+      const v = d.skill_fte[sk] || 0;
+      const intensity = maxFte > 0 ? v / maxFte : 0;
+      const cellCls = intensity > 0.8 ? 'rdc-high' : intensity > 0.5 ? 'rdc-med' : intensity > 0.2 ? 'rdc-low' : 'rdc-zero';
+      return `<td class="roster-demand-cell ${cellCls}" title="${sk}: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
+    }).join('');
+
+    return `<tr>
+      <td class="rdth-role-cell">
+        <span class="rd-skill-dot" style="background:${color}"></span>${sk}
+      </td>
+      ${cells}
+      <td class="rdc-weekly">${weekTotal.toFixed(1)}</td>
+    </tr>`;
+  }).join('');
+
+  // Total row
+  const totals = days.map(d => d.total_fte);
+  const grandTotal = totals.reduce((s, v) => s + v, 0);
+  rowsHtml += `<tr class="rd-total-row">
+    <td class="rdth-role-cell"><strong>Total FTE</strong></td>
+    ${totals.map(v => `<td class="rdc-total">${v.toFixed(1)}</td>`).join('')}
+    <td class="rdc-weekly"><strong>${grandTotal.toFixed(1)}</strong></td>
+  </tr>`;
+
+  dBody.innerHTML = rowsHtml;
+
+  // ── Table 2: Shift Plan ─────────────────────────────────────
+  const sHead = document.getElementById('roster-shift-head');
+  const sBody = document.getElementById('roster-shift-body');
+
+  sHead.innerHTML = `<tr>
+    <th class="rdth-role">Shift</th>
+    ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''}">${d.label}</th>`).join('')}
+    <th class="rdth-weekly">Avg/Day</th>
+  </tr>`;
+
+  // Each shift band row
+  const shiftBands = data.shift_bands;
+  let shiftRows = shiftBands.map(band => {
+    const cells = days.map(d => {
+      const shift = d.shifts.find(s => s.name === band.name);
+      if (!shift) return '<td class="roster-shift-cell">—</td>';
+      const hc = shift.headcount;
+      const fte = shift.total_fte.toFixed(1);
+      return `<td class="roster-shift-cell" title="${band.name}: ${fte} FTE, ${hc} staff">
+        <span class="rs-hc" style="color:${band.color}">${hc}</span>
+        <span class="rs-fte">${fte}</span>
+      </td>`;
+    }).join('');
+
+    const avgHc = (days.reduce((s, d) => {
+      const shift = d.shifts.find(sh => sh.name === band.name);
+      return s + (shift ? shift.headcount : 0);
+    }, 0) / days.length).toFixed(1);
+
+    return `<tr class="roster-shift-row">
+      <td class="rdth-role-cell">
+        <span class="rs-band-dot" style="background:${band.color}"></span>
+        <span style="color:${band.color};font-weight:700">${band.name}</span>
+        <span class="rs-ratio">${Math.round(band.ratio * 100)}%</span>
+      </td>
+      ${cells}
+      <td class="rdc-weekly">${avgHc}</td>
+    </tr>`;
+  }).join('');
+
+  // Total headcount row
+  const totalHcCells = days.map(d => {
+    const total = d.shifts.reduce((s, sh) => s + sh.headcount, 0);
+    return `<td class="rdc-total">${total}</td>`;
+  }).join('');
+  const avgTotal = (days.reduce((s, d) => s + d.shifts.reduce((ss, sh) => ss + sh.headcount, 0), 0) / days.length).toFixed(1);
+
+  shiftRows += `<tr class="rd-total-row">
+    <td class="rdth-role-cell"><strong>Total Headcount</strong></td>
+    ${totalHcCells}
+    <td class="rdc-weekly"><strong>${avgTotal}</strong></td>
+  </tr>`;
+
+  sBody.innerHTML = shiftRows;
+}
+
+// (four-week-roster init is wired via the shared sub-tab click handler above)
+

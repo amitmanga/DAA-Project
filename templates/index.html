@@ -124,6 +124,8 @@
         <button class="sub-tab" data-sub="allocation">Annual Allocation Plan</button>
         <button class="sub-tab" data-sub="gap-skill">Gap & Skill Analysis</button>
         <button class="sub-tab" data-sub="scenario">Scenario Planning</button>
+      
+        <button class="sub-tab" data-sub="four-week-roster">4 Weeks Roster</button>
       </div>
 
       <!-- ── DEMAND TAB ── -->
@@ -287,6 +289,53 @@
 
       <!-- ── SCENARIO PLANNING TAB ── -->
       <div id="sub-scenario" class="sub-view">
+      </div>
+
+      <!-- ── 4 WEEKS ROSTER TAB ── -->
+      <div id="sub-four-week-roster" class="sub-view">
+        <div class="section-header">
+          <h2>4-Week Roster Plan &mdash; Daily Demand &amp; Shift Schedule</h2>
+          <span class="section-hint">Based on historical day-of-week demand profiles. Weekly FTE requirements are distributed across Mon&ndash;Sun using calibrated aviation traffic patterns.</span>
+        </div>
+
+        <!-- Day-of-Week Weight Profile -->
+        <div class="panel" style="padding: 20px 32px;">
+          <div class="panel-title">Day-of-Week Demand Profile &mdash; Historical Calibration</div>
+          <div class="dow-weight-bar" id="dow-weight-bar"></div>
+        </div>
+
+        <!-- Loading state -->
+        <div id="roster-loading" class="roster-loading-state">
+          <div class="roster-spinner"></div>
+          <span>Computing 4-week roster plan&hellip;</span>
+        </div>
+
+        <!-- Week selector pills -->
+        <div class="roster-week-nav" id="roster-week-nav" style="display:none"></div>
+
+        <!-- Table 1: Daily Demand Breakdown -->
+        <div class="panel" id="roster-demand-panel" style="display:none">
+          <div class="panel-title" id="roster-demand-title">Daily Demand Breakdown &mdash; FTE by Role</div>
+          <div class="section-hint" style="margin-bottom:16px; display:block">Each cell shows the estimated FTE required for that skill on that day, derived from weekly projections &times; day-share weight.</div>
+          <div class="roster-table-scroll">
+            <table class="roster-demand-table" id="roster-demand-table">
+              <thead id="roster-demand-head"></thead>
+              <tbody id="roster-demand-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Table 2: Shift Plan -->
+        <div class="panel" id="roster-shift-panel" style="display:none">
+          <div class="panel-title" id="roster-shift-title">Shift Plan &mdash; Headcount by Shift Type</div>
+          <div class="section-hint" style="margin-bottom:16px; display:block">Early 40% &middot; Late 40% &middot; Night 20% of daily FTE. Headcount = rounded FTE per shift band.</div>
+          <div class="roster-table-scroll">
+            <table class="roster-shift-table" id="roster-shift-table">
+              <thead id="roster-shift-head"></thead>
+              <tbody id="roster-shift-body"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
 
