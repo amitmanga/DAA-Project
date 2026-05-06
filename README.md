@@ -15,7 +15,7 @@ AeroSched transforms flight forecast data and staff availability into actionable
 *   **Scenario Planning**: Perform **Monte Carlo simulations** to stress-test your workforce against demand surges, punctuality drops, and staff absence rates.
 
 ### 2. Tactical Planning (Short-Term)
-*   **4-Day Rolling Window**: Manage detailed scheduling for the upcoming 7 days.
+*   **3-Day Rolling Window**: Manage detailed scheduling for the upcoming 3 days.
 *   **Task Generation**: Automatically decomposes flight movements into specific tasks (Bussing, Marshalling, Immigration) based on complex rules defined in `Config.csv`.
 *   **Staff Roster**: View assignments, break schedules, and individual utilization rates.
 *   **Gate Timeline**: A high-level visual Gantt chart of flight occupancy across all contact and remote stands.
