@@ -179,7 +179,7 @@ def compute_week_start(d):
 
 def load_weekly_demand():
     rows = read_csv('Weekly_flight_demand.csv')
-    return [r for r in rows if r.get('Season_Code')]
+    return [r for r in rows if r.get('Season_Code') and r.get('Flight_Category', '').strip().lower() != 'cargo']
 
 
 def load_staff():
@@ -1519,12 +1519,18 @@ _st_custom_constraints = {
 def read_csv_flights():
     """Read Flights_schedule_4days.csv with cp1252 encoding, strip \xa0 from all values."""
     path = os.path.join(BASE_DIR, 'data', 'Flights_schedule_4days.csv')
+    stands_map = get_stands_map()
     with open(path, encoding='cp1252') as f:
         reader = csv.DictReader(f)
         rows = []
         for row in reader:
             clean = {k: v.replace('\xa0', '').strip() for k, v in row.items()}
             if any(clean.values()):
+                gate = clean.get('gate', '').strip()
+                stand_info = stands_map.get(gate, {})
+                # If stands map assigns this to the Cargo terminal, exclude it
+                if stand_info.get('terminal', '').lower() == 'cargo':
+                    continue
                 rows.append(clean)
     return rows
 

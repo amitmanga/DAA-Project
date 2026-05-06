@@ -1,64 +1,4 @@
 ﻿EMPLOYEE NUMBER,DATE,Skill1,Skill2,Skill3,Skill4,EMPLOYMENT TYPE
-DAA-4401,05-05-2026,Mezz Operation,,,,Full-time
-DAA-4402,05-05-2026,Mezz Operation,,,,Full-time
-DAA-4403,05-05-2026,Mezz Operation,,,,Full-time
-DAA-4404,05-05-2026,Gate 335,GNIB,Check-in/Trolleys,Dep/Trolleys,Full-time
-DAA-4405,05-05-2026,Gate 335,CBP Pre-clearance,Litter Picking,GNIB,Full-time
-DAA-4406,05-05-2026,Transfer Corridor,Gate 335,Dep/Trolleys,GNIB,Full-time
-DAA-4407,05-05-2026,GNIB,Check-in/Trolleys,Transfer Corridor,Litter Picking,Full-time
-DAA-4408,05-05-2026,Transfer Corridor,Bussing,Arr Customer Service,CBP Pre-clearance,Full-time
-DAA-4409,05-05-2026,PBZ,Bussing,Litter Picking,GNIB,Full-time
-DAA-4410,05-05-2026,GNIB,Transfer Corridor,T1/T2 Trolleys L/UL,Litter Picking,Full-time
-DAA-4411,05-05-2026,Dep/Trolleys,GNIB,T1/T2 Trolleys L/UL,Check-in/Trolleys,Full-time
-DAA-4412,05-05-2026,Check-in/Trolleys,GNIB,T1/T2 Trolleys L/UL,Litter Picking,Full-time
-DAA-4413,05-05-2026,Dep/Trolleys,Gate 335,GNIB,PBZ,Full-time
-DAA-4414,05-05-2026,Dep/Trolleys,GNIB,Gate 335,Check-in/Trolleys,Full-time
-DAA-4415,05-05-2026,Check-in/Trolleys,CBP Pre-clearance,PBZ,Gate 335,Full-time
-DAA-4416,05-05-2026,Departures,GNIB,PBZ,Bussing,Full-time
-DAA-4417,05-05-2026,Dep/Trolleys,Check-in/Trolleys,GNIB,PBZ,Full-time
-DAA-4418,05-05-2026,GNIB,Dep/Trolleys,Transfer Corridor,Bussing,Full-time
-DAA-4419,05-05-2026,Check-in/Trolleys,Gate 335,T1/T2 Trolleys L/UL,Litter Picking,Full-time
-DAA-4420,05-05-2026,Dep/Trolleys,Check-in/Trolleys,Litter Picking,Bussing,Full-time
-DAA-4421,05-05-2026,GNIB,PBZ,T1/T2 Trolleys L/UL,Check-in/Trolleys,Full-time
-DAA-4422,05-05-2026,Check-in/Trolleys,CBP Pre-clearance,Gate 335,GNIB,Full-time
-DAA-4423,05-05-2026,Check-in/Trolleys,Transfer Corridor,GNIB,Bussing,Full-time
-DAA-4424,05-05-2026,GNIB,T1/T2 Trolleys L/UL,PBZ,Bussing,Full-time
-DAA-4425,05-05-2026,GNIB,PBZ,Gate 335,Check-in/Trolleys,Full-time
-DAA-4426,05-05-2026,Bussing,Dep/Trolleys,CBP Pre-clearance,Arr Customer Service,Full-time
-DAA-4427,05-05-2026,CBP Pre-clearance,GNIB,Check-in/Trolleys,Bussing,Full-time
-DAA-4428,05-05-2026,PBZ,GNIB,Dep/Trolleys,Check-in/Trolleys,Full-time
-DAA-4429,05-05-2026,GNIB,Dep/Trolleys,Check-in/Trolleys,Bussing,Full-time
-DAA-4430,05-05-2026,Transfer Corridor,GNIB,Litter Picking,Bussing,Full-time
-DAA-4431,05-05-2026,Bussing,Transfer Corridor,CBP Pre-clearance,T1/T2 Trolleys L/UL,Full-time
-DAA-4432,05-05-2026,GNIB,Litter Picking,Transfer Corridor,T1/T2 Trolleys L/UL,Full-time
-DAA-4433,05-05-2026,GNIB,Check-in/Trolleys,Transfer Corridor,Arr Customer Service,Full-time
-DAA-4434,05-05-2026,Bussing,GNIB,Dep/Trolleys,T1/T2 Trolleys L/UL,Full-time
-DAA-4435,05-05-2026,Bussing,GNIB,Transfer Corridor,PBZ,Full-time
-DAA-4436,05-05-2026,CBP Pre-clearance,Bussing,T1/T2 Trolleys L/UL,PBZ,Full-time
-DAA-4437,05-05-2026,Transfer Corridor,Bussing,GNIB,T1/T2 Trolleys L/UL,Full-time
-DAA-4438,05-05-2026,Departures,GNIB,T1/T2 Trolleys L/UL,PBZ,Full-time
-DAA-4439,05-05-2026,GNIB,Check-in/Trolleys,Transfer Corridor,PBZ,Full-time
-DAA-4440,05-05-2026,Bussing,GNIB,GNIB,Dep/Trolleys,Full-time
-DAA-4441,05-05-2026,Bussing,Dep/Trolleys,GNIB,PBZ,Full-time
-DAA-4442,05-05-2026,GNIB,Bussing,PBZ,Arr Customer Service,Full-time
-DAA-4443,05-05-2026,GNIB,Dep/Trolleys,Check-in/Trolleys,,Full-time
-DAA-4444,05-05-2026,GNIB,Dep/Trolleys,Check-in/Trolleys,,Full-time
-DAA-4445,05-05-2026,GNIB,Bussing,Dep/Trolleys,Transfer Corridor,Full-time
-DAA-4446,05-05-2026,GNIB,Check-in/Trolleys,Dep/Trolleys,,Full-time
-DAA-4447,05-05-2026,GNIB,T1/T2 Trolleys L/UL,Dep/Trolleys,Gate 335,Full-time
-DAA-4448,05-05-2026,T1/T2 Trolleys L/UL,GNIB,Dep/Trolleys,Gate 335,Full-time
-DAA-4449,05-05-2026,Dep/Trolleys,GNIB,T1/T2 Trolleys L/UL,Transfer Corridor,Full-time
-DAA-4450,05-05-2026,GNIB,T1/T2 Trolleys L/UL,Check-in/Trolleys,PBZ,Full-time
-DAA-4451,05-05-2026,GNIB,Transfer Corridor,T1/T2 Trolleys L/UL,Litter Picking,Full-time
-DAA-4452,05-05-2026,Dep/Trolleys,GNIB,T1/T2 Trolleys L/UL,Check-in/Trolleys,Full-time
-DAA-4453,05-05-2026,Check-in/Trolleys,GNIB,T1/T2 Trolleys L/UL,Litter Picking,Full-time
-DAA-4454,05-05-2026,Dep/Trolleys,Gate 335,GNIB,PBZ,Full-time
-DAA-4455,05-05-2026,Dep/Trolleys,GNIB,Gate 335,Check-in/Trolleys,Full-time
-DAA-4456,05-05-2026,Check-in/Trolleys,CBP Pre-clearance,PBZ,Gate 335,Full-time
-DAA-4457,05-05-2026,Departures,GNIB,PBZ,,Full-time
-DAA-4458,05-05-2026,Dep/Trolleys,Check-in/Trolleys,GNIB,PBZ,Full-time
-DAA-4459,05-05-2026,GNIB,Dep/Trolleys,Transfer Corridor,,Full-time
-DAA-4460,05-05-2026,Check-in/Trolleys,Gate 335,T1/T2 Trolleys L/UL,Litter Picking,Full-time
 DAA-4401,06-05-2026,Mezz Operation,,,,Full-time
 DAA-4402,06-05-2026,Mezz Operation,,,,Full-time
 DAA-4403,06-05-2026,Mezz Operation,,,,Full-time
@@ -239,3 +179,63 @@ DAA-4457,08-05-2026,Departures,GNIB,PBZ,,Full-time
 DAA-4458,08-05-2026,Dep/Trolleys,Check-in/Trolleys,GNIB,PBZ,Full-time
 DAA-4459,08-05-2026,GNIB,Dep/Trolleys,Transfer Corridor,,Full-time
 DAA-4460,08-05-2026,Check-in/Trolleys,Gate 335,T1/T2 Trolleys L/UL,Litter Picking,Full-time
+DAA-4401,09-05-2026,Mezz Operation,,,,Full-time
+DAA-4402,09-05-2026,Mezz Operation,,,,Full-time
+DAA-4403,09-05-2026,Mezz Operation,,,,Full-time
+DAA-4404,09-05-2026,Gate 335,GNIB,Check-in/Trolleys,Dep/Trolleys,Full-time
+DAA-4405,09-05-2026,Gate 335,CBP Pre-clearance,Litter Picking,GNIB,Full-time
+DAA-4406,09-05-2026,Transfer Corridor,Gate 335,Dep/Trolleys,GNIB,Full-time
+DAA-4407,09-05-2026,GNIB,Check-in/Trolleys,Transfer Corridor,Litter Picking,Full-time
+DAA-4408,09-05-2026,Transfer Corridor,Bussing,Arr Customer Service,CBP Pre-clearance,Full-time
+DAA-4409,09-05-2026,PBZ,Bussing,Litter Picking,GNIB,Full-time
+DAA-4410,09-05-2026,GNIB,Transfer Corridor,T1/T2 Trolleys L/UL,Litter Picking,Full-time
+DAA-4411,09-05-2026,Dep/Trolleys,GNIB,T1/T2 Trolleys L/UL,Check-in/Trolleys,Full-time
+DAA-4412,09-05-2026,Check-in/Trolleys,GNIB,T1/T2 Trolleys L/UL,Litter Picking,Full-time
+DAA-4413,09-05-2026,Dep/Trolleys,Gate 335,GNIB,PBZ,Full-time
+DAA-4414,09-05-2026,Dep/Trolleys,GNIB,Gate 335,Check-in/Trolleys,Full-time
+DAA-4415,09-05-2026,Check-in/Trolleys,CBP Pre-clearance,PBZ,Gate 335,Full-time
+DAA-4416,09-05-2026,Departures,GNIB,PBZ,Bussing,Full-time
+DAA-4417,09-05-2026,Dep/Trolleys,Check-in/Trolleys,GNIB,PBZ,Full-time
+DAA-4418,09-05-2026,GNIB,Dep/Trolleys,Transfer Corridor,Bussing,Full-time
+DAA-4419,09-05-2026,Check-in/Trolleys,Gate 335,T1/T2 Trolleys L/UL,Litter Picking,Full-time
+DAA-4420,09-05-2026,Dep/Trolleys,Check-in/Trolleys,Litter Picking,Bussing,Full-time
+DAA-4421,09-05-2026,GNIB,PBZ,T1/T2 Trolleys L/UL,Check-in/Trolleys,Full-time
+DAA-4422,09-05-2026,Check-in/Trolleys,CBP Pre-clearance,Gate 335,GNIB,Full-time
+DAA-4423,09-05-2026,Check-in/Trolleys,Transfer Corridor,GNIB,Bussing,Full-time
+DAA-4424,09-05-2026,GNIB,T1/T2 Trolleys L/UL,PBZ,Bussing,Full-time
+DAA-4425,09-05-2026,GNIB,PBZ,Gate 335,Check-in/Trolleys,Full-time
+DAA-4426,09-05-2026,Bussing,Dep/Trolleys,CBP Pre-clearance,Arr Customer Service,Full-time
+DAA-4427,09-05-2026,CBP Pre-clearance,GNIB,Check-in/Trolleys,Bussing,Full-time
+DAA-4428,09-05-2026,PBZ,GNIB,Dep/Trolleys,Check-in/Trolleys,Full-time
+DAA-4429,09-05-2026,GNIB,Dep/Trolleys,Check-in/Trolleys,Bussing,Full-time
+DAA-4430,09-05-2026,Transfer Corridor,GNIB,Litter Picking,Bussing,Full-time
+DAA-4431,09-05-2026,Bussing,Transfer Corridor,CBP Pre-clearance,T1/T2 Trolleys L/UL,Full-time
+DAA-4432,09-05-2026,GNIB,Litter Picking,Transfer Corridor,T1/T2 Trolleys L/UL,Full-time
+DAA-4433,09-05-2026,GNIB,Check-in/Trolleys,Transfer Corridor,Arr Customer Service,Full-time
+DAA-4434,09-05-2026,Bussing,GNIB,Dep/Trolleys,T1/T2 Trolleys L/UL,Full-time
+DAA-4435,09-05-2026,Bussing,GNIB,Transfer Corridor,PBZ,Full-time
+DAA-4436,09-05-2026,CBP Pre-clearance,Bussing,T1/T2 Trolleys L/UL,PBZ,Full-time
+DAA-4437,09-05-2026,Transfer Corridor,Bussing,GNIB,T1/T2 Trolleys L/UL,Full-time
+DAA-4438,09-05-2026,Departures,GNIB,T1/T2 Trolleys L/UL,PBZ,Full-time
+DAA-4439,09-05-2026,GNIB,Check-in/Trolleys,Transfer Corridor,PBZ,Full-time
+DAA-4440,09-05-2026,Bussing,GNIB,GNIB,Dep/Trolleys,Full-time
+DAA-4441,09-05-2026,Bussing,Dep/Trolleys,GNIB,PBZ,Full-time
+DAA-4442,09-05-2026,GNIB,Bussing,PBZ,Arr Customer Service,Full-time
+DAA-4443,09-05-2026,GNIB,Dep/Trolleys,Check-in/Trolleys,,Full-time
+DAA-4444,09-05-2026,GNIB,Dep/Trolleys,Check-in/Trolleys,,Full-time
+DAA-4445,09-05-2026,GNIB,Bussing,Dep/Trolleys,Transfer Corridor,Full-time
+DAA-4446,09-05-2026,GNIB,Check-in/Trolleys,Dep/Trolleys,,Full-time
+DAA-4447,09-05-2026,GNIB,T1/T2 Trolleys L/UL,Dep/Trolleys,Gate 335,Full-time
+DAA-4448,09-05-2026,T1/T2 Trolleys L/UL,GNIB,Dep/Trolleys,Gate 335,Full-time
+DAA-4449,09-05-2026,Dep/Trolleys,GNIB,T1/T2 Trolleys L/UL,Transfer Corridor,Full-time
+DAA-4450,09-05-2026,GNIB,T1/T2 Trolleys L/UL,Check-in/Trolleys,PBZ,Full-time
+DAA-4451,09-05-2026,GNIB,Transfer Corridor,T1/T2 Trolleys L/UL,Litter Picking,Full-time
+DAA-4452,09-05-2026,Dep/Trolleys,GNIB,T1/T2 Trolleys L/UL,Check-in/Trolleys,Full-time
+DAA-4453,09-05-2026,Check-in/Trolleys,GNIB,T1/T2 Trolleys L/UL,Litter Picking,Full-time
+DAA-4454,09-05-2026,Dep/Trolleys,Gate 335,GNIB,PBZ,Full-time
+DAA-4455,09-05-2026,Dep/Trolleys,GNIB,Gate 335,Check-in/Trolleys,Full-time
+DAA-4456,09-05-2026,Check-in/Trolleys,CBP Pre-clearance,PBZ,Gate 335,Full-time
+DAA-4457,09-05-2026,Departures,GNIB,PBZ,,Full-time
+DAA-4458,09-05-2026,Dep/Trolleys,Check-in/Trolleys,GNIB,PBZ,Full-time
+DAA-4459,09-05-2026,GNIB,Dep/Trolleys,Transfer Corridor,,Full-time
+DAA-4460,09-05-2026,Check-in/Trolleys,Gate 335,T1/T2 Trolleys L/UL,Litter Picking,Full-time
