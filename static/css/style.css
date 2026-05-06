@@ -466,9 +466,13 @@ body {
   position: relative;
   box-shadow: var(--shadow);
   border-top: 4px solid var(--info);
-  transition: box-shadow 0.15s;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease, border-top-width 0.2s ease;
 }
-.kpi-card:hover { box-shadow: var(--shadow-md); }
+.kpi-card:hover { 
+  box-shadow: var(--shadow-md), 0 12px 24px -8px rgba(0, 0, 0, 0.5);
+  transform: translateY(-6px);
+  border-top-width: 6px;
+}
 
 /* Top border colors per card */
 #kpi-annual-flights  { border-top-color: var(--info); }
@@ -492,22 +496,53 @@ body {
 .kpi-icon-bubble {
   width: 42px;
   height: 42px;
-  border-radius: 10px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  z-index: 1;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease, background-color 0.3s ease;
+}
+
+/* Glow aura effect behind the icon */
+.kpi-icon-bubble::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 100%; height: 100%;
+  background: var(--glow, inherit);
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0);
+  opacity: 0;
+  filter: blur(10px);
+  z-index: -1;
+  transition: transform 0.4s ease, opacity 0.4s ease;
 }
 
 .kpi-card:hover .kpi-icon-bubble {
-  transform: scale(1.08);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+  transform: scale(1.1) rotate(5deg);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+
+.kpi-card:hover .kpi-icon-bubble::after {
+  transform: translate(-50%, -50%) scale(1.6);
+  opacity: 0.45;
+}
+
+.kpi-card:hover .kpi-icon-bubble svg {
+  animation: kpi-bounce 0.6s ease-in-out;
+}
+
+@keyframes kpi-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
 }
 
 .kpi-body { flex: 1; }
 .kpi-value {
-  font-size: 2rem;
+  font-size: 2.2rem;
   font-weight: 700;
   color: var(--text);
   line-height: 1;
