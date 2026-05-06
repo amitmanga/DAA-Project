@@ -42,7 +42,9 @@
   --radius-sm: 6px;
   --shadow:   0 1px 3px rgba(0,0,0,0.3), 0 4px 12px rgba(0,0,0,0.4);
   --shadow-md:0 4px 16px rgba(0,0,0,0.5);
-  --transition: all 0.3s ease;
+  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --glass:    rgba(255, 255, 255, 0.03);
+  --glass-border: rgba(255, 255, 255, 0.1);
 }
 
 /* Dark Mode Color Refinements */
@@ -459,33 +461,82 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px 20px 18px;
+  padding: 24px 20px 20px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 12px;
   position: relative;
   box-shadow: var(--shadow);
   border-top: 4px solid var(--info);
-  transition: box-shadow 0.15s;
+  transition: var(--transition);
+  overflow: hidden;
 }
-.kpi-card:hover { box-shadow: var(--shadow-md); }
+.kpi-card:hover { 
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.5);
+  border-top-width: 6px;
+}
+
+[data-theme="dark"] .kpi-card {
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+}
 
 /* Top border colors per card */
-#kpi-annual-flights  { border-top-color: var(--info); }
-#kpi-avg-weekly      { border-top-color: var(--ok); }
-#kpi-peak-month      { border-top-color: var(--warn); }
-#kpi-peak-week       { border-top-color: var(--crit); }
-#kpi-util            { border-top-color: var(--purple); }
-#kpi-total-staff     { border-top-color: var(--navy-3); }
-#kpi-gate-util       { border-top-color: var(--teal); }
+#kpi-annual-flights, .st-kpi-flights, .id-kpi-flights { border-top-color: var(--info); --kpi-color: var(--info); }
+#kpi-avg-weekly, .st-kpi-covered, .id-kpi-covered { border-top-color: var(--ok); --kpi-color: var(--ok); }
+#kpi-peak-month, .st-kpi-absent, .id-kpi-absent { border-top-color: var(--warn); --kpi-color: var(--warn); }
+#kpi-peak-week, .st-kpi-coverage, .id-kpi-coverage { border-top-color: var(--crit); --kpi-color: var(--crit); }
+#kpi-util, .st-kpi-staff, .id-kpi-staff { border-top-color: var(--purple); --kpi-color: var(--purple); }
+#kpi-total-staff { border-top-color: var(--navy-4); --kpi-color: var(--navy-4); }
+#kpi-gate-util, .st-kpi-gates, .id-kpi-gates { border-top-color: var(--teal); --kpi-color: var(--teal); }
 
 .kpi-icon {
-  font-size: 2rem;
-  line-height: 1;
-  color: var(--muted);
+  width: 44px;
+  height: 44px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 10px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  color: var(--kpi-color, var(--muted));
+  position: relative;
+  transition: var(--transition);
+}
+
+.kpi-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.kpi-icon::after {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  background: var(--kpi-color);
+  opacity: 0.1;
+  border-radius: 50%;
+  filter: blur(12px);
+  z-index: -1;
+  transition: var(--transition);
+}
+
+.kpi-card:hover .kpi-icon {
+  transform: scale(1.1) rotate(-5deg);
+  background: var(--kpi-color);
+  color: #fff;
+}
+
+.kpi-card:hover .kpi-icon::after {
+  opacity: 0.25;
+  transform: scale(1.5);
 }
 
 .kpi-body { flex: 1; }
@@ -787,46 +838,94 @@ body {
   border-radius: var(--radius);
   padding: 24px 32px;
   box-shadow: var(--shadow);
+  transition: var(--transition);
 }
+
+[data-theme="dark"] .week-drilldown {
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+}
+
 .week-drilldown.hidden { display: none; }
+
 .drilldown-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--glass-border);
 }
+
 .dd-week-label {
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 700;
   color: var(--text);
+  letter-spacing: -0.01em;
 }
+
 .dd-badge {
   font-size: 0.68rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
+.dd-badge::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .dd-badge.ok   { background: var(--ok-light);   color: var(--ok); }
-.dd-badge.warn { background: var(--warn-light);  color: #92400e; }
-.dd-badge.high { background: var(--high-light);  color: #9a3412; }
-.dd-badge.crit { background: var(--crit-light);  color: #991b1b; }
+.dd-badge.warn { background: var(--warn-light);  color: var(--warn); }
+.dd-badge.high { background: var(--high-light);  color: var(--high); }
+.dd-badge.crit { background: var(--crit-light);  color: var(--crit); }
 
 .drilldown-grid {
   display: flex;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   overflow-x: auto;
-}
+  padding-bottom: 4px;
 .dd-card {
   flex: 1 1 0;
   min-width: 0;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 12px 14px;
+  padding: 16px 20px;
+  transition: var(--transition);
 }
+.dd-card:hover { transform: scale(1.02); background: var(--navy-3); }
+
+.absent-chips {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.absent-card {
+  background: rgba(239, 68, 68, 0.05);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  min-width: 140px;
+  transition: var(--transition);
+}
+
+.absent-card:hover { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.4); }
+
+.absent-card-name { font-weight: 700; font-size: 0.9rem; color: var(--text); }
+.absent-skill { font-size: 0.72rem; color: var(--muted); margin-bottom: 6px; }
+
 .dd-card-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 4px; }
 .dd-card-value { font-size: 1.4rem; font-weight: 700; color: var(--text); }
 .dd-card-value.accent { color: var(--accent); }

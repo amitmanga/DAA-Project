@@ -121,16 +121,20 @@ function renderShortTermDay() {
 function renderSTKPIs(kpis) {
   const grid = document.getElementById('st-kpis');
   const cards = [
-    { icon: '✈', label: 'Total Flights', value: kpis.total_flights.toLocaleString(), cls: '' },
-    { icon: '👥', label: 'Staff on Duty', value: kpis.staff_on_duty, cls: '' },
-    { icon: '🚫', label: 'Absent', value: kpis.absent,
-      cls: kpis.absent > 3 ? 'kpi-card--warn' : '' },
-    { icon: '🛬', label: 'Gates / Stands Active', value: kpis.gates_active, cls: '' },
-    { icon: '✅', label: 'Tasks Covered',
-      value: `${kpis.tasks_covered} / ${kpis.tasks_total}`, cls: '' },
-    { icon: '📊', label: 'Coverage %',
-      value: kpis.coverage_pct + '%',
-      cls: kpis.coverage_pct < 50 ? 'kpi-card--crit' : kpis.coverage_pct < 80 ? 'kpi-card--warn' : 'kpi-card--ok' },
+    { icon: '<svg viewBox="0 0 24 24"><path d="M17.8 19.2L16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.7 5.2c.3.4.8.5 1.3.3l.5-.3c.4-.2.6-.6.5-1.1z"/></svg>', 
+      label: 'Total Flights', value: kpis.total_flights.toLocaleString(), cls: 'st-kpi-flights' },
+    { icon: '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>', 
+      label: 'Staff on Duty', value: kpis.staff_on_duty, cls: 'st-kpi-staff' },
+    { icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>', 
+      label: 'Absent', value: kpis.absent,
+      cls: 'st-kpi-absent ' + (kpis.absent > 3 ? 'kpi-card--warn' : '') },
+    { icon: '<svg viewBox="0 0 24 24"><path d="M4 19h16"></path><path d="M19 19l-7 -14l-7 14"></path><path d="M12 15l3 -3h-2v-4h-2v4h-2z"></path></svg>', 
+      label: 'Gates / Stands Active', value: kpis.gates_active, cls: 'st-kpi-gates' },
+    { icon: '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>', 
+      label: 'Tasks Covered', value: `${kpis.tasks_covered} / ${kpis.tasks_total}`, cls: 'st-kpi-covered' },
+    { icon: '<svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>', 
+      label: 'Coverage %', value: kpis.coverage_pct + '%',
+      cls: 'st-kpi-coverage ' + (kpis.coverage_pct < 50 ? 'kpi-card--crit' : kpis.coverage_pct < 80 ? 'kpi-card--warn' : 'kpi-card--ok') },
   ];
   grid.innerHTML = cards.map(c => `
     <div class="kpi-card ${c.cls}">
