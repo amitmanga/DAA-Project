@@ -120,21 +120,38 @@ function renderShortTermDay() {
 // ── KPI Cards ──────────────────────────────────────────────────
 function renderSTKPIs(kpis) {
   const grid = document.getElementById('st-kpis');
+  const absentCls = kpis.absent > 3 ? 'kpi-card--warn' : '';
+  const covPct = kpis.coverage_pct;
+  const covCls = covPct < 50 ? 'kpi-card--crit' : covPct < 80 ? 'kpi-card--warn' : 'kpi-card--ok';
   const cards = [
-    { icon: '✈', label: 'Total Flights', value: kpis.total_flights.toLocaleString(), cls: '' },
-    { icon: '👥', label: 'Staff on Duty', value: kpis.staff_on_duty, cls: '' },
-    { icon: '🚫', label: 'Absent', value: kpis.absent,
-      cls: kpis.absent > 3 ? 'kpi-card--warn' : '' },
-    { icon: '🛬', label: 'Gates / Stands Active', value: kpis.gates_active, cls: '' },
-    { icon: '✅', label: 'Tasks Covered',
-      value: `${kpis.tasks_covered} / ${kpis.tasks_total}`, cls: '' },
-    { icon: '📊', label: 'Coverage %',
-      value: kpis.coverage_pct + '%',
-      cls: kpis.coverage_pct < 50 ? 'kpi-card--crit' : kpis.coverage_pct < 80 ? 'kpi-card--warn' : 'kpi-card--ok' },
+    {
+      iconHtml: `<div class="kpi-icon-bubble" style="background:rgba(59,130,246,0.12);border:1.5px solid rgba(59,130,246,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 19-7z"/></svg></div>`,
+      label: 'Total Flights', value: kpis.total_flights.toLocaleString(), cls: ''
+    },
+    {
+      iconHtml: `<div class="kpi-icon-bubble" style="background:rgba(139,92,246,0.12);border:1.5px solid rgba(139,92,246,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>`,
+      label: 'Staff on Duty', value: kpis.staff_on_duty, cls: ''
+    },
+    {
+      iconHtml: `<div class="kpi-icon-bubble" style="background:rgba(239,68,68,0.12);border:1.5px solid rgba(239,68,68,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>`,
+      label: 'Absent', value: kpis.absent, cls: absentCls
+    },
+    {
+      iconHtml: `<div class="kpi-icon-bubble" style="background:rgba(14,165,233,0.12);border:1.5px solid rgba(14,165,233,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></div>`,
+      label: 'Gates / Stands Active', value: kpis.gates_active, cls: ''
+    },
+    {
+      iconHtml: `<div class="kpi-icon-bubble" style="background:rgba(16,185,129,0.12);border:1.5px solid rgba(16,185,129,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`,
+      label: 'Tasks Covered', value: `${kpis.tasks_covered} / ${kpis.tasks_total}`, cls: ''
+    },
+    {
+      iconHtml: `<div class="kpi-icon-bubble" style="background:rgba(249,115,22,0.12);border:1.5px solid rgba(249,115,22,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div>`,
+      label: 'Coverage %', value: covPct + '%', cls: covCls
+    },
   ];
   grid.innerHTML = cards.map(c => `
     <div class="kpi-card ${c.cls}">
-      <div class="kpi-icon">${c.icon}</div>
+      <div class="kpi-icon">${c.iconHtml}</div>
       <div class="kpi-body">
         <div class="kpi-value">${c.value}</div>
         <div class="kpi-label">${c.label}</div>

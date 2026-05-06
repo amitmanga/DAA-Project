@@ -486,6 +486,23 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-bottom: 4px;
+}
+
+.kpi-icon-bubble {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.kpi-card:hover .kpi-icon-bubble {
+  transform: scale(1.08);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
 }
 
 .kpi-body { flex: 1; }
