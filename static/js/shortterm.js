@@ -638,7 +638,7 @@ async function renderSTOptimization(container) {
   container.innerHTML = `<div class="panel mt-20"><div class="loading-spinner"><div class="spinner"></div><span>Loading optimiser…</span></div></div>`;
   let constraints = {};
   try {
-    const r = await fetch('/api/short-term/constraints');
+    const r = await fetch(`/api/short-term/constraints?date=${ST_CURRENT_DATE}`);
     constraints = await r.json();
   } catch (_) {}
 

@@ -1549,6 +1549,8 @@ _st_custom_constraints = {
     ]
 }
 
+_st_custom_constraints_by_date = {}
+
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -1976,6 +1978,12 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
             pe_map   = prev_shift_ends or {}
             use_mip  = custom_constraints.get('use_mip', True)
 
+            permitted_shifts = custom_constraints.get('permitted_shifts')
+            if permitted_shifts:
+                permitted_starts = [int(p[0]) for p in permitted_shifts]
+            else:
+                permitted_starts = [0, 180, 420, 720]
+
             roster_result = _roster_generate(
                 demand_windows  = dw_list,
                 staff_list      = [
@@ -1994,7 +2002,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                     'b2_duration_mins': custom_constraints.get('b2_duration_mins', 60),
                     'max_shift_mins':   custom_constraints.get('shift_duration_hrs', 12) * 60,
                     'min_rest_mins':    custom_constraints.get('min_rest_mins', 660),
-                    'permitted_starts': [0, 180, 420, 720],
+                    'permitted_starts': permitted_starts,
                 },
                 prev_shift_ends = pe_map,
                 use_mip         = use_mip,
@@ -3614,11 +3622,12 @@ def _get_short_term_schedule(date_str, preserve_manual_assigns=True):
     optimized consistently with the intraday view.
     """
     man = _manual_assigns.get(date_str, {}) if preserve_manual_assigns else {}
+    custom_constraints = _st_custom_constraints_by_date.get(date_str, _st_custom_constraints)
     return optimize_day(
         date_str,
         manual_assigns=man,
         prefer_early=True,
-        custom_constraints=_st_custom_constraints,
+        custom_constraints=custom_constraints,
     )
 
 
@@ -3756,14 +3765,17 @@ def st_apply_rec():
 @app.route('/api/short-term/constraints', methods=['GET', 'POST'])
 def st_constraints():
     """Get or update short-term planning constraints."""
-    global _st_custom_constraints
+    global _st_custom_constraints, _st_custom_constraints_by_date
 
     if request.method == 'POST':
         body = request.get_json(force=True) or {}
         date = body.get('date') # can be specific date or global
         next_constraints = {k: v for k, v in body.items() if k != 'date'}
-        _st_custom_constraints.update(next_constraints)
+        
         if date:
+            if date not in _st_custom_constraints_by_date:
+                _st_custom_constraints_by_date[date] = dict(_st_custom_constraints)
+            _st_custom_constraints_by_date[date].update(next_constraints)
             # Re-optimise from the current constraints, not from previously pinned
             # recommendation overrides, so "Update Schedule" performs a full reallocation.
             _manual_assigns.pop(date, None)
@@ -3771,19 +3783,24 @@ def st_constraints():
             if 'error' in result:
                 return jsonify(result), 404
             return jsonify(result)
-        return jsonify(_st_custom_constraints)
+        else:
+            _st_custom_constraints.update(next_constraints)
+            return jsonify(_st_custom_constraints)
+
+    date = request.args.get('date')
+    base = _st_custom_constraints_by_date.get(date, _st_custom_constraints) if date else _st_custom_constraints
 
     res = {
-        'tt_t1_t2': _st_custom_constraints.get('tt_t1_t2', 15),
-        'tt_skill_switch': _st_custom_constraints.get('tt_skill_switch', 10),
-        'allow_overlap': _st_custom_constraints.get('allow_overlap', False),
-        'allow_overlaps': _st_custom_constraints.get('allow_overlaps', _st_custom_constraints.get('allow_overlap', False)),
-        'use_primary_first': _st_custom_constraints.get('use_primary_first', True),
-        'shift_duration_hrs': _st_custom_constraints.get('shift_duration_hrs', 12),
-        'b1_duration_mins': _st_custom_constraints.get('b1_duration_mins', 30),
-        'b2_duration_mins': _st_custom_constraints.get('b2_duration_mins', 60),
-        'leave_types_excluded': _st_custom_constraints.get('leave_types_excluded', ["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"]),
-        'permitted_shifts': _st_custom_constraints.get('permitted_shifts')
+        'tt_t1_t2': base.get('tt_t1_t2', 15),
+        'tt_skill_switch': base.get('tt_skill_switch', 10),
+        'allow_overlap': base.get('allow_overlap', False),
+        'allow_overlaps': base.get('allow_overlaps', base.get('allow_overlap', False)),
+        'use_primary_first': base.get('use_primary_first', True),
+        'shift_duration_hrs': base.get('shift_duration_hrs', 12),
+        'b1_duration_mins': base.get('b1_duration_mins', 30),
+        'b2_duration_mins': base.get('b2_duration_mins', 60),
+        'leave_types_excluded': base.get('leave_types_excluded', ["Annual Leave", "Paternity Leave", "Jury Duty", "Sick Leave", "Training"]),
+        'permitted_shifts': base.get('permitted_shifts')
     }
     return jsonify(res)
 
@@ -3976,11 +3993,18 @@ def intraday_optimise():
                     for s in on_duty
                 ]
 
+                permitted_shifts = _intraday_custom_constraints.get('permitted_shifts')
+                if permitted_shifts:
+                    permitted_starts = [int(p[0]) for p in permitted_shifts]
+                else:
+                    permitted_starts = [0, 180, 420, 720]
+
                 roster_constraints = {
                     'shift_duration_hrs': _intraday_custom_constraints.get('shift_duration_hrs', 12),
                     'min_rest_mins':      int(min_rest_hrs * 60),
                     'b1_duration_mins':   _intraday_custom_constraints.get('b1_duration_mins', 30),
                     'b2_duration_mins':   _intraday_custom_constraints.get('b2_duration_mins', 60),
+                    'permitted_starts':   permitted_starts,
                 }
 
                 rr = _roster_generate(
@@ -4537,7 +4561,7 @@ def st_optimise():
       shift_duration_hrs, b1_duration_mins, b2_duration_mins,
       leave_types_excluded, permitted_shifts
     """
-    global _st_custom_constraints
+    global _st_custom_constraints, _st_custom_constraints_by_date
 
     body = request.get_json(force=True) or {}
     date = (body.get('date') or '').strip()
@@ -4553,9 +4577,15 @@ def st_optimise():
         'shift_duration_hrs', 'b1_duration_mins', 'b2_duration_mins',
         'leave_types_excluded', 'permitted_shifts',
     ]
+    if date not in _st_custom_constraints_by_date:
+        _st_custom_constraints_by_date[date] = dict(_st_custom_constraints)
+        
     for k in tactical_keys:
         if k in body:
-            _st_custom_constraints[k] = body[k]
+            _st_custom_constraints_by_date[date][k] = body[k]
+
+    # Get the active constraints for this date
+    active_constraints = _st_custom_constraints_by_date[date]
 
     # ── 2. Re-run tactical schedule (clears manual overrides for fresh plan) ──
     _manual_assigns.pop(date, None)
@@ -4595,11 +4625,18 @@ def st_optimise():
                 for s in on_duty
             ]
 
+            permitted_shifts = active_constraints.get('permitted_shifts')
+            if permitted_shifts:
+                permitted_starts = [int(p[0]) for p in permitted_shifts]
+            else:
+                permitted_starts = [0, 180, 420, 720]
+
             roster_constraints = {
-                'shift_duration_hrs': _st_custom_constraints.get('shift_duration_hrs', 12),
+                'shift_duration_hrs': active_constraints.get('shift_duration_hrs', 12),
                 'min_rest_mins':      int(min_rest_hrs * 60),
-                'b1_duration_mins':   _st_custom_constraints.get('b1_duration_mins', 30),
-                'b2_duration_mins':   _st_custom_constraints.get('b2_duration_mins', 60),
+                'b1_duration_mins':   active_constraints.get('b1_duration_mins', 30),
+                'b2_duration_mins':   active_constraints.get('b2_duration_mins', 60),
+                'permitted_starts':   permitted_starts,
             }
 
             rr = _roster_generate(
@@ -4659,7 +4696,7 @@ def st_optimise():
     enforce_break_conflicts(result)
     result['roster'] = roster_info
     result['constraints_applied'] = {
-        k: _st_custom_constraints.get(k) for k in tactical_keys
+        k: active_constraints.get(k) for k in tactical_keys
     }
     return jsonify(result)
 
