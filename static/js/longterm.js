@@ -1356,14 +1356,12 @@ function renderRosterWeek(data, weekIdx) {
     return 'rdc-gap-zero';
   }
 
-  // Build skill rows — three sub-rows per skill: Required / Available / Gap
+  // Build skill rows — single row per skill: Required only
   let rowsHtml = skills.map(sk => {
     const color = SKILL_COLOR[sk] || '#888';
 
-    // Compute week totals for the summary column
-    const weekReq   = days.reduce((s, d) => s + (d.skill_fte[sk]   || 0), 0);
-    const weekAvail = days.reduce((s, d) => s + (d.skill_avail[sk] || 0), 0);
-    const weekGap   = weekAvail - weekReq;
+    // Compute week totals (required only)
+    const weekReq = days.reduce((s, d) => s + (d.skill_fte[sk] || 0), 0);
 
     // Req cells
     const reqCells = days.map(d => {
@@ -1374,35 +1372,13 @@ function renderRosterWeek(data, weekIdx) {
       return `<td class="roster-demand-cell ${cellCls} ${covCls}" title="${sk} Req: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
     }).join('');
 
-    // Avail cells
-    const availCells = days.map(d => {
-      const v = d.skill_avail[sk] || 0;
-      const covCls = isCurrent ? `rdc-cov-${d.coverage}` : '';
-      return `<td class="roster-demand-cell rdc-avail ${covCls}" title="${sk} Avail: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
-    }).join('');
-
-    // Gap cells
-    const gapCells = days.map(d => {
-      const g = d.skill_gap[sk] || 0;
-      const covCls = isCurrent ? `rdc-cov-${d.coverage}` : '';
-      return `<td class="roster-demand-cell ${gapCls(g)} ${covCls}" title="${sk} Gap: ${g.toFixed(2)}">${g > 0 ? '+' + g.toFixed(1) : g === 0 ? '0' : g.toFixed(1)}</td>`;
-    }).join('');
-
     return `
-      <tr class="rd-skill-group-start">
-        <td class="rdth-role-cell" rowspan="3" style="border-right:2px solid var(--border)">
+      <tr class="rd-skill-row">
+        <td class="rdth-role-cell" style="border-right:2px solid var(--border)">
           <span class="rd-skill-dot" style="background:${color}"></span>${sk}
         </td>
         ${reqCells}
-        <td class="rdc-weekly rdc-req-lbl" title="Weekly Required">Req ${weekReq.toFixed(1)}</td>
-      </tr>
-      <tr class="rd-avail-row">
-        ${availCells}
-        <td class="rdc-weekly rdc-avail-lbl" title="Weekly Available">Avl ${weekAvail.toFixed(1)}</td>
-      </tr>
-      <tr class="rd-gap-row">
-        ${gapCells}
-        <td class="rdc-weekly ${gapCls(weekGap)}" title="Weekly Gap">${weekGap > 0 ? '+' : ''}${weekGap.toFixed(1)}</td>
+        <td class="rdc-weekly rdc-req-lbl" title="Weekly Required">${weekReq.toFixed(1)}</td>
       </tr>`;
   }).join('');
 
@@ -1412,7 +1388,7 @@ function renderRosterWeek(data, weekIdx) {
   const totalsGap   = days.map(d => d.total_gap);
   const grandReq    = totalsReq.reduce((s, v) => s + v, 0);
   const grandAvail  = totalsAvail.reduce((s, v) => s + v, 0);
-  const grandGap    = grandAvail - grandReq;
+  const grandGap    = totalsGap.reduce((s, v) => s + v, 0);
 
   rowsHtml += `
     <tr class="rd-total-row rd-sep-row">
