@@ -974,10 +974,11 @@ async function loadSkillCharts() {
   destroyChart('absence-bar');
   const months     = ['Jan 2026','Feb 2026','Mar 2026','Apr 2026','May 2026','Jun 2026',
                       'Jul 2026','Aug 2026','Sep 2026','Oct 2026','Nov 2026','Dec 2026'];
-  const absDatasets = skills.map(sk => ({
-    label: sk,
-    data: months.map(m => (d.monthly_absent[m] || {})[sk] || 0),
-    backgroundColor: SKILL_COLOR[sk] || '#888',
+  const leaveColors = ['#e11d48', '#d97706', '#059669', '#2563eb', '#7c3aed', '#db2777', '#475569'];
+  const absDatasets = (d.leave_types || []).map((lt, i) => ({
+    label: lt,
+    data: months.map(m => (d.monthly_absent[m] || {})[lt] || 0),
+    backgroundColor: leaveColors[i % leaveColors.length],
     stack: 'abs', borderRadius: 2,
   }));
   const ctx2 = document.getElementById('absence-bar-chart').getContext('2d');
@@ -1184,10 +1185,11 @@ function renderMergedAbsenceBar(d) {
   const months = ['Jan 2026','Feb 2026','Mar 2026','Apr 2026','May 2026','Jun 2026',
                   'Jul 2026','Aug 2026','Sep 2026','Oct 2026','Nov 2026','Dec 2026'];
   const labels = months.map(m => m.replace(' 2026',''));
-  const datasets = (d.skills || []).map(sk => ({
-    label: sk,
-    data: months.map(m => (d.monthly_absent[m] || {})[sk] || 0),
-    backgroundColor: SKILL_COLOR[sk] || DAA.muted,
+  const leaveColors = ['#e11d48', '#d97706', '#059669', '#2563eb', '#7c3aed', '#db2777', '#475569'];
+  const datasets = (d.leave_types || []).map((lt, i) => ({
+    label: lt,
+    data: months.map(m => (d.monthly_absent[m] || {})[lt] || 0),
+    backgroundColor: leaveColors[i % leaveColors.length],
     stack: 'abs', borderRadius: 2,
   }));
   const ctx = document.getElementById('merged-absence-bar').getContext('2d');

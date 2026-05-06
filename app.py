@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request, render_template
 import csv
 import json
+import math
 import os
 import re
 from datetime import datetime, timedelta
@@ -99,6 +100,75 @@ SKILL_MAP = {
 def normalize_skill(sk):
     sk = sk.strip()
     return SKILL_MAP.get(sk, sk)
+
+def _leave_days_for_month(row, month_start, month_end):
+    """Return this row's leave-day contribution within one calendar month."""
+    d_from = parse_date(row.get('DATE FROM', ''))
+    d_to = parse_date(row.get('DATE TO', ''))
+    if not d_from or not d_to:
+        return 0
+    if d_to < d_from:
+        d_from, d_to = d_to, d_from
+
+    overlap_start = max(d_from, month_start)
+    overlap_end = min(d_to, month_end)
+    if overlap_start > overlap_end:
+        return 0
+
+    total_calendar_days = (d_to - d_from).days + 1
+    overlap_calendar_days = (overlap_end - overlap_start).days + 1
+
+    try:
+        duration_days = float(row.get('DURATION DAYS', '') or 0)
+    except (TypeError, ValueError):
+        duration_days = 0
+
+    if duration_days > 0 and total_calendar_days > 0:
+        return duration_days * (overlap_calendar_days / total_calendar_days)
+    return overlap_calendar_days
+
+def get_monthly_absence_impact():
+    """
+    Calculate leave days per month, grouped by LEAVE TYPE.
+
+    DATE FROM/DATE TO define the calendar span, including Monday-Sunday. The
+    CSV's DURATION DAYS is the actual leave quantity, so cross-month records are
+    apportioned by calendar-day overlap and category totals are returned as
+    whole-day counts for charting.
+    """
+    absences = read_csv('Staff_absence_schedule.csv')
+    monthly_absent = defaultdict(lambda: defaultdict(float))
+    leave_types_set = set()
+    # Assume 2026 based on data, or dynamic based on now
+    current_year = 2026
+    
+    for month in range(1, 13):
+        month_start = datetime(current_year, month, 1)
+        if month == 12:
+            month_end = datetime(current_year, 12, 31)
+        else:
+            month_end = datetime(current_year, month + 1, 1) - timedelta(days=1)
+        month_key = month_start.strftime('%b %Y')
+
+        for a in absences:
+            leave_days = _leave_days_for_month(a, month_start, month_end)
+            if leave_days <= 0:
+                continue
+
+            leave_type = a.get('LEAVE TYPE', 'Unknown').strip()
+            if not leave_type:
+                leave_type = 'Unknown'
+
+            monthly_absent[month_key][leave_type] += leave_days
+            leave_types_set.add(leave_type)
+                
+    # Chart consumers expect simple whole-day counts, not decimal FTE-like values.
+    int_absent = defaultdict(dict)
+    for month, lt_dict in monthly_absent.items():
+        for lt, val in lt_dict.items():
+            int_absent[month][lt] = int(math.ceil(val))
+            
+    return dict(int_absent), sorted(list(leave_types_set))
 
 # ---------------------------------------------------------------------------
 # Per-movement staff-minutes derived directly from Config.csv task rules.
@@ -786,32 +856,13 @@ def lt_skill_breakdown():
             if sk_name:
                 total_by_skill[sk_name] += 1
 
-    # Monthly absent days per all qualified skills
-    monthly_absent = defaultdict(lambda: defaultdict(int))
-    for emp, windows in absence_map.items():
-        emp_data = next((s for s in staff if s['EMPLOYEE NUMBER'] == emp), None)
-        if not emp_data:
-            continue
-        
-        # Collect all skills for this employee
-        emp_skills = []
-        for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
-            sk_val = emp_data.get(sk_col, '').strip()
-            if sk_val:
-                emp_skills.append(normalize_skill(sk_val))
-
-        for (f, t) in windows:
-            d = f
-            while d <= t:
-                if d.year == 2026:
-                    for sk in emp_skills:
-                        monthly_absent[d.strftime('%b %Y')][sk] += 1
-                d += timedelta(days=1)
-
     skills = sorted(total_by_skill.keys())
+    monthly_absent, leave_types = get_monthly_absence_impact()
+    
     return jsonify({
         'total_by_skill': dict(total_by_skill),
-        'monthly_absent': {k: dict(v) for k, v in monthly_absent.items()},
+        'monthly_absent': monthly_absent,
+        'leave_types': leave_types,
         'skills': skills,
     })
 
@@ -943,36 +994,23 @@ def lt_merged_gap_skill():
 
     # Historical monthly absences (from original skills API)
     staff = load_staff()
-    absences = load_absences()
-    absence_map = defaultdict(list)
-    for a in absences:
-        emp = a['EMPLOYEE NUMBER'].strip()
-        d_from = parse_date(a.get('DATE FROM', ''))
-        d_to = parse_date(a.get('DATE TO', ''))
-        if d_from and d_to:
-            absence_map[emp].append((d_from, d_to))
+    
+    total_by_skill = defaultdict(int)
+    for s in staff:
+        total_by_skill[s.get('Skill1', '').strip()] += 1
+
+    monthly_absent, leave_types = get_monthly_absence_impact()
 
     total_by_skill = defaultdict(int)
     for s in staff:
         total_by_skill[s.get('Skill1', '').strip()] += 1
 
-    monthly_absent = defaultdict(lambda: defaultdict(int))
-    for emp, windows in absence_map.items():
-        emp_data = next((s for s in staff if s['EMPLOYEE NUMBER'] == emp), None)
-        if not emp_data: continue
-        sk = normalize_skill(emp_data.get('Skill1', '').strip())
-        for (f, t) in windows:
-            curr = f
-            while curr <= t:
-                if curr.year == 2026:
-                    monthly_absent[curr.strftime('%b %Y')][sk] += 1
-                curr += timedelta(days=1)
-
     return jsonify({
         'weekly': weekly_data,
         'skill_summary': skill_summary,
         'total_by_skill': dict(total_by_skill),
-        'monthly_absent': {k: dict(v) for k, v in monthly_absent.items()},
+        'monthly_absent': monthly_absent,
+        'leave_types': leave_types,
         'skills': all_skills
     })
 
