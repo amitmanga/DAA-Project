@@ -4,3 +4,4 @@ ortools
 pulp
 scipy
 numpy
+openpyxl

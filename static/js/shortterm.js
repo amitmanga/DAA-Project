@@ -10,6 +10,9 @@ const ST = {
 };
 
 const ST_SKILL_COLOR = {
+  'checkin': '#2563EB', 'security': '#DC2626', 'cbp': '#7C3AED',
+  'lounge': '#059669', 'boarding': '#D97706', 'immigration': '#0891B2',
+  'baggage': '#4B5563',
   'GNIB': '#3498DB', 'CBP Pre-clearance': '#9B59B6', 'Bussing': '#E8850A',
   'PBZ': '#2ECC71', 'Mezz Operation': '#1ABC9C', 'Litter Picking': '#E74C3C',
   'Ramp / Marshalling': '#F39C12', 'Arr Customer Service': '#5DADE2',
@@ -92,7 +95,7 @@ function renderShortTermDay() {
     <div id="st-alerts-panel"></div>
     <!-- Sub-tabs -->
     <div class="sub-tabs" style="margin-top:20px">
-      <button class="sub-tab ${ST_ACTIVE_TAB==='flights'?'active':''}" data-sttab="flights">✈ Flights &amp; Tasks</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='flights'?'active':''}" data-sttab="flights">Flights &amp; PAX Demand</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff'?'active':''}" data-sttab="staff">👥 Staff List</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='roster-board'?'active':''}" data-sttab="roster-board">📋 Roster Board</button>
@@ -142,7 +145,7 @@ function renderSTKPIs(kpis) {
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#10b981;background:rgba(16,185,129,0.12);border:1.5px solid rgba(16,185,129,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`,
-      label: 'Tasks Covered', value: `${kpis.tasks_covered} / ${kpis.tasks_total}`, cls: ''
+      label: 'PAX Windows Covered', value: `${kpis.demand_windows_covered ?? kpis.tasks_covered} / ${kpis.demand_windows_total ?? kpis.tasks_total}`, cls: ''
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#f97316;background:rgba(249,115,22,0.12);border:1.5px solid rgba(249,115,22,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></div>`,
@@ -973,7 +976,7 @@ function renderSTFlightsTab(container) {
   container.innerHTML = `
     <div class="panel mt-16">
       <div class="panel-title-row">
-        <span class="panel-title">Flight Schedule &amp; Task Assignments</span>
+        <span class="panel-title">Flight Schedule &amp; PAX Demand Coverage</span>
         <div class="filter-row">
           <input class="search-input" id="st-flight-search" placeholder="Search flight / route / airline…" />
           <select id="st-status-filter" class="select-input">

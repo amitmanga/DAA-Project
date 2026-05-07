@@ -62,6 +62,7 @@ app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TASK_SLOT_MINS = 30
+PAX_SLOT_MINS = 15
 
 def read_csv(filename):
     path = os.path.join(BASE_DIR, 'data', filename)
@@ -97,9 +98,20 @@ SKILL_MAP = {
     'Transfer Corridor':   'Transfer Corridor'
 }
 
+PAX_WORK_SKILL_MAP = {
+    'checkin': 'checkin',
+    'security': 'security',
+    'cbp': 'cbp',
+    'lounge': 'lounge',
+    'boarding': 'boarding',
+    'immigration': 'immigration',
+    'baggage': 'baggage',
+}
+
 def normalize_skill(sk):
     sk = sk.strip()
-    return SKILL_MAP.get(sk, sk)
+    low = sk.lower()
+    return PAX_WORK_SKILL_MAP.get(low, SKILL_MAP.get(sk, sk))
 
 def _leave_days_for_month(row, month_start, month_end):
     """Return this row's leave-day contribution within one calendar month."""
@@ -240,6 +252,253 @@ FIXED_FTE_TOTAL = sum(FIXED_FTE.values())  # = 6.58 FTE
 HISTORICAL_AVG_STAFF_MINS = 763_301.0
 BASELINE_STAFF = 60
 NET_WORKING_MINS_PER_WEEK = 630 * 5  # 3150 mins per FTE per week
+PAX_SLOTS_PER_FTE_WEEK = NET_WORKING_MINS_PER_WEEK / PAX_SLOT_MINS
+
+AIRCRAFT_PAX_CAPACITY = {
+    'E190': 100,
+    'A319': 140,
+    'A320': 180,
+    'A321': 220,
+    'B737': 189,
+    'B738': 189,
+    'B38M': 197,
+    'B752': 220,
+    'B767': 260,
+    'A330': 300,
+    'A332': 260,
+    'A333': 300,
+    'A350': 325,
+    'B787': 290,
+    'B789': 290,
+    'B777': 365,
+}
+
+FLIGHT_CATEGORY_PAX_CAPACITY = {
+    'Domestic': 160,
+    'International Short-Haul': 180,
+    'International Long-Haul': 310,
+    'Transatlantic CBP': 310,
+    'Cargo': 0,
+}
+
+PAX_CONFIG_CACHE = None
+PAX_PROFILE_CACHE = None
+
+
+def _pax_work_from_col(col_name):
+    parts = str(col_name or '').strip().split('_', 1)
+    if len(parts) != 2:
+        return ''
+    return parts[1].strip().lower()
+
+
+def load_pax_config():
+    """Return {pax_column: passengers handled by one FTE in one 15-min slot}."""
+    global PAX_CONFIG_CACHE
+    if PAX_CONFIG_CACHE is not None:
+        return PAX_CONFIG_CACHE
+
+    path = os.path.join(BASE_DIR, 'data', 'PAX Config.xlsx')
+    if not os.path.exists(path):
+        PAX_CONFIG_CACHE = {}
+        return PAX_CONFIG_CACHE
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        ws = wb.active
+        headers = [str(v).strip() if v is not None else '' for v in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
+        values = next(ws.iter_rows(min_row=2, max_row=2, values_only=True), [])
+        cfg = {}
+        for h, v in zip(headers, values):
+            if not h:
+                continue
+            try:
+                rate = float(v or 0)
+            except (TypeError, ValueError):
+                rate = 0.0
+            if rate > 0:
+                cfg[h] = rate
+        PAX_CONFIG_CACHE = cfg
+    except Exception:
+        PAX_CONFIG_CACHE = {}
+    return PAX_CONFIG_CACHE
+
+
+def load_pax_profile():
+    """Return passenger profile rows keyed by their source workbook date."""
+    global PAX_PROFILE_CACHE
+    if PAX_PROFILE_CACHE is not None:
+        return PAX_PROFILE_CACHE
+
+    path = os.path.join(BASE_DIR, 'data', 'short term PAX.xlsx')
+    if not os.path.exists(path):
+        PAX_PROFILE_CACHE = {'dates': [], 'rows_by_date': {}}
+        return PAX_PROFILE_CACHE
+
+    rows_by_date = defaultdict(list)
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        ws = wb.active
+        headers = [str(v).strip() if v is not None else '' for v in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
+        for vals in ws.iter_rows(min_row=2, values_only=True):
+            row = dict(zip(headers, vals))
+            ts = row.get('Timestamp')
+            if not isinstance(ts, datetime):
+                continue
+            rows_by_date[ts.date()].append(row)
+    except Exception:
+        rows_by_date = defaultdict(list)
+
+    dates = sorted(rows_by_date.keys())
+    PAX_PROFILE_CACHE = {'dates': dates, 'rows_by_date': dict(rows_by_date)}
+    return PAX_PROFILE_CACHE
+
+
+def _parse_any_date(date_str):
+    for fmt in ('%Y-%m-%d', '%d-%b-%y', '%d-%b-%Y', '%d-%m-%Y', '%d-%m-%y'):
+        try:
+            return datetime.strptime(str(date_str).strip(), fmt)
+        except ValueError:
+            pass
+    return None
+
+
+def _pax_source_date_for(requested_dt):
+    """Map current D..D+3 dates to the four dates provided in the PAX workbook."""
+    profile = load_pax_profile()
+    dates = profile.get('dates', [])
+    if not dates:
+        return None
+
+    req_date = requested_dt.date()
+    if req_date in dates:
+        return req_date
+
+    today = datetime.now().date()
+    offset = (req_date - today).days
+    if 0 <= offset < len(dates):
+        return dates[offset]
+    return None
+
+
+def _active_flights_for_pax_window(processed_flights, terminal, start_mins, end_mins):
+    fns = []
+    stands_map = get_stands_map()
+    for pf in processed_flights:
+        si = _stand_info(pf.get('gate', ''), stands_map)
+        if terminal != 'ALL' and si.get('terminal') != terminal:
+            continue
+        t = pf.get('time_mins')
+        if t is None:
+            continue
+        if start_mins - 30 <= t < end_mins + 30:
+            fns.append(pf.get('flight_no', ''))
+    return [fn for fn in fns if fn]
+
+
+def build_pax_demand_tasks(date_str, processed_flights=None, current_time_mins=None):
+    """Build 15-minute passenger-handling demand windows from the PAX workbooks."""
+    requested_dt = _parse_any_date(date_str)
+    if requested_dt is None:
+        return []
+
+    source_date = _pax_source_date_for(requested_dt)
+    if source_date is None:
+        return []
+
+    cfg = load_pax_config()
+    profile = load_pax_profile()
+    rows = profile.get('rows_by_date', {}).get(source_date, [])
+    if not cfg or not rows:
+        return []
+
+    tasks = []
+    processed_flights = processed_flights or []
+    for row in sorted(rows, key=lambda r: r.get('Timestamp')):
+        ts = row.get('Timestamp')
+        if not isinstance(ts, datetime):
+            continue
+        start_mins = ts.hour * 60 + ts.minute
+        end_mins = min(1440, start_mins + PAX_SLOT_MINS)
+
+        for col, rate in cfg.items():
+            try:
+                pax = float(row.get(col) or 0)
+            except (TypeError, ValueError):
+                pax = 0.0
+            if pax <= 0 or rate <= 0:
+                continue
+
+            work = _pax_work_from_col(col)
+            skill = PAX_WORK_SKILL_MAP.get(work, work)
+            terminal = col.split('_', 1)[0] if '_' in col else 'ALL'
+            needed = max(1, int(math.ceil(pax / rate)))
+            cap = max(needed, int(math.ceil(needed * 1.5)))
+            flights_covered = _active_flights_for_pax_window(processed_flights, terminal, start_mins, end_mins)
+            task = {
+                'id':              f"PAX_{col}_{start_mins}",
+                'flight_no':       flights_covered[0] if flights_covered else 'PAX',
+                'task':            f"{terminal} {work.title()} PAX",
+                'role':            skill,
+                'skill':           skill,
+                'priority':        'Critical' if work in ('security', 'immigration', 'cbp') else 'High',
+                'start_mins':      start_mins,
+                'end_mins':        end_mins,
+                'start':           mins_to_time(start_mins),
+                'end':             mins_to_time(end_mins),
+                'staff_needed':    needed,
+                'staff_capacity':  cap,
+                'assigned':        [],
+                'alert':           None,
+                'time_mins':       start_mins,
+                'flights_covered': flights_covered,
+                'terminal':        terminal,
+                'pier':            'ALL',
+                'sharing_mode':    'pax_15min',
+                'passengers':      int(round(pax)),
+                'pax_rate':        rate,
+                'time_window':     f"{mins_to_time(start_mins)}-{mins_to_time(end_mins)}",
+                'source_date':     source_date.isoformat(),
+            }
+            if current_time_mins is not None and end_mins <= current_time_mins:
+                task['is_past'] = True
+            tasks.append(task)
+
+    return tasks
+
+
+def _load_factor(row):
+    raw = str(row.get('Avg_Load_Factor_Pct', '') or '').strip().replace('%', '')
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        val = 85.0
+    if val > 1:
+        val /= 100.0
+    return max(0.0, min(1.0, val))
+
+
+def _aircraft_capacity(row):
+    fam = str(row.get('Aircraft_Family', '') or row.get('aircraft_type', '') or '').strip().upper()
+    if fam in AIRCRAFT_PAX_CAPACITY:
+        return AIRCRAFT_PAX_CAPACITY[fam]
+    for key, cap in AIRCRAFT_PAX_CAPACITY.items():
+        if fam.startswith(key):
+            return cap
+    return FLIGHT_CATEGORY_PAX_CAPACITY.get(str(row.get('Flight_Category', '')).strip(), 180)
+
+
+def _long_term_pax_work_mix(category, status, terminal):
+    terminal = terminal if terminal in ('T1', 'T2') else 'T1'
+    if status == 'Departure':
+        work = ['checkin', 'security', 'lounge', 'boarding']
+        if category == 'Transatlantic CBP':
+            work.append('cbp')
+    else:
+        work = ['immigration', 'baggage']
+    return [f'{terminal}_{w}' for w in work]
 
 
 def compute_week_start(d):
@@ -269,7 +528,7 @@ def load_absences():
 
 
 def weekly_demand_2026():
-    """Returns {week_key: {(category, status): movements}} for full year 2026.
+    """Returns weekly movement groups with enough metadata to estimate passengers.
 
     Uses S26/W26 Forecast for weeks W15-W53.
     Uses W25 Historical for weeks W01-W14 (Jan-Mar 2026, winter season).
@@ -290,8 +549,13 @@ def weekly_demand_2026():
             continue
 
         week_key = d.strftime('%Y-W%V')
-        key = (r.get('Flight_Category', '').strip(),
-               r.get('Status', '').strip())
+        key = (
+            r.get('Flight_Category', '').strip(),
+            r.get('Status', '').strip(),
+            r.get('Terminal', '').strip(),
+            r.get('Aircraft_Family', '').strip(),
+            r.get('Avg_Load_Factor_Pct', '').strip(),
+        )
         try:
             mvmt = float(r.get('Weekly_Movements', 0) or 0)
         except:
@@ -325,32 +589,44 @@ def weekly_staff_required(demand_by_week):
     """
     total = {}
     by_skill = {}
+    pax_cfg = load_pax_config()
+    fallback_rate = 100.0
 
-    for wk, cat_status_mvmt in demand_by_week.items():
-        # Step 1: total flight-driven staff-minutes for this week
-        flight_staff_mins = 0.0
-        skill_mins = defaultdict(float)
+    for wk, grouped in demand_by_week.items():
+        skill_slots = defaultdict(float)
+        total_slots = 0.0
 
-        for (cat, status), mvmt in cat_status_mvmt.items():
-            spm = STAFF_MINS_PER_MOVEMENT.get((cat, status), 100)
-            contrib = mvmt * spm
-            flight_staff_mins += contrib
-            for sk, ratio in SKILL_SPLIT.get((cat, status), {'GNIB': 1.0}).items():
-                skill_mins[sk] += contrib * ratio
+        for key, mvmt in grouped.items():
+            if len(key) == 5:
+                cat, status, terminal, aircraft, load_factor = key
+            else:
+                cat, status = key[:2]
+                terminal, aircraft, load_factor = 'T1', '', '85%'
 
-        # Step 2: calibrated FTE
-        flight_fte = BASELINE_STAFF * (flight_staff_mins / HISTORICAL_AVG_STAFF_MINS)
+            row = {
+                'Flight_Category': cat,
+                'Aircraft_Family': aircraft,
+                'Avg_Load_Factor_Pct': load_factor,
+            }
+            pax = float(mvmt or 0) * _aircraft_capacity(row) * _load_factor(row)
+            work_cols = _long_term_pax_work_mix(cat, status, terminal)
+            if pax <= 0 or not work_cols:
+                continue
 
-        # Step 3: fixed-post FTE (Config.csv fixed duties)
-        total_fte = flight_fte + FIXED_FTE_TOTAL
+            pax_per_work = pax / len(work_cols)
+            for col in work_cols:
+                rate = pax_cfg.get(col, fallback_rate)
+                if rate <= 0:
+                    continue
+                slots = pax_per_work / rate
+                skill = PAX_WORK_SKILL_MAP.get(_pax_work_from_col(col), _pax_work_from_col(col))
+                skill_slots[skill] += slots
+                total_slots += slots
 
-        # Skill FTE: scale flight skill-mins proportionally, then add fixed posts
         skill_fte = defaultdict(float)
-        if flight_staff_mins > 0:
-            for sk, mins in skill_mins.items():
-                skill_fte[sk] = flight_fte * (mins / flight_staff_mins)
-        for sk, fte in FIXED_FTE.items():
-            skill_fte[sk] += fte
+        for sk, slots in skill_slots.items():
+            skill_fte[sk] = slots / PAX_SLOTS_PER_FTE_WEEK
+        total_fte = total_slots / PAX_SLOTS_PER_FTE_WEEK
 
         total[wk] = round(total_fte, 1)
         by_skill[wk] = {k: round(v, 1) for k, v in skill_fte.items()}
@@ -544,7 +820,8 @@ def _build_heatmap_row(wk_key, staff_req, skill_req, staff_avail, demand):
 
     # Per-category flight volumes for the week (raw movements)
     cat_mvmt = {}
-    for (cat, status), mvmt in demand.get(wk_key, {}).items():
+    for key, mvmt in demand.get(wk_key, {}).items():
+        cat = key[0] if key else 'Unknown'
         cat_mvmt[cat] = round(cat_mvmt.get(cat, 0) + mvmt, 0)
 
     return {
@@ -584,8 +861,10 @@ def lt_week_detail(week_key):
 
     # Weekly flight movements by (category, status) for a mini breakdown chart
     cat_status = {}
-    for (cat, status), mvmt in demand.get(week_key, {}).items():
-        cat_status[f'{cat} ({status})'] = round(mvmt, 0)
+    for key, mvmt in demand.get(week_key, {}).items():
+        cat = key[0] if len(key) > 0 else 'Unknown'
+        status = key[1] if len(key) > 1 else 'Unknown'
+        cat_status[f'{cat} ({status})'] = round(cat_status.get(f'{cat} ({status})', 0) + mvmt, 0)
 
     # Absent staff this week
     absences = load_absences()
@@ -1448,6 +1727,13 @@ def map_data_intraday():
 # ===========================================================================
 
 TASK_SKILL = {
+    'checkin':               'checkin',
+    'security':              'security',
+    'cbp':                   'cbp',
+    'lounge':                'lounge',
+    'boarding':              'boarding',
+    'immigration':           'immigration',
+    'baggage':               'baggage',
     # New Config.csv task names
     'GNIB':                  'GNIB',
     'Gate 335':              'Gate 335',
@@ -3017,6 +3303,10 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         })
         all_tasks.append(fd)
 
+    pax_tasks = build_pax_demand_tasks(iso_date_key, processed_flights, current_time_mins)
+    if pax_tasks:
+        all_tasks = pax_tasks
+
     # Mark completed tasks in live intraday mode instead of deleting them.
     # This preserves them for the timeline and staff utilisation history.
     if current_time_mins is not None:
@@ -3479,6 +3769,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             'terminal':         task.get('terminal', ''),
             'pier':             task.get('pier', ''),
             'post_coverage':    task.get('post_coverage', False),
+            'passengers':       task.get('passengers', 0),
+            'pax_rate':         task.get('pax_rate', 0),
         }
         for fn in task.get('flights_covered', [task.get('flight_no', '')]):
             if fn in flights_map:
@@ -3547,6 +3839,8 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 'terminal':        task.get('terminal', ''),
                 'pier':            task.get('pier', ''),
                 'time_window':     task.get('time_window', ''),
+                'passengers':      task.get('passengers', 0),
+                'pax_rate':        task.get('pax_rate', 0),
             })
 
     # Sort alerts: Critical first
@@ -3555,6 +3849,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     # ── KPIs ─────────────────────────────────────────────────────────────────
     tasks_covered = sum(1 for t in all_tasks if not t['alert'])
     tasks_total   = len(all_tasks)
+    passengers_total = sum(int(t.get('passengers', 0) or 0) for t in all_tasks)
     # gates_active derived from processed_flights (overrides already applied)
     gates_active  = len(set(pf['gate'] for pf in processed_flights if pf['gate']))
 
@@ -3568,6 +3863,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             'gates_active':   gates_active,
             'tasks_total':    tasks_total,
             'tasks_covered':  tasks_covered,
+            'demand_windows_total': tasks_total,
+            'demand_windows_covered': tasks_covered,
+            'passengers_total': passengers_total,
             'coverage_pct':   round(tasks_covered / tasks_total * 100, 1) if tasks_total else 100.0,
         },
         'flights':       flights_sorted,
@@ -3606,10 +3904,11 @@ def st_dates():
     available_dates = []
     for i in [1, 2, 3]:
         d = today + timedelta(days=i)
+        pax_source_date = _pax_source_date_for(d)
         available_dates.append({
             'label':    d.strftime('%A %d %b'),
             'date':     d.strftime('%Y-%m-%d'),
-            'has_data': d.strftime('%d-%b-%y') in flight_dates,
+            'has_data': d.strftime('%d-%b-%y') in flight_dates or pax_source_date is not None,
         })
     return jsonify(available_dates)
 
@@ -3654,7 +3953,7 @@ def st_roster_board():
         d = today + timedelta(days=i)
         date_iso = d.strftime('%Y-%m-%d')
         date_csv = d.strftime('%d-%b-%y')
-        if date_csv in flight_dates:
+        if date_csv in flight_dates or _pax_source_date_for(d) is not None:
             dates.append({
                 'date': date_iso,
                 'label': d.strftime('%a %d')
@@ -3972,7 +4271,7 @@ def intraday_optimise():
                 on_duty = result.get('staff', [])
                 flights = result.get('flights', [])
 
-                all_tasks = [t for f in flights for t in f.get('tasks', [])]
+                all_tasks = result.get('tasks') or [t for f in flights for t in f.get('tasks', [])]
                 demand_windows = _roster_tasks_to_dw(all_tasks) if all_tasks else []
 
                 if not demand_windows:
@@ -4602,7 +4901,7 @@ def st_optimise():
             flights = result.get('flights', [])
 
             # Derive demand windows from today's tasks
-            all_tasks = [t for f in flights for t in f.get('tasks', [])]
+            all_tasks = result.get('tasks') or [t for f in flights for t in f.get('tasks', [])]
             demand_windows = _roster_tasks_to_dw(all_tasks) if all_tasks else []
 
             # Fallback: two synthetic anchor windows covering the day
@@ -4835,7 +5134,11 @@ def roster_optimised():
     day_flights  = [f for f in all_flights if f.get('date', '').strip() == date_csv_key]
 
     demand_windows: list = []
-    if day_flights:
+    pax_tasks = build_pax_demand_tasks(parsed_date.strftime('%Y-%m-%d'))
+    if pax_tasks:
+        demand_windows = _roster_tasks_to_dw(pax_tasks)
+
+    if not demand_windows and day_flights:
         # Build processed flights for task generation (same pre-processing as optimize_day)
         processed = []
         for f in day_flights:

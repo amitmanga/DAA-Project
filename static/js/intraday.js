@@ -9,6 +9,9 @@ const ID = {
 };
 
 const ID_SKILL_COLOR = {
+  'checkin': '#2563EB', 'security': '#DC2626', 'cbp': '#7C3AED',
+  'lounge': '#059669', 'boarding': '#D97706', 'immigration': '#0891B2',
+  'baggage': '#4B5563',
   'GNIB': '#3498DB', 'CBP Pre-clearance': '#9B59B6', 'Bussing': '#E8850A',
   'PBZ': '#2ECC71', 'Mezz Operation': '#1ABC9C', 'Litter Picking': '#E74C3C',
   'Gate 335': '#F39C12', 'Arr Customer Service': '#5DADE2',
@@ -254,7 +257,7 @@ function renderIDKPIs(kpis) {
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#10b981;background:rgba(16,185,129,0.12);border:1.5px solid rgba(16,185,129,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`,
-      label: 'Tasks Covered', value: `${activeTasksCovered} / ${activeTasksTotal}`, cls: ''
+      label: 'PAX Windows Covered', value: `${activeTasksCovered} / ${activeTasksTotal}`, cls: ''
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#f97316;background:rgba(249,115,22,0.12);border:1.5px solid rgba(249,115,22,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>`,
@@ -1249,6 +1252,7 @@ function closeManageModal() {
 
 // ── Hourly Workforce Coverage Heatmap ───────────────────────────
 const ID_COVERAGE_SKILLS = [
+  'checkin', 'security', 'cbp', 'lounge', 'boarding', 'immigration', 'baggage',
   'GNIB', 'Mezz Operation', 'CBP Pre-clearance', 'Gate 335',
   'Bussing', 'Arr Customer Service', 'Transfer Corridor',
   'Check-in/Trolleys', 'T1/T2 Trolleys L/UL', 'Dep/Trolleys',
@@ -1337,7 +1341,7 @@ function buildCoverageTableHTML(tasks) {
   return `
     <thead>
       <tr class="hm-header-row">
-        <th class="skill-col">Role / Task</th>${headCols}
+        <th class="skill-col">PAX Work</th>${headCols}
       </tr>
     </thead>
     <tbody>
