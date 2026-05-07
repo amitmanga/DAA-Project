@@ -383,22 +383,7 @@ def _pax_source_date_for(requested_dt):
     return None
 
 
-def _active_flights_for_pax_window(processed_flights, terminal, start_mins, end_mins):
-    fns = []
-    stands_map = get_stands_map()
-    for pf in processed_flights:
-        si = _stand_info(pf.get('gate', ''), stands_map)
-        if terminal != 'ALL' and si.get('terminal') != terminal:
-            continue
-        t = pf.get('time_mins')
-        if t is None:
-            continue
-        if start_mins - 30 <= t < end_mins + 30:
-            fns.append(pf.get('flight_no', ''))
-    return [fn for fn in fns if fn]
-
-
-def build_pax_demand_tasks(date_str, processed_flights=None, current_time_mins=None):
+def build_pax_demand_tasks(date_str, current_time_mins=None):
     """Build 15-minute passenger-handling demand windows from the PAX workbooks."""
     requested_dt = _parse_any_date(date_str)
     if requested_dt is None:
@@ -415,7 +400,6 @@ def build_pax_demand_tasks(date_str, processed_flights=None, current_time_mins=N
         return []
 
     tasks = []
-    processed_flights = processed_flights or []
     for row in sorted(rows, key=lambda r: r.get('Timestamp')):
         ts = row.get('Timestamp')
         if not isinstance(ts, datetime):
@@ -436,10 +420,9 @@ def build_pax_demand_tasks(date_str, processed_flights=None, current_time_mins=N
             terminal = col.split('_', 1)[0] if '_' in col else 'ALL'
             needed = max(1, int(math.ceil(pax / rate)))
             cap = max(needed, int(math.ceil(needed * 1.5)))
-            flights_covered = _active_flights_for_pax_window(processed_flights, terminal, start_mins, end_mins)
             task = {
                 'id':              f"PAX_{col}_{start_mins}",
-                'flight_no':       flights_covered[0] if flights_covered else 'PAX',
+                'flight_no':       'PAX',
                 'task':            f"{terminal} {work.title()} PAX",
                 'role':            skill,
                 'skill':           skill,
@@ -453,7 +436,7 @@ def build_pax_demand_tasks(date_str, processed_flights=None, current_time_mins=N
                 'assigned':        [],
                 'alert':           None,
                 'time_mins':       start_mins,
-                'flights_covered': flights_covered,
+                'flights_covered': [],
                 'terminal':        terminal,
                 'pier':            'ALL',
                 'sharing_mode':    'pax_15min',
@@ -3024,27 +3007,16 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     if d is None:
         return {'error': f'Cannot parse date: {date_str}'}
 
-    flight_date_key = d.strftime('%d-%b-%y')   # e.g. '11-Apr-26'
     iso_date_key    = d.strftime('%Y-%m-%d')    # e.g. '2026-04-11'
     date_label      = d.strftime('%A %d %b %Y')
 
-    # Load flights for this date
-    all_flights = read_csv_flights()
-    # Case-insensitive date lookup
-    flights_raw = [f for f in all_flights if (f.get('date') or f.get('DATE', '')).strip() == flight_date_key]
-
-    # Apply overrides
-    cancelled_set = set()
+    # Short-term and intraday optimisation is passenger-driven only.
+    # Flight schedules, gates, stands, and Config.csv task generation are not
+    # used as tactical demand inputs.
+    flights_raw = []
     delay_map = {}
-    for fn, ov in overrides.items():
-        if ov.get('cancelled'):
-            cancelled_set.add(fn)
-        if ov.get('delay_mins', 0):
-            delay_map[fn] = int(ov['delay_mins'])
-
-    # Load rules, stands, staff
-    rules = load_config_rules()
-    stands_map = get_stands_map()
+    rules = []
+    stands_map = {}
     on_duty, absent_staff = get_staff_for_date(date_str, custom_constraints)
     print(f"[DEBUG] On-duty: {len(on_duty)}, Absent: {len(absent_staff)}")
 
@@ -3203,7 +3175,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         })
 
     # ── Generate flight tasks from Config.csv rules ───────────────────────────
-    all_tasks = _generate_day_tasks(processed_flights, rules, stands_map, SHARING_WINDOW_MINS)
+    all_tasks = []
 
     # ── CBP hall task — session-level, driven by US/Canada departures ────────
     # Find CBP rule from config for max-staff cap
@@ -3303,7 +3275,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         })
         all_tasks.append(fd)
 
-    pax_tasks = build_pax_demand_tasks(iso_date_key, processed_flights, current_time_mins)
+    pax_tasks = build_pax_demand_tasks(iso_date_key, current_time_mins)
     if pax_tasks:
         all_tasks = pax_tasks
 
@@ -3900,7 +3872,6 @@ def st_dates():
     """Return available D+1 to D+3 dates."""
     from datetime import date as date_type
     today = datetime.now()
-    flight_dates = set(f['date'] for f in read_csv_flights())
     available_dates = []
     for i in [1, 2, 3]:
         d = today + timedelta(days=i)
@@ -3908,7 +3879,7 @@ def st_dates():
         available_dates.append({
             'label':    d.strftime('%A %d %b'),
             'date':     d.strftime('%Y-%m-%d'),
-            'has_data': d.strftime('%d-%b-%y') in flight_dates or pax_source_date is not None,
+            'has_data': pax_source_date is not None,
         })
     return jsonify(available_dates)
 
@@ -3943,7 +3914,6 @@ def st_day(date_str):
 def st_roster_board():
     """Returns combined roster data for all short-term dates (D+1 to D+3)."""
     today = datetime.now()
-    flight_dates = set(f['date'] for f in read_csv_flights())
     
     dates = []
     days_data = []
@@ -3952,8 +3922,7 @@ def st_roster_board():
     for i in [1, 2, 3]:
         d = today + timedelta(days=i)
         date_iso = d.strftime('%Y-%m-%d')
-        date_csv = d.strftime('%d-%b-%y')
-        if date_csv in flight_dates or _pax_source_date_for(d) is not None:
+        if _pax_source_date_for(d) is not None:
             dates.append({
                 'date': date_iso,
                 'label': d.strftime('%a %d')
@@ -5125,56 +5094,17 @@ def roster_optimised():
 
     # ── Build demand windows from the day's flights ─────────────────────────
     # Re-use optimize_day task generation machinery to derive demand windows.
-    rules      = load_config_rules()
-    stands_map = get_stands_map()
-
-    # Read flights for this date
-    all_flights  = read_csv_flights()
-    date_csv_key = parsed_date.strftime('%d-%b-%y')
-    day_flights  = [f for f in all_flights if f.get('date', '').strip() == date_csv_key]
-
     demand_windows: list = []
     pax_tasks = build_pax_demand_tasks(parsed_date.strftime('%Y-%m-%d'))
     if pax_tasks:
         demand_windows = _roster_tasks_to_dw(pax_tasks)
 
-    if not demand_windows and day_flights:
-        # Build processed flights for task generation (same pre-processing as optimize_day)
-        processed = []
-        for f in day_flights:
-            sta_m = parse_time(f.get('sta', ''))
-            if sta_m is None:
-                continue
-            status  = f.get('Status', '').strip()
-            icao    = f.get('icao_wake', '').strip().upper()
-            cbp_flag = f.get('cbp', '')
-            haul    = icao_to_haul(icao, cbp_flag)
-            stand   = f.get('stand', '').strip()
-            stand_info = stands_map.get(stand, {'type': 'Contact', 'terminal': 'T1', 'pier': 'P1'})
-            is_remote  = stand_info.get('type', '').lower() in ('remote', 'apron')
-
-            processed.append({
-                'time_mins':   sta_m,
-                'status':      status,
-                'haul':        haul,
-                'stand':       stand,
-                'is_remote':   is_remote,
-                'terminal':    stand_info.get('terminal', 'T1'),
-                'pier':        stand_info.get('pier', 'P1'),
-                'flight_no':   f.get('flight_no', ''),
-                'icao':        icao,
-            })
-
-        day_tasks = _generate_day_tasks(processed, rules, stands_map, SHARING_WINDOW_MINS)
-        demand_windows = _roster_tasks_to_dw(day_tasks)
-
-    # If no flights data, synthesise two 12-hour demand blocks (DAY + NIGHT)
-    # so the engine always has something to score patterns against.
     if not demand_windows:
-        demand_windows = [
-            _RosterDemandWindow(start=240,  end=960,  skill='GNIB', needed=3, priority='Medium'),
-            _RosterDemandWindow(start=960,  end=1440, skill='GNIB', needed=2, priority='Medium'),
-        ]
+        return jsonify({
+            'date': date_str,
+            'error': 'No passenger demand available for this date',
+            'roster_available': False,
+        }), 404
 
     # ── Normalise staff dicts for the optimiser ─────────────────────────────
     staff_list = [
@@ -5392,3 +5322,4 @@ update_csv_dates_to_current()
 
 if __name__ == '__main__':
     app.run(debug=True)
+

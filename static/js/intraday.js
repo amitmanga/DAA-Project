@@ -131,8 +131,7 @@ function renderIntradayPage() {
     <div id="id-alerts-panel"></div>
     <div class="sub-tabs" style="margin-top:20px">
       <button class="sub-tab ${ID_ACTIVE_TAB==='staff'?'active':''}" data-idtab="staff">👤 Staff Roster</button>
-      <button class="sub-tab ${ID_ACTIVE_TAB==='flights'?'active':''}" data-idtab="flights">✈ Flight Operations</button>
-      <button class="sub-tab ${ID_ACTIVE_TAB==='gate-timeline'?'active':''}" data-idtab="gate-timeline">🛬 Gate Timeline</button>
+      <button class="sub-tab ${ID_ACTIVE_TAB==='demand'?'active':''}" data-idtab="demand">PAX Demand</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='staff-timeline'?'active':''}" data-idtab="staff-timeline">📅 Roster Timeline</button>
 
       <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Optimization</button>
@@ -160,7 +159,6 @@ function renderIntradayPage() {
     btn.addEventListener('click', () => {
       const newTab = btn.dataset.idtab;
       ID_ACTIVE_TAB = newTab;
-      if (newTab !== 'gate-timeline') stopGateTimelineAutoRefresh();
       if (newTab !== 'staff-timeline') stopCoverageAutoRefresh();
       document.querySelectorAll('.sub-tab[data-idtab]').forEach(b => b.classList.toggle('active', b === btn));
       renderIDSubContent();
@@ -224,15 +222,9 @@ function injectGateDisruption() {
 
 // ── KPIs ────────────────────────────────────────────────────────
 function renderIDKPIs(kpis) {
-  if (ID_ACTIVE_TAB === 'gate-timeline' && ID_SIM_TIME == null) {
-    ID_SIM_TIME = getCurrentTimeMins();
-  }
-  const simKpis = (ID_ACTIVE_TAB === 'gate-timeline' && typeof ID_SIM_TIME === 'number')
-    ? computeSimKPIs() : null;
-  const activeGates = simKpis ? simKpis.gates_active : kpis.gates_active;
-  const activeTasksCovered = simKpis ? simKpis.tasks_covered : kpis.tasks_covered;
-  const activeTasksTotal = simKpis ? simKpis.tasks_total : kpis.tasks_total;
-  const activeCoverage = simKpis ? simKpis.coverage_pct : kpis.coverage_pct;
+  const activeTasksCovered = kpis.demand_windows_covered ?? kpis.tasks_covered;
+  const activeTasksTotal = kpis.demand_windows_total ?? kpis.tasks_total;
+  const activeCoverage = kpis.coverage_pct;
 
   const grid = document.getElementById('id-kpis');
   const absentCls = kpis.absent > 3 ? 'kpi-card--warn' : '';
@@ -240,8 +232,8 @@ function renderIDKPIs(kpis) {
   const cards = [
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#3b82f6;background:rgba(59,130,246,0.12);border:1.5px solid rgba(59,130,246,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 19-7z"/></svg></div>`,
-      label: simKpis ? 'Active Flights' : 'Total Flights',
-      value: simKpis ? simKpis.active_flights : kpis.total_flights.toLocaleString(), cls: ''
+      label: 'Passenger Volume',
+      value: (kpis.passengers_total || 0).toLocaleString(), cls: ''
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#8b5cf6;background:rgba(139,92,246,0.12);border:1.5px solid rgba(139,92,246,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>`,
@@ -253,7 +245,7 @@ function renderIDKPIs(kpis) {
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#0ea5e9;background:rgba(14,165,233,0.12);border:1.5px solid rgba(14,165,233,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></div>`,
-      label: 'Gates Active', value: activeGates, cls: ''
+      label: 'Demand Windows', value: activeTasksTotal, cls: ''
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#10b981;background:rgba(16,185,129,0.12);border:1.5px solid rgba(16,185,129,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`,
@@ -692,68 +684,59 @@ function renderIDSubContent() {
   } else if (ID_ACTIVE_TAB === 'opt') {
     renderIDOptimization(container);
 
-  } else if (ID_ACTIVE_TAB === 'gate-timeline') {
-    container.innerHTML = `
-      <div class="panel mt-20">
-        <div class="panel-title-row">
-          <span class="panel-title">Live Gate Timeline — ${ID_DATA.date_label}</span>
-          <div class="gate-controls">
-            <button class="btn-delay" id="id-gate-play">${ID_AUTO_REFRESH ? 'Pause' : 'Play'}</button>
-            <button class="btn-delay" id="id-gate-reset">Reset</button>
-          </div>
-        </div>
-        <div class="gate-status-row">
-          <div class="sim-label">SIM TIME</div>
-          <div class="sim-time" id="id-sim-time-value">${formatMins(ID_SIM_TIME || getCurrentTimeMins())}</div>
-          <div class="sim-speed-control">
-            <label>Speed: <span id="id-sim-speed-value">${ID_SIM_SPEED.toFixed(1)}x</span></label>
-            <input type="range" id="id-sim-speed" min="0.5" max="4" step="0.5" value="${ID_SIM_SPEED}" />
-          </div>
-        </div>
-        <div class="section-hint">Use the timeline to inspect gate occupancy and inject live disruption to see how the schedule rebalances.</div>
-        <div id="id-gate-timeline"></div>
-      </div>`;
-    document.getElementById('id-gate-play').addEventListener('click', toggleGateTimelineAutoRefresh);
-    document.getElementById('id-gate-reset').addEventListener('click', resetIntraday);
-    const speedInput = document.getElementById('id-sim-speed');
-    if (speedInput) {
-      speedInput.addEventListener('input', e => {
-        setGateTimelineSpeed(e.target.value);
-      });
-    }
-    renderIDGateTimeline();
-    renderGateTimelineNowLine();
   } else {
-    container.innerHTML = `
-      <div class="panel mt-20">
-        <div class="panel-title-row">
-          <span class="panel-title">Flight Operations — ${ID_DATA.date_label}</span>
-          <div class="filter-row">
-            <input class="search-input" id="id-flight-search" placeholder="Search flight…" />
-            <select id="id-status-filter" class="select-input">
-              <option value="">All</option>
-              <option value="Arrival">Arrivals</option>
-              <option value="Departure">Departures</option>
-              <option value="Completed">Completed</option>
-            </select>
-          </div>
-        </div>
-        <div class="table-scroll">
-          <table class="data-table flights-table">
-            <thead>
-              <tr>
-                <th>Time</th><th>Flight</th><th>Route</th><th>Airline</th>
-                <th>Gate</th><th>Terminal</th><th>Pier</th><th>Type</th><th>Tasks</th><th>Status</th><th>Action</th>
-              </tr>
-            </thead>
-            <tbody id="id-flights-tbody"></tbody>
-          </table>
-        </div>
-      </div>`;
-    renderIDFlightsTable(ID_DATA.flights);
-    document.getElementById('id-flight-search').addEventListener('input', filterIDFlights);
-    document.getElementById('id-status-filter').addEventListener('change', filterIDFlights);
+    renderIDDemandTab(container);
   }
+}
+
+function renderIDDemandTab(container) {
+  const tasks = ID_DATA.tasks || [];
+  container.innerHTML = `
+    <div class="panel mt-20">
+      <div class="panel-title-row">
+        <span class="panel-title">Passenger Demand Coverage - ${ID_DATA.date_label}</span>
+        <div class="filter-row">
+          <input class="search-input" id="id-demand-search" placeholder="Search work / terminal..." />
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr><th>Time</th><th>Terminal</th><th>Work</th><th>PAX</th><th>PAX/FTE/15m</th><th>FTE Req</th><th>Assigned</th><th>Status</th></tr>
+          </thead>
+          <tbody id="id-demand-tbody"></tbody>
+        </table>
+      </div>
+    </div>`;
+
+  function renderRows(rows) {
+    const tbody = document.getElementById('id-demand-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = rows.map(t => {
+      const assigned = (t.assigned || []).length;
+      const ok = !t.alert;
+      return `<tr class="${ok ? '' : 'row-warn'}">
+        <td class="time-cell">${t.start}-${t.end}</td>
+        <td><span class="terminal-badge">${t.terminal || 'ALL'}</span></td>
+        <td>${t.skill || t.role || t.task}</td>
+        <td>${Number(t.passengers || 0).toLocaleString()}</td>
+        <td>${t.pax_rate || '-'}</td>
+        <td>${t.staff_needed || 0}</td>
+        <td>${assigned}</td>
+        <td><span class="badge ${ok ? 'badge-ok' : 'badge-warn'}">${ok ? 'Covered' : 'Gap'}</span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  renderRows(tasks);
+  document.getElementById('id-demand-search').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    renderRows(tasks.filter(t =>
+      !q || (t.task || '').toLowerCase().includes(q) ||
+      (t.skill || '').toLowerCase().includes(q) ||
+      (t.terminal || '').toLowerCase().includes(q)
+    ));
+  });
 }
 
 function renderIDGateTimeline() {
@@ -1892,3 +1875,5 @@ function renderIDRosterTimeline() {
 }
 
 window.initIntraday = initIntraday;
+
+

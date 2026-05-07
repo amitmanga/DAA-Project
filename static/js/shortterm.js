@@ -23,7 +23,7 @@ const ST_SKILL_COLOR = {
 let ST_DATES = [];
 let ST_CURRENT_DATE = null;
 let ST_DATA = null;
-let ST_ACTIVE_TAB = 'flights';  // 'flights' | 'staff'
+let ST_ACTIVE_TAB = 'demand';
 const ST_CHARTS = {};
 
 
@@ -95,11 +95,10 @@ function renderShortTermDay() {
     <div id="st-alerts-panel"></div>
     <!-- Sub-tabs -->
     <div class="sub-tabs" style="margin-top:20px">
-      <button class="sub-tab ${ST_ACTIVE_TAB==='flights'?'active':''}" data-sttab="flights">Flights &amp; PAX Demand</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='demand'?'active':''}" data-sttab="demand">PAX Demand</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff'?'active':''}" data-sttab="staff">👥 Staff List</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='roster-board'?'active':''}" data-sttab="roster-board">📋 Roster Board</button>
-      <button class="sub-tab ${ST_ACTIVE_TAB==='gate-timeline'?'active':''}" data-sttab="gate-timeline">🛬 Gate Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='opt'?'active':''}" data-sttab="opt">⚙ Optimization</button>
     </div>
     <div id="st-sub-content"></div>
@@ -129,7 +128,7 @@ function renderSTKPIs(kpis) {
   const cards = [
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#3b82f6;background:rgba(59,130,246,0.12);border:1.5px solid rgba(59,130,246,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 19-7z"/></svg></div>`,
-      label: 'Total Flights', value: kpis.total_flights.toLocaleString(), cls: ''
+      label: 'Passenger Volume', value: (kpis.passengers_total || 0).toLocaleString(), cls: ''
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#8b5cf6;background:rgba(139,92,246,0.12);border:1.5px solid rgba(139,92,246,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>`,
@@ -141,7 +140,7 @@ function renderSTKPIs(kpis) {
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#0ea5e9;background:rgba(14,165,233,0.12);border:1.5px solid rgba(14,165,233,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></div>`,
-      label: 'Gates / Stands Active', value: kpis.gates_active, cls: ''
+      label: 'Demand Windows', value: kpis.demand_windows_total ?? kpis.tasks_total, cls: ''
     },
     {
       iconHtml: `<div class="kpi-icon-bubble" style="--glow:#10b981;background:rgba(16,185,129,0.12);border:1.5px solid rgba(16,185,129,0.35)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>`,
@@ -440,11 +439,10 @@ async function applySTRecommendation(btn) {
 // ── Sub-content router ─────────────────────────────────────────
 function renderSTSubContent() {
   const el = document.getElementById('st-sub-content');
-  if (ST_ACTIVE_TAB === 'flights') renderSTFlightsTab(el);
+  if (ST_ACTIVE_TAB === 'demand') renderSTDemandTab(el);
   else if (ST_ACTIVE_TAB === 'staff') renderSTStaffTab(el);
   else if (ST_ACTIVE_TAB === 'staff-timeline') renderSTRosterTimeline(el);
   else if (ST_ACTIVE_TAB === 'roster-board') renderSTRosterBoard(el);
-  else if (ST_ACTIVE_TAB === 'gate-timeline') renderSTGateTimeline(el);
   else if (ST_ACTIVE_TAB === 'opt') renderSTOptimization(el);
 }
 
@@ -968,6 +966,56 @@ async function renderSTOptimization(container) {
         </table>
       </div>`;
   }
+}
+
+function renderSTDemandTab(container) {
+  const tasks = ST_DATA.tasks || [];
+  container.innerHTML = `
+    <div class="panel mt-16">
+      <div class="panel-title-row">
+        <span class="panel-title">Passenger Demand Coverage</span>
+        <div class="filter-row">
+          <input class="search-input" id="st-demand-search" placeholder="Search work / terminal..." />
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <thead>
+            <tr><th>Time</th><th>Terminal</th><th>Work</th><th>PAX</th><th>PAX/FTE/15m</th><th>FTE Req</th><th>Assigned</th><th>Status</th></tr>
+          </thead>
+          <tbody id="st-demand-tbody"></tbody>
+        </table>
+      </div>
+    </div>`;
+
+  function renderRows(rows) {
+    const tbody = document.getElementById('st-demand-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = rows.map(t => {
+      const assigned = (t.assigned || []).length;
+      const ok = !t.alert;
+      return `<tr class="${ok ? '' : 'row-warn'}">
+        <td class="time-cell">${t.start}-${t.end}</td>
+        <td><span class="terminal-badge">${t.terminal || 'ALL'}</span></td>
+        <td>${t.skill || t.role || t.task}</td>
+        <td>${Number(t.passengers || 0).toLocaleString()}</td>
+        <td>${t.pax_rate || '-'}</td>
+        <td>${t.staff_needed || 0}</td>
+        <td>${assigned}</td>
+        <td><span class="badge ${ok ? 'badge-ok' : 'badge-warn'}">${ok ? 'Covered' : 'Gap'}</span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  renderRows(tasks);
+  document.getElementById('st-demand-search').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    renderRows(tasks.filter(t =>
+      !q || (t.task || '').toLowerCase().includes(q) ||
+      (t.skill || '').toLowerCase().includes(q) ||
+      (t.terminal || '').toLowerCase().includes(q)
+    ));
+  });
 }
 
 // ── Flights Tab ────────────────────────────────────────────────
