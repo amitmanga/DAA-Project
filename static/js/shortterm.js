@@ -23,8 +23,18 @@ const ST_SKILL_COLOR = {
 let ST_DATES = [];
 let ST_CURRENT_DATE = null;
 let ST_DATA = null;
-let ST_ACTIVE_TAB = 'demand';
+let ST_ACTIVE_TAB = 'staff-timeline';
 const ST_CHARTS = {};
+
+// Coverage heatmap defaults and skills (PAX-derived skills will be merged)
+const ST_COVERAGE_SKILLS = [
+  'checkin', 'security', 'cbp', 'lounge', 'boarding', 'immigration', 'baggage',
+  'GNIB', 'Mezz Operation', 'CBP Pre-clearance', 'Gate 335',
+  'Bussing', 'Arr Customer Service', 'Transfer Corridor',
+  'Check-in/Trolleys', 'T1/T2 Trolleys L/UL', 'Dep/Trolleys',
+  'PBZ', 'Departures', 'Litter Picking'
+];
+let ST_COVERAGE_PAX_ONLY = true;
 
 
 // ── Boot ───────────────────────────────────────────────────────
@@ -95,7 +105,6 @@ function renderShortTermDay() {
     <div id="st-alerts-panel"></div>
     <!-- Sub-tabs -->
     <div class="sub-tabs" style="margin-top:20px">
-      <button class="sub-tab ${ST_ACTIVE_TAB==='demand'?'active':''}" data-sttab="demand">PAX Demand</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff'?'active':''}" data-sttab="staff">👥 Staff List</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='roster-board'?'active':''}" data-sttab="roster-board">📋 Roster Board</button>
@@ -560,6 +569,13 @@ async function renderSTRosterTimeline(container) {
   searchInput.addEventListener('input', refreshTimeline);
   shiftSelect.addEventListener('change', refreshTimeline);
   refreshTimeline();
+
+  // Render the Workforce Coverage heatmap beneath the roster timeline
+  try {
+    renderSTHourlyCoverage();
+  } catch (e) {
+    console.warn('Coverage render failed', e);
+  }
 }
 
 // ── Roster Board Tab ─────────────────────────────────────────────
@@ -640,6 +656,136 @@ async function renderSTRosterBoard(container) {
       </div>
     `;
   }
+}
+
+// ── Workforce Coverage (Hourly Heatmap) for Short-Term ─────────────
+function buildSTCoverageData(tasks) {
+  const hours = [];
+  for (let h = 4; h <= 23; h++) hours.push(h);
+
+  // dynamic skills
+  const baseSkills = Array.isArray(ST_COVERAGE_SKILLS) ? ST_COVERAGE_SKILLS.slice() : [];
+  const paxSkills = Array.isArray(ST_DATA?.pax_coverage_skills) ? ST_DATA.pax_coverage_skills : [];
+  let skills;
+  if (ST_COVERAGE_PAX_ONLY && paxSkills.length) skills = paxSkills.slice();
+  else skills = [...new Set([...baseSkills, ...paxSkills])];
+
+  const data = {};
+  skills.forEach(sk => {
+    data[sk] = {};
+    hours.forEach(h => { data[sk][h] = { req: 0, assigned: 0 }; });
+  });
+
+  (tasks || []).forEach(task => {
+    let sk = task.role || task.task || task.skill || 'GNIB';
+    if (!data[sk]) {
+      const base = sk.split(' -- ')[0];
+      if (data[base]) sk = base; else if (!data[sk]) return;
+    }
+    const startH = Math.floor(task.start_mins / 60);
+    const endH   = Math.floor((task.end_mins - 1) / 60);
+    for (let h = Math.max(4, startH); h <= Math.min(23, endH); h++) {
+      data[sk][h].req      += (task.staff_needed || 0);
+      data[sk][h].assigned += (task.assigned ? task.assigned.length : 0);
+    }
+  });
+
+  return { data, hours, skills };
+}
+
+function buildSTCoverageTableHTML(tasks) {
+  const { data, hours, skills } = buildSTCoverageData(tasks);
+
+  function cellClass(req, assigned) {
+    if (req === 0) return '';
+    const gap = assigned - req;
+    if (gap < -2) return 'cell-gap';
+    if (gap < 0)  return 'cell-warning';
+    if (gap > 1)  return 'cell-surplus';
+    return 'cell-adequate';
+  }
+
+  const headCols = hours.map(h => `<th>${String(h).padStart(2,'0')}:00</th>`).join('');
+
+  const bodyRows = skills.map(sk =>
+    `<tr><td class="skill-label">${sk}</td>${hours.map(h => {
+      const { req, assigned } = data[sk][h];
+      if (req === 0) return `<td style="opacity:0.3;">0/0</td>`;
+      const tip = `Role: ${sk}\nHour: ${String(h).padStart(2,'0')}:00\nRequired: ${req}\nAssigned: ${assigned}`;
+      return `<td class="${cellClass(req, assigned)}" title="${tip}">${assigned}/${req}</td>`;
+    }).join('')}</tr>`
+  ).join('');
+
+  const totalsReq      = hours.map(h => skills.reduce((s, sk) => s + data[sk][h].req,      0));
+  const totalsAssigned = hours.map(h => skills.reduce((s, sk) => s + data[sk][h].assigned, 0));
+
+  const fReq = hours.map((h, i) => `<td style="font-weight:700;">${totalsReq[i] || '—'}</td>`).join('');
+  const fAsgn = hours.map((h, i) => `<td style="font-weight:700;color:#3b82f6;">${totalsAssigned[i] || '—'}</td>`).join('');
+  const fGap = hours.map((h, i) => {
+    if (!totalsReq[i]) return `<td>—</td>`;
+    const g = totalsAssigned[i] - totalsReq[i];
+    const color = g < 0 ? 'var(--crit)' : g > 1 ? 'var(--ok)' : 'var(--warn)';
+    return `<td style="font-weight:700;color:${color};">${g > 0 ? '+' : ''}${g}</td>`;
+  }).join('');
+
+  return `
+    <thead>
+      <tr class="hm-header-row">
+        <th class="skill-col">PAX Work</th>${headCols}
+      </tr>
+    </thead>
+    <tbody>
+      ${bodyRows}
+      <tr class="total-row with-border"><td class="skill-label">Total Required</td>${fReq}</tr>
+      <tr class="total-row"><td class="skill-label">Total Assigned</td>${fAsgn}</tr>
+      <tr class="total-row"><td class="skill-label">Staff Gap</td>${fGap}</tr>
+    </tbody>`;
+}
+
+function renderSTHourlyCoverage() {
+  const wrapper = document.getElementById('st-sub-content');
+  if (!wrapper) return;
+
+  let section = document.getElementById('st-hourly-coverage-section');
+  if (!section) {
+    section = document.createElement('div');
+    section.id = 'st-hourly-coverage-section';
+    section.className = 'mt-24';
+    section.innerHTML = `
+      <div class="section-header" style="margin-bottom:8px;">
+        <h2 style="font-size:1rem;font-weight:700;color:var(--text);">Workforce Coverage — Short-Term</h2>
+        <span class="section-hint">Assigned / Required per skill per hour.</span>
+        <div style="float:right;margin-left:12px">
+          <label style="font-size:0.85rem;opacity:0.9"><input id="st-coverage-pax-only" type="checkbox" checked style="margin-right:6px">PAX only</label>
+        </div>
+      </div>
+      <div class="legend-row mb-12">
+        <span class="leg surplus"></span><span>Surplus</span>
+        <span class="leg adequate"></span><span>Adequate</span>
+        <span class="leg warning"></span><span>Warning</span>
+        <span class="leg gap"></span><span>Gap</span>
+      </div>
+      <div class="heatmap-wrapper" id="st-hourly-heatmap-wrapper" style="overflow-x:auto;">
+        <table class="heatmap-table heatmap-table--fluid" id="st-hourly-heatmap"></table>
+      </div>`;
+    const panel = wrapper.querySelector('.panel');
+    if (panel) panel.appendChild(section);
+
+    setTimeout(() => {
+      const paxToggle = document.getElementById('st-coverage-pax-only');
+      if (paxToggle) {
+        paxToggle.checked = !!ST_COVERAGE_PAX_ONLY;
+        paxToggle.addEventListener('change', (e) => {
+          ST_COVERAGE_PAX_ONLY = !!e.target.checked;
+          const table = document.getElementById('st-hourly-heatmap');
+          if (table) table.innerHTML = buildSTCoverageTableHTML(ST_DATA.tasks || []);
+        });
+      }
+    }, 50);
+  }
+
+  const table = document.getElementById('st-hourly-heatmap');
+  if (table) table.innerHTML = buildSTCoverageTableHTML(ST_DATA.tasks || []);
 }
 
 // ── Optimization Tab ─────────────────────────────────────────────
