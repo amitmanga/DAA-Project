@@ -67,7 +67,7 @@ The application is powered by a set of CSV files located in the `data/` director
 
 ## 📈 Methodology
 
-Staffing requirements are calculated using a **calibrated FTE model**. The system anchors its demand calculations against a 2025 historical baseline (50-person workforce) and scales proportionally based on flight complexity, category (Long-Haul, Short-Haul, Cargo), and specific operational needs (CBP Pre-clearance, Bussing ratios, etc.).
+Staffing requirements are calculated using a **calibrated FTE model**. For long-term forecasting, the system converts flight movements to estimated passengers per flight (using aircraft type/category and average load factor), applies passenger-handling rates from `PAX Config.xlsx`, and converts those passenger-slots into FTEs. The model is anchored to a 2025 historical baseline and scales by flight complexity and category (Long-Haul, Short-Haul, Cargo).
 
 ---
 *Created for DAA Ground Operations — Operational Excellence through Intelligence.*

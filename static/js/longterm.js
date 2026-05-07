@@ -102,6 +102,10 @@ const CHARTS = {};
 // ── Helpers ───────────────────────────────────────────────────
 const fmt    = n  => Number(n).toLocaleString();
 const fmtFte = v  => v != null ? (+v).toFixed(1) : '—';
+const fmtM   = n  => {
+  if (n == null || isNaN(+n)) return '—';
+  return (+(n) / 1e6).toFixed(1) + 'M';
+};
 const api    = url => fetch(url).then(r => r.json());
 
 function setLiveDate() {
@@ -215,10 +219,10 @@ function updateKPIsForWeek(wk) {
   const label = `(${wk.week})`;
 
   // flights for this week: sum categories
-  const flights = Object.values(wk.categories || {}).reduce((a,b) => a+b, 0);
-
-  document.getElementById('v-annual').textContent     = fmt(Math.round(flights));
-  document.getElementById('kpi-annual-flights').querySelector('.kpi-label').textContent = `Flights This Week`;
+  // passengers for this week (estimated by server)
+  const paxThisWeek = wk.weekly_passengers || 0;
+  document.getElementById('v-annual').textContent     = fmtM(paxThisWeek);
+  document.getElementById('kpi-annual-flights').querySelector('.kpi-label').textContent = `Passengers This Week`;
 
   document.getElementById('v-avg-weekly').textContent = fmtFte(wk.required);
   document.getElementById('kpi-avg-weekly').querySelector('.kpi-label').textContent = `FTE Required ${label}`;
@@ -383,11 +387,12 @@ function renderAbsenceTable(absent) {
 async function loadKPIs() {
   const d = await api('/api/long-term/summary');
 
-  document.getElementById('v-annual').textContent     = fmt(d.annual_flights);
-  document.getElementById('kpi-annual-flights').querySelector('.kpi-label').textContent = 'Annual Flights 2026';
+  // Show annual passenger footfall instead of flight counts (formatted in millions)
+  document.getElementById('v-annual').textContent     = fmtM(d.annual_passengers || d.annual_flights);
+  document.getElementById('kpi-annual-flights').querySelector('.kpi-label').textContent = 'Annual Passenger Footfall 2026';
 
-  document.getElementById('v-avg-weekly').textContent = fmt(d.avg_weekly_flights);
-  document.getElementById('kpi-avg-weekly').querySelector('.kpi-label').textContent     = 'Avg Weekly Flights';
+  document.getElementById('v-avg-weekly').textContent = fmtM(d.avg_weekly_passengers || d.avg_weekly_flights);
+  document.getElementById('kpi-avg-weekly').querySelector('.kpi-label').textContent     = 'Avg Weekly Passengers';
 
   document.getElementById('v-peak-month').textContent = d.peak_month;
   document.getElementById('kpi-peak-month').querySelector('.kpi-label').textContent     = 'Peak Month';

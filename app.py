@@ -464,12 +464,27 @@ def _load_factor(row):
 
 
 def _aircraft_capacity(row):
-    fam = str(row.get('Aircraft_Family', '') or row.get('aircraft_type', '') or '').strip().upper()
-    if fam in AIRCRAFT_PAX_CAPACITY:
-        return AIRCRAFT_PAX_CAPACITY[fam]
-    for key, cap in AIRCRAFT_PAX_CAPACITY.items():
-        if fam.startswith(key):
-            return cap
+    """Resolve a passenger capacity for a flight row.
+
+    This is intentionally tolerant of varying CSV column names that may
+    contain aircraft family/type (e.g. 'Aircraft_Family', 'aircraft_type',
+    'Aircraft_Type', 'Aircraft'). If a specific type is not recognised, the
+    function falls back to the broad `FLIGHT_CATEGORY_PAX_CAPACITY` mapping.
+    """
+    fam = str(
+        (row.get('Aircraft_Family') or row.get('aircraft_type') or
+         row.get('Aircraft_Type') or row.get('Aircraft Type') or
+         row.get('Aircraft') or row.get('AircraftFamily') or '')
+    ).strip().upper()
+
+    if fam:
+        if fam in AIRCRAFT_PAX_CAPACITY:
+            return AIRCRAFT_PAX_CAPACITY[fam]
+        for key, cap in AIRCRAFT_PAX_CAPACITY.items():
+            if fam.startswith(key):
+                return cap
+
+    # Fallback to category-level capacity when aircraft family unknown
     return FLIGHT_CATEGORY_PAX_CAPACITY.get(str(row.get('Flight_Category', '')).strip(), 180)
 
 
@@ -532,13 +547,15 @@ def weekly_demand_2026():
             continue
 
         week_key = d.strftime('%Y-W%V')
-        key = (
-            r.get('Flight_Category', '').strip(),
-            r.get('Status', '').strip(),
-            r.get('Terminal', '').strip(),
-            r.get('Aircraft_Family', '').strip(),
-            r.get('Avg_Load_Factor_Pct', '').strip(),
-        )
+
+        # Be permissive with input column names for aircraft and load-factor.
+        flight_category = r.get('Flight_Category', '').strip()
+        status = r.get('Status', '').strip()
+        terminal = r.get('Terminal', '').strip()
+        aircraft = (r.get('Aircraft_Family') or r.get('aircraft_type') or r.get('Aircraft_Type') or r.get('Aircraft') or r.get('AircraftFamily') or '').strip()
+        load_factor = (r.get('Avg_Load_Factor_Pct') or r.get('Avg_Load_Factor') or r.get('Load_Factor_Pct') or r.get('Load_Factor') or '').strip()
+
+        key = (flight_category, status, terminal, aircraft, load_factor)
         try:
             mvmt = float(r.get('Weekly_Movements', 0) or 0)
         except:
@@ -731,6 +748,9 @@ def lt_summary():
     # Annual flights 2026
     annual_flights = 0
     monthly_flights = defaultdict(float)
+    # Also compute passenger estimates for the year (movements × aircraft capacity × load factor)
+    annual_passengers = 0.0
+    monthly_passengers = defaultdict(float)
     for r in forecast_rows:
         d = parse_date(r.get('Week_Start', ''))
         if d and d.year == 2026:
@@ -741,13 +761,30 @@ def lt_summary():
             annual_flights += mv
             monthly_flights[d.month] += mv
 
-    avg_weekly = annual_flights / 52 if annual_flights else 0
+            # Estimate passengers for these movements using aircraft capacity + load factor
+            try:
+                cap = _aircraft_capacity(r)
+                lf = _load_factor(r)
+                pax_week = mv * cap * lf
+            except Exception:
+                pax_week = 0.0
+            annual_passengers += pax_week
+            monthly_passengers[d.month] += pax_week
 
-    peak_month_num = max(monthly_flights, key=monthly_flights.get) if monthly_flights else 7
+    avg_weekly = annual_flights / 52 if annual_flights else 0
+    avg_weekly_passengers = annual_passengers / 52 if annual_passengers else 0
+
+    # Choose peak month by passenger footfall when available, otherwise by movements
+    if monthly_passengers:
+        peak_month_num = max(monthly_passengers, key=monthly_passengers.get)
+    else:
+        peak_month_num = max(monthly_flights, key=monthly_flights.get) if monthly_flights else 7
     peak_month = datetime(2026, peak_month_num, 1).strftime('%B')
 
     # Peak week
+    # Peak week: prefer passenger-weighted peak when possible
     weekly_flights = defaultdict(float)
+    weekly_passengers = defaultdict(float)
     for r in forecast_rows:
         d = parse_date(r.get('Week_Start', ''))
         if d and d.year == 2026:
@@ -757,7 +794,17 @@ def lt_summary():
                 mv = 0
             wk = d.strftime('%Y-W%V')
             weekly_flights[wk] += mv
-    peak_wk = max(weekly_flights, key=weekly_flights.get) if weekly_flights else '2026-W28'
+            try:
+                cap = _aircraft_capacity(r)
+                lf = _load_factor(r)
+                pax_week = mv * cap * lf
+            except Exception:
+                pax_week = 0.0
+            weekly_passengers[wk] += pax_week
+    if weekly_passengers:
+        peak_wk = max(weekly_passengers, key=weekly_passengers.get)
+    else:
+        peak_wk = max(weekly_flights, key=weekly_flights.get) if weekly_flights else '2026-W28'
 
     # Staff utilisation: avg (staff_req / staff_avail) across 2026 weeks
     utils = []
@@ -778,6 +825,8 @@ def lt_summary():
     return jsonify({
         'annual_flights': int(annual_flights),
         'avg_weekly_flights': round(avg_weekly, 0),
+        'annual_passengers': int(round(annual_passengers)),
+        'avg_weekly_passengers': int(round(avg_weekly_passengers)),
         'peak_month': peak_month,
         'peak_week': peak_wk,
         'staff_utilisation_pct': avg_util,
@@ -806,6 +855,26 @@ def _build_heatmap_row(wk_key, staff_req, skill_req, staff_avail, demand):
     for key, mvmt in demand.get(wk_key, {}).items():
         cat = key[0] if key else 'Unknown'
         cat_mvmt[cat] = round(cat_mvmt.get(cat, 0) + mvmt, 0)
+
+    # Also estimate passengers for the week (movements × aircraft capacity × load factor)
+    weekly_passengers = 0.0
+    for key, mvmt in demand.get(wk_key, {}).items():
+        if len(key) == 5:
+            cat, status, terminal, aircraft, load_factor = key
+        else:
+            cat, status = key[:2]
+            terminal, aircraft, load_factor = 'T1', '', '85%'
+        row = {
+            'Flight_Category': cat,
+            'Aircraft_Family': aircraft,
+            'Avg_Load_Factor_Pct': load_factor,
+        }
+        try:
+            cap = _aircraft_capacity(row)
+            lf = _load_factor(row)
+            weekly_passengers += float(mvmt or 0) * cap * lf
+        except Exception:
+            pass
 
     return {
         'week':         wk_key,
@@ -884,6 +953,7 @@ def lt_week_detail(week_key):
     row['cat_status_breakdown'] = cat_status
     row['absent_staff']         = absent_emps
     row['absent_count']         = len(absent_emps)
+    row['weekly_passengers']    = int(round(weekly_passengers))
     return jsonify(row)
 
 
