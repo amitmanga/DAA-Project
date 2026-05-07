@@ -36,6 +36,16 @@ const CAT_COLOR = {
   'Cargo':                    '#f59e0b',
 };
 
+function stringToColor(str) {
+  if (!str) return '#888';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const h = Math.abs(hash) % 360;
+  return `hsl(${h}, 65%, 45%)`;
+}
+
 function gapClass(v) {
   return v > 0 ? 'ok' : v === 0 ? 'warn' : 'crit';
 }
@@ -301,11 +311,11 @@ function renderDDSkillBar(skills) {
     data: {
       labels,
       datasets: [{
-        data,
-        backgroundColor: labels.map(l => SKILL_COLOR[l] || DAA.muted),
-        borderRadius: 4,
-        borderSkipped: false,
-      }],
+          data,
+          backgroundColor: labels.map(l => SKILL_COLOR[l] || stringToColor(l)),
+          borderRadius: 4,
+          borderSkipped: false,
+        }],
     },
     options: {
       indexAxis: 'y',
@@ -374,7 +384,7 @@ function renderAbsenceTable(absent) {
   tbody.innerHTML = absent.map(a => `
     <tr>
       <td>${a.id}</td>
-      <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${SKILL_COLOR[a.skill]||'#888'};margin-right:6px;"></span>${a.skill}</td>
+      <td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${SKILL_COLOR[a.skill]||stringToColor(a.skill)};margin-right:6px;"></span>${a.skill}</td>
       <td><span class="badge ${a.leave.includes('Annual') ? 'badge-ok' : 'badge-warn'}">${a.leave}</span></td>
     </tr>`).join('');
 }
@@ -771,14 +781,7 @@ function renderGapTable(selectedWeek) {
 }
 
 // ── Allocation Table ──────────────────────────────────────────
-const GATE_COLOR = {
-  'Pier 1 (T1)':   '#3498DB',
-  'Pier 2 (T1)':   '#2980B9',
-  'Pier 3 (T1)':   '#1ABC9C',
-  'Pier 4 (T2)':   '#9B59B6',
-  'Remote Apron':  '#E8850A',
-  'Cargo Apron':   '#7F8C8D',
-};
+// Gate colour map removed (Gate / Pier view was removed)
 
 async function loadAllocationTable() {
   ALLOC_DATA = await api('/api/long-term/staff-allocation');
@@ -812,7 +815,7 @@ async function loadAllocationTable() {
   });
 
   skills.forEach(sk => {
-    const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${SKILL_COLOR[sk]||'#888'};margin-right:6px;"></span>`;
+    const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${SKILL_COLOR[sk]||stringToColor(sk)};margin-right:6px;"></span>`;
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${dot}${sk}</td>` +
       months.map(m => {
@@ -846,76 +849,7 @@ async function loadAllocationTable() {
     tbody.appendChild(tr);
   });
 
-  // ── Gate headcount table ──────────────────────────────────────
-  renderGateAllocationTable(ALLOC_DATA);
-}
-
-function renderGateAllocationTable(allocData) {
-  const { months, by_gate } = allocData;
-  if (!by_gate || !by_gate.length) return;
-
-  // Collect all values for heat scaling per gate row
-  function gateHeatClass(v, mn, mx) {
-    const r = mx > mn ? (v - mn) / (mx - mn) : 0;
-    if (r < 0.2)  return 'cell-heat-0';
-    if (r < 0.45) return 'cell-heat-1';
-    if (r < 0.65) return 'cell-heat-2';
-    if (r < 0.85) return 'cell-heat-3';
-    return 'cell-heat-4';
-  }
-
-  document.getElementById('gate-alloc-head').innerHTML = `<tr>
-    <th>Gate / Pier Area</th>
-    ${months.map(m => `<th>${m.month}</th>`).join('')}
-  </tr>`;
-
-  const gtbody = document.getElementById('gate-alloc-body');
-  gtbody.innerHTML = '';
-
-  by_gate.forEach(g => {
-    const nonZero = g.values.filter(v => v > 0);
-    const gMax = nonZero.length ? Math.max(...nonZero) : 1;
-    const gMin = nonZero.length ? Math.min(...nonZero) : 0;
-
-    const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${GATE_COLOR[g.gate]||'#888'};margin-right:6px;"></span>`;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${dot}${g.gate}</td>` +
-      g.values.map(v => {
-        const cls = v > 0 ? gateHeatClass(v, gMin, gMax) : '';
-        return `<td class="${cls}">${v > 0 ? v.toFixed(1) : '—'}</td>`;
-      }).join('');
-    gtbody.appendChild(tr);
-  });
-
-  // Total gate headcount row
-  const totals = months.map((_, i) => by_gate.reduce((s, g) => s + (g.values[i] || 0), 0));
-  const maxTot = Math.max(...totals), minTot = Math.min(...totals);
-  const trTot = document.createElement('tr');
-  trTot.style.cssText = 'font-weight:700; border-top:2px solid rgba(0,0,0,.10)';
-  trTot.innerHTML = `<td>Total Gate Headcount</td>` +
-    totals.map(v => {
-      const r = maxTot > minTot ? (v - minTot) / (maxTot - minTot) : 0;
-      const cls = r < 0.2 ? 'cell-heat-0' : r < 0.45 ? 'cell-heat-1' : r < 0.65 ? 'cell-heat-2' : r < 0.85 ? 'cell-heat-3' : 'cell-heat-4';
-      return `<td class="${cls}">${v.toFixed(1)}</td>`;
-    }).join('');
-  gtbody.appendChild(trTot);
-
-  // Staff Available row
-  const trAvail = document.createElement('tr');
-  trAvail.style.fontWeight = '700';
-  trAvail.innerHTML = `<td>Staff Available (avg/wk)</td>` +
-    months.map(m => `<td style="color:#3498DB">${(m.total_available || 0).toFixed(1)}</td>`).join('');
-  gtbody.appendChild(trAvail);
-
-  // Gap row
-  const trGap = document.createElement('tr');
-  trGap.style.fontWeight = '700';
-  trGap.innerHTML = `<td>Gap (FTE)</td>` +
-    months.map(m => {
-      const g = m.gap || 0;
-      return `<td style="color:${gapColor(g)}">${(g > 0 ? '+' : '') + g.toFixed(1)}</td>`;
-    }).join('');
-  gtbody.appendChild(trGap);
+  // Gate headcount table removed per request
 }
 
 async function loadSkillBarChart() {
@@ -930,7 +864,7 @@ async function loadSkillBarChart() {
       datasets: skills.map(sk => ({
         label: sk,
         data: months.map(m => (m[sk] || 0)),
-        backgroundColor: SKILL_COLOR[sk] || DAA.muted,
+        backgroundColor: SKILL_COLOR[sk] || stringToColor(sk),
       }))
     },
     options: {
@@ -962,10 +896,10 @@ async function loadSkillCharts() {
     data: {
       labels: skills,
       datasets: [{
-        data: skills.map(s => d.total_by_skill[s]),
-        backgroundColor: skills.map(s => SKILL_COLOR[s] || '#888'),
-        borderColor: '#ffffff', borderWidth: 2, hoverOffset: 6,
-      }],
+          data: skills.map(s => d.total_by_skill[s]),
+          backgroundColor: skills.map(s => SKILL_COLOR[s] || stringToColor(s)),
+          borderColor: '#ffffff', borderWidth: 2, hoverOffset: 6,
+        }],
     },
     options: {
       responsive: true, cutout: '60%',
@@ -1050,10 +984,10 @@ function renderSkillGapBarChart(data) {
   destroyChart('skill-gap-bar');
   const ctx = document.getElementById('skill-gap-bar-chart').getContext('2d');
   
-  const datasets = data.skills.map(sk => ({
+    const datasets = data.skills.map(sk => ({
     label: sk,
     data: data.weekly.map(w => w.skill_gaps[sk] || 0),
-    backgroundColor: SKILL_COLOR[sk] || DAA.muted,
+    backgroundColor: SKILL_COLOR[sk] || stringToColor(sk),
     stack: 'gap',
     borderRadius: 2,
   }));
@@ -1118,10 +1052,10 @@ function renderMergedSkillDonut(pool) {
     data: {
       labels,
       datasets: [{
-        data,
-        backgroundColor: labels.map(l => SKILL_COLOR[l] || '#888'),
-        borderColor: '#ffffff', borderWidth: 2,
-      }],
+          data,
+          backgroundColor: labels.map(l => SKILL_COLOR[l] || stringToColor(l)),
+          borderColor: '#ffffff', borderWidth: 2,
+        }],
     },
     options: {
       responsive: true, cutout: '75%',
@@ -1169,7 +1103,7 @@ function renderSkillSummaryTable(summary) {
     return `
       <tr>
         <td style="font-weight:600; color:${avgCol}">
-          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${SKILL_COLOR[s.skill]||'#888'};margin-right:8px;"></span>
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${SKILL_COLOR[s.skill]||stringToColor(s.skill)};margin-right:8px;"></span>
           ${s.skill}
         </td>
         <td>${s.avg_avail}</td>
@@ -1363,7 +1297,7 @@ function renderRosterWeek(data, weekIdx) {
 
   // Build skill rows — single row per skill: Required only
   let rowsHtml = skills.map(sk => {
-    const color = SKILL_COLOR[sk] || '#888';
+    const color = SKILL_COLOR[sk] || stringToColor(sk);
 
     // Compute week totals (required only)
     const weekReq = days.reduce((s, d) => s + (d.skill_fte[sk] || 0), 0);
@@ -1372,9 +1306,17 @@ function renderRosterWeek(data, weekIdx) {
     const reqCells = days.map(d => {
       const v = d.skill_fte[sk] || 0;
       const intensity = maxFte > 0 ? v / maxFte : 0;
-      const cellCls = intensity > 0.8 ? 'rdc-high' : intensity > 0.5 ? 'rdc-med' : intensity > 0.2 ? 'rdc-low' : 'rdc-zero';
+      
+      let inlineStyle = '';
+      if (v > 0) {
+        const mixPct = intensity > 0.8 ? '20%' : intensity > 0.5 ? '12%' : '8%';
+        inlineStyle = `style="background: color-mix(in srgb, ${color} ${mixPct}, transparent); color: ${color}; font-weight: ${intensity > 0.8 ? '700' : '500'};"`;
+      } else {
+        inlineStyle = `style="color: var(--muted);"`;
+      }
+      
       const covCls = isCurrent ? `rdc-cov-${d.coverage}` : '';
-      return `<td class="roster-demand-cell ${cellCls} ${covCls}" title="${sk} Req: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
+      return `<td class="roster-demand-cell ${covCls}" ${inlineStyle} title="${sk} Req: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
     }).join('');
 
     return `
