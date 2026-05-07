@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, render_template
+﻿from flask import Flask, jsonify, request, render_template
 import csv
 import json
 import math
@@ -4784,7 +4784,64 @@ def update_csv_dates_to_current():
                     writer.writeheader()
                     writer.writerows(rows)
 
-    # 3. Update Weekly_flight_demand.csv status (Historical vs Forecast)
+    # 3. Update short term PAX workbook timestamps (shift to start from today)
+    pax_path = os.path.join(BASE_DIR, 'data', 'short term PAX.xlsx')
+    if os.path.exists(pax_path):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(pax_path)
+            ws = wb.active
+            # Read header row and find 'Timestamp' column index (0-based)
+            headers = [str(c.value).strip() if c.value is not None else '' for c in next(ws.iter_rows(min_row=1, max_row=1))]
+            ts_idx = None
+            for i, h in enumerate(headers):
+                if h.lower() == 'timestamp':
+                    ts_idx = i
+                    break
+            if ts_idx is not None:
+                # Collect unique dates in the Timestamp column
+                seen_dates = []
+                for vals in ws.iter_rows(min_row=2, values_only=True):
+                    ts = vals[ts_idx]
+                    d = None
+                    if isinstance(ts, datetime):
+                        d = ts.date()
+                    else:
+                        parsed = _parse_any_date(ts)
+                        if parsed:
+                            d = parsed.date()
+                    if d and d not in seen_dates:
+                        seen_dates.append(d)
+                seen_dates.sort()
+                if seen_dates:
+                    date_map = {seen_dates[i]: (now.date() + timedelta(days=i)) for i in range(len(seen_dates))}
+                    # Update cells preserving time-of-day when possible
+                    for row in ws.iter_rows(min_row=2):
+                        cell = row[ts_idx]
+                        ts = cell.value
+                        if isinstance(ts, datetime):
+                            old = ts.date()
+                            newd = date_map.get(old)
+                            if newd:
+                                cell.value = datetime.combine(newd, ts.time())
+                        else:
+                            parsed = _parse_any_date(ts)
+                            if parsed:
+                                old = parsed.date()
+                                newd = date_map.get(old)
+                                if newd:
+                                    # Try to preserve time if the string contained it
+                                    try:
+                                        new_time = datetime.fromisoformat(str(ts)).time()
+                                    except Exception:
+                                        new_time = datetime.min.time()
+                                    cell.value = datetime.combine(newd, new_time)
+                    wb.save(pax_path)
+        except Exception:
+            # Fail silently — don't break the updater if openpyxl or parsing fails
+            pass
+
+    # 4. Update Weekly_flight_demand.csv status (Historical vs Forecast)
     demand_path = os.path.join(BASE_DIR, 'data', 'Weekly_flight_demand.csv')
     if os.path.exists(demand_path):
         with open(demand_path, encoding='utf-8-sig') as f:
