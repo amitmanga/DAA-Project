@@ -1241,6 +1241,8 @@ const ID_COVERAGE_SKILLS = [
   'Check-in/Trolleys', 'T1/T2 Trolleys L/UL', 'Dep/Trolleys',
   'PBZ', 'Departures', 'Litter Picking'
 ];
+// Default: show only PAX-derived skills in the coverage heatmap. User can toggle.
+let ID_COVERAGE_PAX_ONLY = true;
 const ID_COVERAGE_HOUR_START = 4;
 const ID_COVERAGE_HOUR_END   = 23;
 
@@ -1248,8 +1250,19 @@ function buildCoverageData(tasks) {
   const hours = [];
   for (let h = ID_COVERAGE_HOUR_START; h <= ID_COVERAGE_HOUR_END; h++) hours.push(h);
 
+  // Build dynamic skills list: either only the PAX skills (if toggled), or
+  // merge base coverage skills with any PAX skills provided by the server.
+  const baseSkills = Array.isArray(ID_COVERAGE_SKILLS) ? ID_COVERAGE_SKILLS.slice() : [];
+  const paxSkills = Array.isArray(ID_DATA?.pax_coverage_skills) ? ID_DATA.pax_coverage_skills : [];
+  let skills;
+  if (ID_COVERAGE_PAX_ONLY && paxSkills.length) {
+    skills = paxSkills.slice();
+  } else {
+    skills = [...new Set([...baseSkills, ...paxSkills])];
+  }
+
   const data = {};
-  ID_COVERAGE_SKILLS.forEach(sk => {
+  skills.forEach(sk => {
     data[sk] = {};
     hours.forEach(h => { data[sk][h] = { req: 0, assigned: 0 }; });
   });
@@ -1270,11 +1283,11 @@ function buildCoverageData(tasks) {
     }
   });
 
-  return { data, hours };
+  return { data, hours, skills };
 }
 
 function buildCoverageTableHTML(tasks) {
-  const { data, hours } = buildCoverageData(tasks);
+  const { data, hours, skills } = buildCoverageData(tasks);
   const nowH = new Date().getHours();
 
   function cellClass(req, assigned) {
@@ -1294,7 +1307,7 @@ function buildCoverageTableHTML(tasks) {
     return `<th class="${live ? 'is-today' : ''}">${label}</th>`;
   }).join('');
 
-  const bodyRows = ID_COVERAGE_SKILLS.map(sk =>
+  const bodyRows = skills.map(sk =>
     `<tr><td class="skill-label">${sk}</td>${hours.map(h => {
       const { req, assigned } = data[sk][h];
       const nowCls = h === nowH ? 'is-today' : '';
@@ -1304,8 +1317,8 @@ function buildCoverageTableHTML(tasks) {
     }).join('')}</tr>`
   ).join('');
 
-  const totalsReq      = hours.map(h => ID_COVERAGE_SKILLS.reduce((s, sk) => s + data[sk][h].req,      0));
-  const totalsAssigned = hours.map(h => ID_COVERAGE_SKILLS.reduce((s, sk) => s + data[sk][h].assigned, 0));
+  const totalsReq      = hours.map(h => skills.reduce((s, sk) => s + data[sk][h].req,      0));
+  const totalsAssigned = hours.map(h => skills.reduce((s, sk) => s + data[sk][h].assigned, 0));
 
   const fReq = hours.map((h, i) =>
     `<td class="${h === nowH ? 'is-today' : ''}" style="font-weight:700;">${totalsReq[i] || '—'}</td>`
@@ -1348,6 +1361,9 @@ function renderIDHourlyCoverage() {
       <div class="section-header" style="margin-bottom:8px;">
         <h2 style="font-size:1rem;font-weight:700;color:var(--text);">Workforce Coverage — Live</h2>
         <span class="section-hint">Assigned / Required per skill per hour. Auto-refreshes every minute.</span>
+        <div style="float:right;margin-left:12px">
+          <label style="font-size:0.85rem;opacity:0.9"><input id="id-coverage-pax-only" type="checkbox" checked style="margin-right:6px">PAX only</label>
+        </div>
       </div>
       <div class="legend-row mb-12">
         <span class="leg surplus"></span><span>Surplus</span>
@@ -1360,6 +1376,18 @@ function renderIDHourlyCoverage() {
       </div>`;
     const panel = wrapper.querySelector('.panel');
     if (panel) panel.appendChild(section);
+    // Wire up PAX-only toggle
+    setTimeout(() => {
+      const paxToggle = document.getElementById('id-coverage-pax-only');
+      if (paxToggle) {
+        paxToggle.checked = !!ID_COVERAGE_PAX_ONLY;
+        paxToggle.addEventListener('change', (e) => {
+          ID_COVERAGE_PAX_ONLY = !!e.target.checked;
+          const table = document.getElementById('id-hourly-heatmap');
+          if (table) table.innerHTML = buildCoverageTableHTML(ID_DATA.tasks || []);
+        });
+      }
+    }, 50);
   }
 
   const table = document.getElementById('id-hourly-heatmap');

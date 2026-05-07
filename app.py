@@ -3848,6 +3848,22 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         'overrides':     overrides,
     }
 
+    # Include PAX coverage skills derived from the PAX Config workbook so
+    # the frontend can render rows even when no demand windows exist yet.
+    try:
+        pax_cfg = load_pax_config() or {}
+        pax_skills = []
+        for col in pax_cfg.keys():
+            work = _pax_work_from_col(col)
+            if not work:
+                continue
+            skill = PAX_WORK_SKILL_MAP.get(work, work)
+            if skill not in pax_skills:
+                pax_skills.append(skill)
+        result['pax_coverage_skills'] = sorted(pax_skills, key=lambda s: str(s).lower())
+    except Exception:
+        result['pax_coverage_skills'] = []
+
     # Ensure assignments respect breaks and shift windows even when callers
     # call the optimizer without running the roster optimiser path. This keeps
     # the schedule shown on initial model open consistent with shift times.
