@@ -2057,7 +2057,7 @@ canvas { display: block; }
 ══════════════════════════════════════════════ */
 .sc-layout {
   display: grid;
-  grid-template-columns: 380px 1fr;
+  grid-template-columns: 440px 1fr;
   gap: 32px;
   padding: 24px 32px;
   align-items: start;
@@ -2187,6 +2187,41 @@ canvas { display: block; }
 .btn-compare-sc:active:not(:disabled) { transform: translateY(0); }
 .btn-compare-sc:disabled { opacity: .4; cursor: not-allowed; box-shadow: none; filter: grayscale(0.5); }
 
+/* ── Constraint Group Sections (Hard / Soft / Heuristic) ── */
+.sc-constraint-group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 16px 0;
+}
+.sc-group-hard     { border-left: 3px solid #ef4444; background: rgba(239,68,68,0.03); }
+.sc-group-soft     { border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.03); }
+.sc-group-heuristic{ border-left: 3px solid #3b82f6; background: rgba(59,130,246,0.03); }
+
+[data-theme="dark"] .sc-group-hard     { background: rgba(239,68,68,0.06); }
+[data-theme="dark"] .sc-group-soft     { background: rgba(245,158,11,0.06); }
+[data-theme="dark"] .sc-group-heuristic{ background: rgba(59,130,246,0.06); }
+
+.sc-group-header {
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px;
+}
+.sc-group-badge {
+  display: inline-block; border-radius: 4px; padding: 2px 9px;
+  font-size: 0.65rem; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .07em; flex-shrink: 0; margin-top: 2px;
+}
+.sc-badge-hard      { background: rgba(239,68,68,0.15);  color: #dc2626; border: 1px solid rgba(239,68,68,0.3); }
+.sc-badge-soft      { background: rgba(245,158,11,0.15); color: #d97706; border: 1px solid rgba(245,158,11,0.3); }
+.sc-badge-heuristic { background: rgba(59,130,246,0.15); color: #2563eb; border: 1px solid rgba(59,130,246,0.3); }
+.sc-group-title { font-size: 0.78rem; font-weight: 700; color: var(--text); }
+.sc-group-hint  { font-size: 0.68rem; color: var(--muted); margin-top: 1px; }
+
+.sc-gap-table { font-size: 0.78rem; }
+.sc-gap-table th, .sc-gap-table td { padding: 7px 10px; text-align: right; }
+.sc-gap-table th:first-child, .sc-gap-table td:first-child { text-align: left; }
+.sc-imbalance-pos { color: #dc2626; font-weight: 600; }
+.sc-imbalance-neg { color: #059669; font-weight: 600; }
+
 .sc-close-btn {
   background: var(--surface); border: 1px solid var(--border-2);
   color: var(--muted); border-radius: 6px; padding: 6px 14px;
@@ -2246,8 +2281,6 @@ canvas { display: block; }
   font-weight: 700;
   color: var(--text);
 }
-.sc-imbalance-pos { color: #dc2626; font-weight: 600; }
-.sc-imbalance-neg { color: #059669; font-weight: 600; }
 
 /* ══════════════════════════════════════════════
    GATE TIMELINE
@@ -3500,9 +3533,72 @@ canvas { display: block; }
   font-weight: 500;
 }
 
-/* Roster shift row even/odd */
-.roster-shift-row:nth-child(2) .roster-shift-cell { background: rgba(59,130,246,0.05); }
-.roster-shift-row:nth-child(3) .roster-shift-cell { background: rgba(139,92,246,0.05); }
+/* MIP shift plan — section header row (one per shift template) */
+.roster-shift-section-hdr td {
+  border-top: 2px solid var(--border);
+  font-size: 0.8rem;
+}
+.roster-shift-section-hdr-label {
+  padding-left: 12px;
+}
+.roster-shift-hdr-cell {
+  padding: 7px 10px;
+  text-align: center;
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--border);
+  border-left: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+}
+
+/* MIP shift plan — skill sub-row */
+.roster-shift-skill-row td {
+  font-size: 0.75rem;
+}
+.roster-shift-skill-label {
+  padding-left: 28px !important;
+  font-size: 0.75rem;
+}
+.roster-shift-skill-cell {
+  padding: 5px 10px;
+  text-align: center;
+  font-size: 0.75rem;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  border-left: 1px solid rgba(255,255,255,0.03);
+  vertical-align: middle;
+}
+
+/* ── 3-Hour Block Table rows ── */
+.roster-block-row td { font-size: 0.75rem; }
+.roster-block-label  { padding-left: 28px !important; font-size: 0.75rem; }
+.roster-block-skill-cell {
+  padding: 5px 10px; text-align: center; font-size: 0.75rem;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  border-left: 1px solid rgba(255,255,255,0.03);
+  vertical-align: middle;
+}
+.roster-block-cell {
+  padding: 7px 10px; text-align: center; font-size: 0.82rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-left: 1px solid rgba(255,255,255,0.03);
+  vertical-align: middle;
+}
+
+/* ── Pivot toggle button ── */
+.btn-pivot {
+  flex-shrink: 0; white-space: nowrap;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  border-radius: 7px; color: var(--text-2);
+  padding: 6px 14px; font-family: var(--font); font-size: 0.78rem; font-weight: 600;
+  cursor: pointer; transition: var(--transition);
+}
+.btn-pivot:hover { background: var(--bg-2); color: var(--text); border-color: var(--info); }
+.btn-pivot-active {
+  background: rgba(59,130,246,0.12); border-color: var(--info);
+  color: var(--info);
+}
+
+/* ── Pivot peak-day row highlight ── */
+.roster-pivot-peak-row td { background: rgba(249,115,22,0.04); }
 
 /* Hover on entire row */
 .roster-demand-table tr:not(.rd-total-row):hover td,

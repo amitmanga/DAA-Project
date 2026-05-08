@@ -99,13 +99,13 @@ SKILL_MAP = {
 }
 
 PAX_WORK_SKILL_MAP = {
-    'checkin': 'checkin',
-    'security': 'security',
-    'cbp': 'cbp',
-    'lounge': 'lounge',
-    'boarding': 'boarding',
-    'immigration': 'immigration',
-    'baggage': 'baggage',
+    'checkin':    'Checkin',
+    'security':   'Security',
+    'cbp':        'CBP',
+    'lounge':     'Lounge',
+    'boarding':   'Boarding',
+    'immigration':'Immigration',
+    'baggage':    'Baggage',
 }
 
 def normalize_skill(sk):
@@ -181,6 +181,42 @@ def get_monthly_absence_impact():
             int_absent[month][lt] = int(math.ceil(val))
             
     return dict(int_absent), sorted(list(leave_types_set))
+
+
+def get_weekly_absence_impact():
+    """Calculate leave days per ISO week of 2026, grouped by LEAVE TYPE."""
+    absences = read_csv('Staff_absence_schedule.csv')
+    weekly_absent = defaultdict(lambda: defaultdict(float))
+    leave_types_set = set()
+
+    # ISO week 1 of 2026 starts Mon 29 Dec 2025 (Jan 4 is always in W01)
+    jan4 = datetime(2026, 1, 4)
+    week1_monday = jan4 - timedelta(days=jan4.weekday())
+
+    week_ranges = []
+    for w in range(53):
+        wk_start = week1_monday + timedelta(weeks=w)
+        wk_end = wk_start + timedelta(days=6)
+        if wk_start.year > 2026:
+            break
+        week_key = wk_start.strftime('%G-W%V')
+        label = str(wk_start.day) + ' ' + wk_start.strftime('%b')
+        week_ranges.append((week_key, wk_start, wk_end, label))
+
+    for week_key, wk_start, wk_end, _label in week_ranges:
+        for a in absences:
+            leave_days = _leave_days_for_month(a, wk_start, wk_end)
+            if leave_days <= 0:
+                continue
+            leave_type = a.get('LEAVE TYPE', 'Unknown').strip() or 'Unknown'
+            weekly_absent[week_key][leave_type] += leave_days
+            leave_types_set.add(leave_type)
+
+    int_absent = {wk: {lt: int(math.ceil(v)) for lt, v in lt_dict.items()}
+                  for wk, lt_dict in weekly_absent.items()}
+    week_labels = [[wk, label] for wk, _s, _e, label in week_ranges]
+    return int_absent, sorted(leave_types_set), week_labels
+
 
 # ---------------------------------------------------------------------------
 # Per-movement staff-minutes derived directly from Config.csv task rules.
@@ -491,11 +527,11 @@ def _aircraft_capacity(row):
 def _long_term_pax_work_mix(category, status, terminal):
     terminal = terminal if terminal in ('T1', 'T2') else 'T1'
     if status == 'Departure':
-        work = ['checkin', 'security', 'lounge', 'boarding']
+        work = ['Checkin', 'Security', 'Lounge', 'Boarding']
         if category == 'Transatlantic CBP':
-            work.append('cbp')
+            work.append('CBP')
     else:
-        work = ['immigration', 'baggage']
+        work = ['Immigration', 'Baggage']
     return [f'{terminal}_{w}' for w in work]
 
 
@@ -568,24 +604,13 @@ def weekly_demand_2026():
 def weekly_staff_required(demand_by_week):
     """Returns {week_key: fte_required} and {week_key: {skill: fte}}.
 
-    This is the *baseline* demand-estimation method — it converts flight movements
-    to FTE requirements using calibrated staff-minutes per movement.
-
-    For an *optimised* allocation that minimises shortages, overtime, and cost
-    given actual staff availability, use the MIP endpoint:
-        GET/POST /api/long-term/optimised-staffing
-
-    Methodology (Config.csv-derived):
-    1. For each (category, status) pair, sum: movements × staff_mins_per_movement
-       Staff-mins per movement = Σ(staff_count × duration_mins) for each applicable
-       Config.csv task, using Status to determine which tasks fire:
-         DEP tasks: GNIB/Immigration + Ramp/Marshalling + Bussing (22% remote)
-         ARR tasks: Arr Customer Service + Check-in/Trolleys + Bussing (22% remote)
-    2. Convert to FTE using the 2025 historical calibration:
-         FTE = BASELINE_STAFF × (week_staff_mins / HISTORICAL_AVG_STAFF_MINS)
-       This anchors the 50-person workforce to the 2025 average demand level and
-       scales proportionally for any deviation in 2026.
-    3. Add fixed-post FTE (Mezz, Litter, CBP hall, PBZ) from Config.csv durations.
+    Methodology:
+    1. Passenger estimate per row = Weekly_Movements × aircraft_capacity × load_factor
+    2. All passengers flow through every applicable stage (no even-split across stages):
+         DEP: Checkin, Security, Lounge, Boarding (+ CBP for Transatlantic)
+         ARR: Immigration, Baggage
+    3. FTE per skill = (weekly_pax / PAX_Config_rate) / PAX_SLOTS_PER_FTE_WEEK
+       where PAX_Config_rate is passengers handled per FTE per 15-min slot.
     """
     total = {}
     by_skill = {}
@@ -613,12 +638,11 @@ def weekly_staff_required(demand_by_week):
             if pax <= 0 or not work_cols:
                 continue
 
-            pax_per_work = pax / len(work_cols)
             for col in work_cols:
                 rate = pax_cfg.get(col, fallback_rate)
                 if rate <= 0:
                     continue
-                slots = pax_per_work / rate
+                slots = pax / rate
                 skill = PAX_WORK_SKILL_MAP.get(_pax_work_from_col(col), _pax_work_from_col(col))
                 skill_slots[skill] += slots
                 total_slots += slots
@@ -743,7 +767,8 @@ def lt_summary():
     demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
 
     all_rows = load_weekly_demand()
-    forecast_rows = [r for r in all_rows if r.get('Data_type', '').strip() == 'Forecast']
+    # Include both Historical (W25/S26 actuals) and Forecast rows for 2026
+    rows_2026 = [r for r in all_rows if r.get('Data_type', '').strip() in ('Forecast', 'Historical')]
 
     # Annual flights 2026
     annual_flights = 0
@@ -751,7 +776,7 @@ def lt_summary():
     # Also compute passenger estimates for the year (movements × aircraft capacity × load factor)
     annual_passengers = 0.0
     monthly_passengers = defaultdict(float)
-    for r in forecast_rows:
+    for r in rows_2026:
         d = parse_date(r.get('Week_Start', ''))
         if d and d.year == 2026:
             try:
@@ -785,7 +810,7 @@ def lt_summary():
     # Peak week: prefer passenger-weighted peak when possible
     weekly_flights = defaultdict(float)
     weekly_passengers = defaultdict(float)
-    for r in forecast_rows:
+    for r in rows_2026:
         d = parse_date(r.get('Week_Start', ''))
         if d and d.year == 2026:
             try:
@@ -814,13 +839,10 @@ def lt_summary():
             utils.append(min(staff_req[wk] / avail * 100, 100))
     avg_util = round(sum(utils) / len(utils), 1) if utils else 0
 
-    # Gate utilisation: contact stands can handle ~3 turns/day each
-    # gate_util = (avg weekly flights / 2) / (contact_stands × 3 × 7) × 100
-    # 142 contact stands from Stands.csv (Pier 1+2+3+4)
-    CONTACT_STANDS = 142
-    DAILY_TURNS    = 3
-    weekly_gate_capacity = CONTACT_STANDS * DAILY_TURNS * 7  # 2,982 turns/week
-    gate_util = round((avg_weekly / 2) / weekly_gate_capacity * 100, 1) if weekly_gate_capacity else 0
+    # Avg passengers handled by 1 FTE per day
+    # = avg_weekly_passengers / 7 days / total_staff
+    total_staff = len(load_staff())
+    avg_pax_per_fte_per_day = round(avg_weekly_passengers / 7 / total_staff) if total_staff else 0
 
     return jsonify({
         'annual_flights': int(annual_flights),
@@ -830,8 +852,8 @@ def lt_summary():
         'peak_month': peak_month,
         'peak_week': peak_wk,
         'staff_utilisation_pct': avg_util,
-        'total_staff': len(load_staff()),
-        'gate_utilisation_pct': gate_util,
+        'total_staff': total_staff,
+        'avg_pax_per_fte_per_day': int(avg_pax_per_fte_per_day),
     })
 
 
@@ -877,18 +899,19 @@ def _build_heatmap_row(wk_key, staff_req, skill_req, staff_avail, demand):
             pass
 
     return {
-        'week':         wk_key,
-        'week_start':   d.strftime('%d %b'),
-        'week_end':     (d + timedelta(days=6)).strftime('%d %b %Y'),
-        'month':        d.strftime('%b'),
-        'month_num':    d.month,
-        'week_in_month': (d.day - 1) // 7,
-        'required':     req,
-        'available':    avail,
-        'gap':          gap,
-        'utilisation':  util,
-        'skills':       {k: round(v, 1) for k, v in skills.items()},
-        'categories':   cat_mvmt,
+        'week':              wk_key,
+        'week_start':        d.strftime('%d %b'),
+        'week_end':          (d + timedelta(days=6)).strftime('%d %b %Y'),
+        'month':             d.strftime('%b'),
+        'month_num':         d.month,
+        'week_in_month':     (d.day - 1) // 7,
+        'required':          req,
+        'available':         avail,
+        'gap':               gap,
+        'utilisation':       util,
+        'skills':            {k: round(v, 1) for k, v in skills.items()},
+        'categories':        cat_mvmt,
+        'weekly_passengers': int(round(weekly_passengers)),
     }
 
 
@@ -1203,8 +1226,8 @@ def lt_skill_breakdown():
 def lt_flight_trend():
     rows = load_weekly_demand()
 
-    # Monthly flights 2025 historical vs 2026 forecast
-    monthly = defaultdict(lambda: {'historical': 0, 'forecast': 0})
+    # Monthly passenger footfall: movements × aircraft_capacity × load_factor
+    monthly = defaultdict(lambda: {'historical': 0.0, 'forecast': 0.0})
     for r in rows:
         if not r.get('Season_Code'):
             continue
@@ -1215,21 +1238,20 @@ def lt_flight_trend():
             mv = float(r.get('Weekly_Movements', 0) or 0)
         except:
             mv = 0
+        pax = mv * _aircraft_capacity(r) * _load_factor(r)
         dtype = r.get('Data_type', '').strip()
+        mk = d.strftime('%b')
         if d.year == 2025 and dtype == 'Historical':
-            mk = d.strftime('%b')
-            monthly[mk]['historical'] += mv
-        elif d.year == 2026 and (dtype == 'Forecast' or
-             (dtype == 'Historical' and r.get('Season_Code', '') == 'W25')):
-            mk = d.strftime('%b')
-            monthly[mk]['forecast'] += mv
+            monthly[mk]['historical'] += pax
+        elif d.year == 2026 and dtype in ('Forecast', 'Historical'):
+            monthly[mk]['forecast'] += pax
 
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     return jsonify([{
         'month': m,
-        'historical': round(monthly[m]['historical'], 0),
-        'forecast': round(monthly[m]['forecast'], 0),
+        'historical': int(round(monthly[m]['historical'])),
+        'forecast':   int(round(monthly[m]['forecast'])),
     } for m in months])
 
 
@@ -1331,7 +1353,7 @@ def lt_merged_gap_skill():
     for s in staff:
         total_by_skill[s.get('Skill1', '').strip()] += 1
 
-    monthly_absent, leave_types = get_monthly_absence_impact()
+    weekly_absent, leave_types, week_labels = get_weekly_absence_impact()
 
     total_by_skill = defaultdict(int)
     for s in staff:
@@ -1341,10 +1363,74 @@ def lt_merged_gap_skill():
         'weekly': weekly_data,
         'skill_summary': skill_summary,
         'total_by_skill': dict(total_by_skill),
-        'monthly_absent': monthly_absent,
+        'weekly_absent': weekly_absent,
+        'weekly_absence_labels': week_labels,
         'leave_types': leave_types,
         'skills': all_skills
     })
+
+
+# ---------------------------------------------------------------------------
+# Shift optimisation constants & MIP engine
+# ---------------------------------------------------------------------------
+
+_ROSTER_SHIFTS = [
+    {'id': 'Early',   'label': 'Early (00:00–12:00)',   'color': '#f97316',
+     'hours': list(range(0, 12))},
+    {'id': 'Mid',     'label': 'Mid (06:00–18:00)',     'color': '#3b82f6',
+     'hours': list(range(6, 18))},
+    {'id': 'Late',    'label': 'Late (12:00–00:00)',    'color': '#8b5cf6',
+     'hours': list(range(12, 24))},
+    {'id': 'Evening', 'label': 'Evening (16:00–04:00)', 'color': '#10b981',
+     'hours': list(range(16, 24)) + list(range(0, 4))},
+    {'id': 'Night',   'label': 'Night (22:00–10:00)',   'color': '#ec4899',
+     'hours': list(range(22, 24)) + list(range(0, 10))},
+]
+
+# 24-hour aviation demand profile (relative units, index 0=00:00 … 23=23:00)
+_HOURLY_PROFILE = [
+    0.5, 0.3, 0.2, 0.2, 0.3, 0.8,   # 00–05
+    2.0, 3.5, 4.5, 4.0, 3.0, 2.5,   # 06–11
+    2.5, 2.8, 3.5, 4.0, 4.5, 4.2,   # 12–17
+    3.8, 3.0, 2.2, 1.5, 1.0, 0.7,   # 18–23
+]
+
+# Coverage matrix: _SHIFT_COV[shift_id][h] = 1 if shift covers hour h
+_SHIFT_COV = {sh['id']: [1 if h in sh['hours'] else 0 for h in range(24)]
+              for sh in _ROSTER_SHIFTS}
+
+# 3-hour time block definitions
+_TIME_BLOCKS = [
+    {'id': 'b00_03', 'label': '00–03', 'hours': [0, 1, 2]},
+    {'id': 'b03_06', 'label': '03–06', 'hours': [3, 4, 5]},
+    {'id': 'b06_09', 'label': '06–09', 'hours': [6, 7, 8]},
+    {'id': 'b09_12', 'label': '09–12', 'hours': [9, 10, 11]},
+    {'id': 'b12_15', 'label': '12–15', 'hours': [12, 13, 14]},
+    {'id': 'b15_18', 'label': '15–18', 'hours': [15, 16, 17]},
+    {'id': 'b18_21', 'label': '18–21', 'hours': [18, 19, 20]},
+    {'id': 'b21_24', 'label': '21–24', 'hours': [21, 22, 23]},
+]
+_TOTAL_PROFILE = sum(_HOURLY_PROFILE)
+
+
+def _solve_shift_mip(daily_total_fte: float) -> dict:
+    """Allocate daily FTE across shift templates proportional to demand covered.
+
+    Each shift receives a share of daily_total_fte proportional to the sum of
+    the demand profile over its covered hours.  The five allocations always sum
+    to daily_total_fte.
+
+    Returns {shift_id: fte_float}.
+    """
+    if daily_total_fte <= 0:
+        return {sh['id']: 0.0 for sh in _ROSTER_SHIFTS}
+
+    covered = {sh['id']: sum(_HOURLY_PROFILE[h] for h in sh['hours'])
+               for sh in _ROSTER_SHIFTS}
+    total_covered = sum(covered.values()) or 1.0
+
+    return {sh['id']: round(daily_total_fte * covered[sh['id']] / total_covered, 2)
+            for sh in _ROSTER_SHIFTS}
 
 
 # ---------------------------------------------------------------------------
@@ -1422,13 +1508,6 @@ def lt_four_week_roster():
         all_skills_set.update(wk_data.keys())
     all_skills = sorted(all_skills_set)
 
-    # Shift split ratios (% of daily FTE per shift band)
-    SHIFT_BANDS = [
-        {'name': 'Early (06:00–14:00)', 'ratio': 0.40, 'color': '#f97316'},
-        {'name': 'Late  (14:00–22:00)', 'ratio': 0.40, 'color': '#3b82f6'},
-        {'name': 'Night (22:00–06:00)', 'ratio': 0.20, 'color': '#8b5cf6'},
-    ]
-
     # ── 3. Helper: build day objects for a given week ─────────────────────
     def _build_day(date, dow_idx, weekly_skill_fte, weekly_total_fte,
                    weekly_skill_avail=None, weekly_total_avail=0,
@@ -1452,19 +1531,37 @@ def lt_four_week_roster():
                          for sk in all_skills}
         daily_total_gap = round(daily_total_avail - daily_total_fte, 2)
 
+        # MIP-based shift allocation
+        shift_solution = _solve_shift_mip(daily_total_fte)
+        skill_fracs = ({sk: skill_fte_day[sk] / daily_total_fte for sk in all_skills}
+                       if daily_total_fte > 0 else {sk: 0.0 for sk in all_skills})
+
         shifts = []
-        for band in SHIFT_BANDS:
-            shift_total = round(daily_total_fte * band['ratio'], 2)
-            shift_skills = {sk: round(skill_fte_day.get(sk, 0) * band['ratio'], 2)
+        for sh in _ROSTER_SHIFTS:
+            sh_fte = shift_solution[sh['id']]
+            shift_skills = {sk: round(sh_fte * skill_fracs.get(sk, 0), 2)
                             for sk in all_skills}
-            headcount = max(1, round(shift_total)) if shift_total > 0.5 else 0
             shifts.append({
-                'name':      band['name'],
-                'ratio':     band['ratio'],
-                'color':     band['color'],
-                'total_fte': shift_total,
-                'headcount': headcount,
+                'id':        sh['id'],
+                'name':      sh['label'],
+                'color':     sh['color'],
+                'total_fte': round(sh_fte, 2),
                 'skills':    shift_skills,
+            })
+
+        # 3-hour time block allocation (demand-weighted staffing level per block)
+        time_blocks = []
+        for tb in _TIME_BLOCKS:
+            tb_profile = sum(_HOURLY_PROFILE[h] for h in tb['hours'])
+            # Same logic as shift plan: block gets share proportional to demand it covers.
+            # Blocks are non-overlapping so total_covered = _TOTAL_PROFILE and sum of
+            # all tb_scale = 1.0, meaning sum of all block FTEs = daily_total_fte.
+            tb_scale = tb_profile / _TOTAL_PROFILE
+            time_blocks.append({
+                'id':        tb['id'],
+                'label':     tb['label'],
+                'total_fte': round(daily_total_fte * tb_scale, 2),
+                'skills':    {sk: round(skill_fte_day[sk] * tb_scale, 2) for sk in all_skills},
             })
 
         return {
@@ -1480,6 +1577,7 @@ def lt_four_week_roster():
             'total_gap':      daily_total_gap,
             'skill_gap':      skill_gap_day,
             'shifts':         shifts,
+            'time_blocks':    time_blocks,
             'coverage':       coverage,
         }
 
@@ -1562,12 +1660,14 @@ def lt_four_week_roster():
         })
 
     return jsonify({
-        'weeks':       weeks_output,
-        'dow_weights': dict(zip(DOW_LABELS, dow_weights)),
-        'skills':      all_skills,
-        'shift_bands': [{'name': b['name'], 'color': b['color'], 'ratio': b['ratio']}
-                        for b in SHIFT_BANDS],
-        'st_window_days': ST_WINDOW,
+        'weeks':            weeks_output,
+        'dow_weights':      dict(zip(DOW_LABELS, dow_weights)),
+        'skills':           all_skills,
+        'shift_templates':  [{'id': sh['id'], 'name': sh['label'], 'color': sh['color']}
+                             for sh in _ROSTER_SHIFTS],
+        'time_block_defs':  [{'id': tb['id'], 'label': tb['label']}
+                             for tb in _TIME_BLOCKS],
+        'st_window_days':   ST_WINDOW,
     })
 
 
@@ -1780,13 +1880,13 @@ def map_data_intraday():
 # ===========================================================================
 
 TASK_SKILL = {
-    'checkin':               'checkin',
-    'security':              'security',
-    'cbp':                   'cbp',
-    'lounge':                'lounge',
-    'boarding':              'boarding',
-    'immigration':           'immigration',
-    'baggage':               'baggage',
+    'checkin':               'Checkin',
+    'security':              'Security',
+    'cbp':                   'CBP',
+    'lounge':                'Lounge',
+    'boarding':              'Boarding',
+    'immigration':           'Immigration',
+    'baggage':               'Baggage',
     # New Config.csv task names
     'GNIB':                  'GNIB',
     'Gate 335':              'Gate 335',
@@ -4727,26 +4827,121 @@ def run_scenario_projection(start_date, end_date, constraints, n_runs=500):
 
 # ── Scenario endpoints ────────────────────────────────────────────────────────
 
+@app.route('/api/long-term/scenario', methods=['POST'])
+def lt_run_scenario():
+    """Deterministic long-term scenario: applies constraint overrides to baseline LT FTE."""
+    body       = request.get_json(silent=True) or {}
+    name       = body.get('name', f'Scenario {_scenario_seq[0]+1}').strip() or f'Scenario {_scenario_seq[0]+1}'
+    start_date = body.get('start_date', '2026-01-01')
+    end_date   = body.get('end_date', '2026-12-31')
+    cst        = body.get('constraints', {})
+
+    _PAX_SKILLS = ['Checkin', 'Security', 'CBP', 'Lounge', 'Boarding', 'Immigration', 'Baggage']
+
+    absence_rate  = float(cst.get('absence_rate', 0.06))
+    overtime_pct  = float(cst.get('overtime_allowance', 0.0))
+    target_util   = float(cst.get('staff_utilisation', 0.80))
+    peak_buffer   = float(cst.get('peak_buffer', 0.10))
+    cross_rate    = float(cst.get('cross_training_rate', 0.15))
+    new_hire_frac = float(cst.get('new_hire_fraction', 0.00))
+    surge_factor  = float(cst.get('surge_demand_factor', 1.0))
+    cov_floor     = float(cst.get('min_coverage_floor', 0.85))
+    new_hire_prod = 1.0 - max(0.0, min(1.0, new_hire_frac)) * 0.30
+
+    try:
+        s_date = datetime.strptime(start_date, '%Y-%m-%d')
+        e_date = datetime.strptime(end_date, '%Y-%m-%d')
+    except Exception:
+        return jsonify({'error': 'Invalid date format'}), 400
+    if s_date > e_date:
+        return jsonify({'error': 'Start date must be before end date'}), 400
+
+    _, staff_req, skill_req, staff_avail, skill_avail = get_data()
+
+    month_map = defaultdict(list)
+    for wk_key in sorted(staff_req.keys()):
+        try:
+            yr, wn = wk_key.split('-W')
+            wk_d = datetime.strptime(f'{yr}-W{int(wn):02d}-1', '%G-W%V-%u')
+        except Exception:
+            continue
+        if s_date <= wk_d <= e_date:
+            month_map[wk_d.strftime('%b %Y')].append(wk_key)
+
+    if not month_map:
+        return jsonify({'error': 'No data found for the selected date range'}), 400
+
+    months_list, total_req_list, total_avail_list = [], [], []
+    monthly_breakdown = {}
+
+    for month_label, weeks in month_map.items():
+        wn = len(weeks)
+        sk_req_sum   = {sk: 0.0 for sk in _PAX_SKILLS}
+        sk_avail_sum = {sk: 0.0 for sk in _PAX_SKILLS}
+
+        for wk in weeks:
+            req_sk   = skill_req.get(wk, {})
+            avail_sk = skill_avail.get(wk, {})
+            base_total = sum(avail_sk.get(sk, 0) for sk in _PAX_SKILLS)
+            flex_per   = (base_total * (1 - absence_rate) * new_hire_prod
+                          * target_util * cross_rate) / len(_PAX_SKILLS)
+
+            for sk in _PAX_SKILLS:
+                adj_req   = req_sk.get(sk, 0.0) * surge_factor * (1.0 + peak_buffer)
+                adj_avail = (avail_sk.get(sk, 0.0)
+                             * (1.0 - absence_rate) * new_hire_prod
+                             * target_util * (1.0 + overtime_pct)
+                             + flex_per)
+                if adj_req > 0:
+                    adj_avail = max(adj_avail, cov_floor * adj_req)
+                sk_req_sum[sk]   += adj_req
+                sk_avail_sum[sk] += adj_avail
+
+        avg_req   = {sk: round(sk_req_sum[sk] / wn, 2)   for sk in _PAX_SKILLS}
+        avg_avail = {sk: round(sk_avail_sum[sk] / wn, 2) for sk in _PAX_SKILLS}
+        tot_req   = round(sum(avg_req.values()), 1)
+        tot_avail = round(sum(avg_avail.values()), 1)
+
+        monthly_breakdown[month_label] = {
+            'required':        avg_req,
+            'available':       avg_avail,
+            'gap':             {sk: round(avg_avail[sk] - avg_req[sk], 2) for sk in _PAX_SKILLS},
+            'total_required':  tot_req,
+            'total_available': tot_avail,
+        }
+        months_list.append(month_label)
+        total_req_list.append(tot_req)
+        total_avail_list.append(tot_avail)
+
+    _scenario_seq[0] += 1
+    sid = f'lt_{_scenario_seq[0]:03d}'
+    _scenarios[sid] = {
+        'id':          sid,
+        'name':        name,
+        'type':        'long_term',
+        'created_at':  datetime.utcnow().isoformat(),
+        'start_date':  start_date,
+        'end_date':    end_date,
+        'constraints': cst,
+        'results': {
+            'months':             months_list,
+            'monthly_breakdown':  monthly_breakdown,
+            'total_required':     total_req_list,
+            'total_available':    total_avail_list,
+            'skills':             _PAX_SKILLS,
+        },
+    }
+    return jsonify(_scenarios[sid])
+
+
 @app.route('/api/scenarios', methods=['GET'])
 def list_scenarios():
+    sc_type = request.args.get('type')
     out = []
     for sid, sc in sorted(_scenarios.items(), key=lambda x: x[1]['created_at']):
-        r = sc.get('results', {})
-        out.append({
-            'id':          sid,
-            'name':        sc['name'],
-            'status':      sc['status'],
-            'created_at':  sc['created_at'],
-            'base_date':   sc['base_date'],
-            'start_date':  sc.get('start_date', sc['base_date']),
-            'end_date':    sc.get('end_date', sc['base_date']),
-            'risk_score':  r.get('risk_score'),
-            'risk_level':  r.get('risk_level'),
-            'p50_coverage': r.get('median_coverage'),
-            'average_utilisation': r.get('average_utilisation'),
-            'n_runs':      r.get('n_runs'),
-            'constraints': sc['constraints'],
-        })
+        if sc_type and sc.get('type', 'monte_carlo') != sc_type:
+            continue
+        out.append(sc)
     return jsonify(out)
 
 

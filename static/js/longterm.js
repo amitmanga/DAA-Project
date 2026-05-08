@@ -12,6 +12,15 @@ const DAA = {
 };
 
 const SKILL_COLOR = {
+  // PAX passenger-handling skills
+  'Checkin':              '#2563EB',
+  'Security':             '#DC2626',
+  'CBP':                  '#7C3AED',
+  'Lounge':               '#059669',
+  'Boarding':             '#D97706',
+  'Immigration':          '#0891B2',
+  'Baggage':              '#4B5563',
+  // Operational skills
   'GNIB':                 '#3b82f6',
   'CBP Pre-clearance':    '#8b5cf6',
   'Bussing':              '#f97316',
@@ -20,7 +29,7 @@ const SKILL_COLOR = {
   'Litter Picking':       '#ef4444',
   'Ramp / Marshalling':   '#f59e0b',
   'Arr Customer Service': '#06b6d4',
-  'Check-in/Trolleys':  '#64748b',
+  'Check-in/Trolleys':    '#64748b',
   'Dep / Trolleys':       '#a78bfa',
   'T1/T2 Trolleys L/UL':  '#fb7185',
   'Transfer Corridor':    '#34d399',
@@ -250,11 +259,12 @@ function updateKPIsForWeek(wk) {
   document.getElementById('v-total-staff').textContent = wk.available;
   document.getElementById('kpi-total-staff').querySelector('.kpi-label').textContent = `Staff Available ${label}`;
 
-  // Gate util for this week: total flights / weekly gate capacity
-  const weekFlights = Object.values(wk.categories || {}).reduce((a,b) => a+b, 0);
-  const gateUtil = ((weekFlights / 2) / (142 * 3 * 7) * 100).toFixed(1);
-  document.getElementById('v-gate-util').textContent = gateUtil + '%';
-  document.getElementById('kpi-gate-util').querySelector('.kpi-label').textContent = `Gate Utilisation ${label}`;
+  // Avg passengers handled by 1 FTE per day for this week
+  const avgPaxFteDay = wk.available > 0
+    ? Math.round((wk.weekly_passengers || 0) / 7 / wk.available)
+    : 0;
+  document.getElementById('v-gate-util').textContent = fmt(avgPaxFteDay);
+  document.getElementById('kpi-gate-util').querySelector('.kpi-label').textContent = `Avg Pax / FTE / Day ${label}`;
 }
 
 // ── Drill-down Panel ─────────────────────────────────────────
@@ -416,8 +426,8 @@ async function loadKPIs() {
   document.getElementById('v-total-staff').textContent = d.total_staff;
   document.getElementById('kpi-total-staff').querySelector('.kpi-label').textContent    = 'Total Workforce';
 
-  document.getElementById('v-gate-util').textContent = d.gate_utilisation_pct + '%';
-  document.getElementById('kpi-gate-util').querySelector('.kpi-label').textContent     = 'Gate Utilisation %';
+  document.getElementById('v-gate-util').textContent = fmt(d.avg_pax_per_fte_per_day ?? '—');
+  document.getElementById('kpi-gate-util').querySelector('.kpi-label').textContent     = 'Avg Pax / FTE / Day';
 }
 
 // ── Calendar Heatmap ─────────────────────────────────────────
@@ -525,7 +535,7 @@ function renderHeatmap() {
   container.appendChild(grid);
 }
 
-// ── Flight Trend Chart ────────────────────────────────────────
+// ── Passenger Footfall Trend Chart ───────────────────────────
 async function loadFlightTrendChart() {
   const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   const data = await api('/api/long-term/flight-trend');
@@ -558,13 +568,16 @@ async function loadFlightTrendChart() {
       responsive: true,
       plugins: {
         legend: { labels: { color: DAA.white(), usePointStyle: true } },
-        tooltip: { backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1 },
+        tooltip: {
+          backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1,
+          callbacks: { label: ctx => ` ${fmtM(ctx.parsed.y)} passengers` },
+        },
       },
       scales: {
         x: { grid: { color: isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb' }, ticks: { color: DAA.white() } },
-        y: { 
-          grid: { color: isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb' }, 
-          ticks: { color: DAA.white(), callback: v => fmt(v) } 
+        y: {
+          grid: { color: isDark ? 'rgba(255,255,255,0.15)' : '#e5e7eb' },
+          ticks: { color: DAA.white(), callback: v => fmtM(v) },
         },
       },
     },
@@ -972,10 +985,7 @@ async function initGapSkillAnalysis() {
   ALL_IMBALANCE = d.weekly;
 
   renderSkillGapBarChart(d);
-// renderMergedGapDonut(d.weekly);
-// renderMergedSkillDonut(d.total_by_skill);
   renderWeeklyGapTable(d);
-  renderSkillSummaryTable(d.skill_summary);
   renderMergedAbsenceBar(d);
 }
 
@@ -1121,32 +1131,56 @@ function renderSkillSummaryTable(summary) {
 function renderMergedAbsenceBar(d) {
   const isDark = DAA.isDark();
   destroyChart('merged-absence');
-  const months = ['Jan 2026','Feb 2026','Mar 2026','Apr 2026','May 2026','Jun 2026',
-                  'Jul 2026','Aug 2026','Sep 2026','Oct 2026','Nov 2026','Dec 2026'];
-  const labels = months.map(m => m.replace(' 2026',''));
-  const leaveColors = ['#e11d48', '#d97706', '#059669', '#2563eb', '#7c3aed', '#db2777', '#475569'];
+
+  const weekMeta  = d.weekly_absence_labels || [];   // [[week_key, label], ...]
+  const weekKeys  = weekMeta.map(w => w[0]);
+  const weekLabels = weekMeta.map(w => w[1]);
+
+  const leaveColors = ['#e11d48','#d97706','#059669','#2563eb','#7c3aed','#db2777','#475569','#0891b2'];
   const datasets = (d.leave_types || []).map((lt, i) => ({
     label: lt,
-    data: months.map(m => (d.monthly_absent[m] || {})[lt] || 0),
+    data: weekKeys.map(wk => (d.weekly_absent[wk] || {})[lt] || 0),
     backgroundColor: leaveColors[i % leaveColors.length],
-    stack: 'abs', borderRadius: 2,
+    stack: 'abs',
+    borderRadius: 1,
   }));
+
   const ctx = document.getElementById('merged-absence-bar').getContext('2d');
   CHARTS['merged-absence'] = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets },
+    data: { labels: weekLabels, datasets },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: DAA.white(), usePointStyle: true, boxWidth: 10 }, position: 'right' },
+        legend: {
+          position: 'top',
+          labels: { color: DAA.white(), usePointStyle: true, boxWidth: 8, font: { size: 11 } },
+        },
+        tooltip: {
+          backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1,
+          mode: 'index',
+        },
       },
       scales: {
-        x: { stacked: true, grid: { display: false }, ticks: { color: DAA.white() } },
-        y: { stacked: true, grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }, 
-             title: { display: true, text: 'Absence Days', color: DAA.white() },
-             ticks: { color: DAA.white() } }
-      }
-    }
+        x: {
+          stacked: true,
+          grid: { display: false },
+          ticks: {
+            color: DAA.white(),
+            maxRotation: 45,
+            autoSkip: true,
+            maxTicksLimit: 26,
+          },
+        },
+        y: {
+          stacked: true,
+          grid: { color: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' },
+          title: { display: true, text: 'Absence Days', color: DAA.white() },
+          ticks: { color: DAA.white() },
+        },
+      },
+    },
   });
 }
 
@@ -1156,17 +1190,49 @@ function renderMergedAbsenceBar(d) {
 
 let _rosterData = null;
 let _rosterActiveWeekIdx = 0;
+let _shiftPivoted = false;
+let _blockPivoted = false;
+
+window.toggleShiftPivot = function () {
+  _shiftPivoted = !_shiftPivoted;
+  const btn = document.getElementById('roster-shift-pivot-btn');
+  if (btn) btn.classList.toggle('btn-pivot-active', _shiftPivoted);
+  if (_rosterData) renderRosterWeek(_rosterData, _rosterActiveWeekIdx);
+};
+
+window.toggleBlockPivot = function () {
+  _blockPivoted = !_blockPivoted;
+  const btn = document.getElementById('roster-block-pivot-btn');
+  if (btn) btn.classList.toggle('btn-pivot-active', _blockPivoted);
+  if (_rosterData) renderRosterWeek(_rosterData, _rosterActiveWeekIdx);
+};
+
+window.toggleRosterGroup = function(headerEl, groupId, tablePrefix) {
+  const tbody = headerEl.closest('tbody');
+  const rows = tbody.querySelectorAll(`[data-roster-group="${tablePrefix}-${groupId}"]`);
+  const icon = headerEl.querySelector('.rs-expand-icon');
+  const isExpanded = headerEl.dataset.expanded === 'true';
+  rows.forEach(r => { r.style.display = isExpanded ? 'none' : ''; });
+  if (icon) icon.textContent = isExpanded ? '▶' : '▼';
+  headerEl.dataset.expanded = isExpanded ? 'false' : 'true';
+};
 
 async function initFourWeekRoster() {
   // Reset cache each session open so updated API fields are always fetched
   _rosterData = null;
   _rosterActiveWeekIdx = 0;
+  _shiftPivoted = false;
+  _blockPivoted = false;
+  const spb = document.getElementById('roster-shift-pivot-btn');
+  const bpb = document.getElementById('roster-block-pivot-btn');
+  if (spb) spb.classList.remove('btn-pivot-active');
+  if (bpb) bpb.classList.remove('btn-pivot-active');
 
   // Show loading
   document.getElementById('roster-loading').style.display = 'flex';
   document.getElementById('roster-week-nav').style.display = 'none';
-  document.getElementById('roster-demand-panel').style.display = 'none';
   document.getElementById('roster-shift-panel').style.display = 'none';
+  document.getElementById('roster-block-panel').style.display = 'none';
 
   try {
     _rosterData = await api('/api/long-term/four-week-roster');
@@ -1230,8 +1296,8 @@ function renderRoster(data) {
   // ── Render selected week ────────────────────────────────────
   renderRosterWeek(data, _rosterActiveWeekIdx);
 
-  document.getElementById('roster-demand-panel').style.display = '';
   document.getElementById('roster-shift-panel').style.display = '';
+  document.getElementById('roster-block-panel').style.display = '';
 }
 
 function switchRosterWeek(idx) {
@@ -1251,8 +1317,6 @@ function renderRosterWeek(data, weekIdx) {
   const weekLabel = wk.is_current_week
     ? `This Week (${wk.week}) — ${wk.start_date} to ${wk.end_date}`
     : `${wk.week} — ${wk.start_date} to ${wk.end_date}`;
-  document.getElementById('roster-demand-title').textContent =
-    `Daily Demand Breakdown — ${weekLabel}`;
   document.getElementById('roster-shift-title').textContent =
     `Shift Plan — ${weekLabel}`;
 
@@ -1264,30 +1328,6 @@ function renderRosterWeek(data, weekIdx) {
   };
   const isCurrent = wk.is_current_week;
 
-  // ── Table 1: Daily Demand by Skill ─────────────────────────
-  const dHead = document.getElementById('roster-demand-head');
-  const dBody = document.getElementById('roster-demand-body');
-
-  // Header: Role + day columns + Weekly FTE
-  // Row 1: labels; Row 2 (current week only): coverage badges
-  let headRow2 = isCurrent
-    ? `<tr class="rdth-cov-row"><th></th>${days.map(d =>
-        `<th class="rdth-cov-cell">${COV_BADGES[d.coverage] || ''}</th>`
-      ).join('')}<th></th></tr>`
-    : '';
-
-  dHead.innerHTML = `<tr>
-    <th class="rdth-role">Role</th>
-    ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''} rdth-cov-${d.coverage || 'roster_only'}">${d.label}</th>`).join('')}
-    <th class="rdth-weekly">Weekly FTE</th>
-  </tr>${headRow2}`;
-
-  // Find global max FTE for heat colouring (required only)
-  let maxFte = 0;
-  skills.forEach(sk => {
-    days.forEach(d => { if ((d.skill_fte[sk] || 0) > maxFte) maxFte = d.skill_fte[sk] || 0; });
-  });
-
   // Helper: colour a gap value
   function gapCls(g) {
     if (g > 0)  return 'rdc-gap-ok';
@@ -1295,128 +1335,311 @@ function renderRosterWeek(data, weekIdx) {
     return 'rdc-gap-zero';
   }
 
-  // Build skill rows — single row per skill: Required only
-  let rowsHtml = skills.map(sk => {
-    const color = SKILL_COLOR[sk] || stringToColor(sk);
-
-    // Compute week totals (required only)
-    const weekReq = days.reduce((s, d) => s + (d.skill_fte[sk] || 0), 0);
-
-    // Req cells
-    const reqCells = days.map(d => {
-      const v = d.skill_fte[sk] || 0;
-      const intensity = maxFte > 0 ? v / maxFte : 0;
-      
-      let inlineStyle = '';
-      if (v > 0) {
-        const mixPct = intensity > 0.8 ? '20%' : intensity > 0.5 ? '12%' : '8%';
-        inlineStyle = `style="background: color-mix(in srgb, ${color} ${mixPct}, transparent); color: ${color}; font-weight: ${intensity > 0.8 ? '700' : '500'};"`;
-      } else {
-        inlineStyle = `style="color: var(--muted);"`;
-      }
-      
-      const covCls = isCurrent ? `rdc-cov-${d.coverage}` : '';
-      return `<td class="roster-demand-cell ${covCls}" ${inlineStyle} title="${sk} Req: ${v.toFixed(2)} FTE">${v > 0 ? v.toFixed(1) : '—'}</td>`;
-    }).join('');
-
-    return `
-      <tr class="rd-skill-row">
-        <td class="rdth-role-cell" style="border-right:2px solid var(--border)">
-          <span class="rd-skill-dot" style="background:${color}"></span>${sk}
-        </td>
-        ${reqCells}
-        <td class="rdc-weekly rdc-req-lbl" title="Weekly Required">${weekReq.toFixed(1)}</td>
-      </tr>`;
-  }).join('');
-
-  // ── Summary rows (Total Required / Total Available / Total Gap) ──────────
+  // Pre-compute daily totals (used in both tables)
   const totalsReq   = days.map(d => d.total_fte);
   const totalsAvail = days.map(d => d.total_avail);
   const totalsGap   = days.map(d => d.total_gap);
-  const grandReq    = totalsReq.reduce((s, v) => s + v, 0);
-  const grandAvail  = totalsAvail.reduce((s, v) => s + v, 0);
-  const grandGap    = totalsGap.reduce((s, v) => s + v, 0);
+  const avgReq   = totalsReq.reduce((s, v) => s + v, 0) / days.length;
+  const avgAvail = totalsAvail.reduce((s, v) => s + v, 0) / days.length;
+  const avgGap   = totalsGap.reduce((s, v) => s + v, 0) / days.length;
 
-  rowsHtml += `
-    <tr class="rd-total-row rd-sep-row">
-      <td class="rdth-role-cell"><strong>Total Required</strong></td>
-      ${totalsReq.map(v => `<td class="rdc-total">${v.toFixed(1)}</td>`).join('')}
-      <td class="rdc-weekly"><strong>${grandReq.toFixed(1)}</strong></td>
-    </tr>
-    <tr class="rd-total-row rd-avail-total-row">
-      <td class="rdth-role-cell"><strong>Total Available</strong></td>
-      ${totalsAvail.map(v => `<td class="rdc-total rdc-avail">${v.toFixed(1)}</td>`).join('')}
-      <td class="rdc-weekly rdc-avail"><strong>${grandAvail.toFixed(1)}</strong></td>
-    </tr>
-    <tr class="rd-total-row rd-gap-total-row">
-      <td class="rdth-role-cell"><strong>Total Gap</strong></td>
-      ${totalsGap.map(g => `<td class="rdc-total ${gapCls(g)}">${g > 0 ? '+' : ''}${g.toFixed(1)}</td>`).join('')}
-      <td class="rdc-weekly ${gapCls(grandGap)}"><strong>${grandGap > 0 ? '+' : ''}${grandGap.toFixed(1)}</strong></td>
-    </tr>`;
-
-  dBody.innerHTML = rowsHtml;
-
-  // ── Table 2: Shift Plan ─────────────────────────────────────
+  // ── Table 2: Shift Plan ─────────────────────────────────────────────────
   const sHead = document.getElementById('roster-shift-head');
   const sBody = document.getElementById('roster-shift-body');
 
-  // Add coverage badge row if current week
   const covRow2 = isCurrent
     ? `<tr class="rdth-cov-row"><th></th>${days.map(d =>
         `<th class="rdth-cov-cell">${COV_BADGES[d.coverage] || ''}</th>`
       ).join('')}<th></th></tr>`
     : '';
 
-  sHead.innerHTML = `<tr>
-    <th class="rdth-role">Shift</th>
-    ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''} rdth-cov-${d.coverage || 'roster_only'}">${d.label}</th>`).join('')}
-    <th class="rdth-weekly">Avg/Day</th>
-  </tr>${covRow2}`;
+  if (_shiftPivoted) {
+    // ── Pivoted: rows = Days, columns = Shifts ──────────────────────────────
+    const shiftTemplates = data.shift_templates;
+    const SHIFT_COLS = ['#8d8d8d', ...shiftTemplates.map(t => t.color)];
 
-  // Each shift band row
-  const shiftBands = data.shift_bands;
-  let shiftRows = shiftBands.map(band => {
-    const cells = days.map(d => {
-      const shift = d.shifts.find(s => s.name === band.name);
-      if (!shift) return '<td class="roster-shift-cell">—</td>';
-      const hc = shift.headcount;
-      const fte = shift.total_fte.toFixed(1);
-      return `<td class="roster-shift-cell" title="${band.name}: ${fte} FTE, ${hc} staff">
-        <span class="rs-hc" style="color:${band.color}">${hc}</span>
-        <span class="rs-fte">${fte}</span>
-      </td>`;
-    }).join('');
-
-    const avgHc = (days.reduce((s, d) => {
-      const shift = d.shifts.find(sh => sh.name === band.name);
-      return s + (shift ? shift.headcount : 0);
-    }, 0) / days.length).toFixed(1);
-
-    return `<tr class="roster-shift-row">
-      <td class="rdth-role-cell">
-        <span class="rs-band-dot" style="background:${band.color}"></span>
-        <span style="color:${band.color};font-weight:700">${band.name}</span>
-        <span class="rs-ratio">${Math.round(band.ratio * 100)}%</span>
-      </td>
-      ${cells}
-      <td class="rdc-weekly">${avgHc}</td>
+    sHead.innerHTML = `<tr>
+      <th class="rdth-role">Day</th>
+      ${shiftTemplates.map(t =>
+        `<th class="rdth-day" style="color:${t.color}">${t.name}</th>`
+      ).join('')}
+      <th class="rdth-weekly">Total FTE</th>
+      <th class="rdth-weekly" style="color:var(--teal)">Available</th>
+      <th class="rdth-weekly">Gap</th>
     </tr>`;
-  }).join('');
 
-  // Total headcount row
-  const totalHcCells = days.map(d => {
-    const total = d.shifts.reduce((s, sh) => s + sh.headcount, 0);
-    return `<td class="rdc-total">${total}</td>`;
-  }).join('');
-  const avgTotal = (days.reduce((s, d) => s + d.shifts.reduce((ss, sh) => ss + sh.headcount, 0), 0) / days.length).toFixed(1);
+    const avgByShift = shiftTemplates.map(t =>
+      days.reduce((s, d) => { const sh = d.shifts.find(x => x.id === t.id); return s + (sh ? sh.total_fte : 0); }, 0) / days.length
+    );
+    const avgTotal = avgByShift.reduce((s, v) => s + v, 0);
 
-  shiftRows += `<tr class="rd-total-row">
-    <td class="rdth-role-cell"><strong>Total Headcount</strong></td>
-    ${totalHcCells}
-    <td class="rdc-weekly"><strong>${avgTotal}</strong></td>
-  </tr>`;
+    sBody.innerHTML = days.map((d, di) => {
+      const covBadge = isCurrent ? (COV_BADGES[d.coverage] || '') : '';
+      const shiftCells = shiftTemplates.map(t => {
+        const sh = d.shifts.find(x => x.id === t.id);
+        const v = sh ? sh.total_fte : 0;
+        return `<td class="roster-shift-hdr-cell" style="background:color-mix(in srgb,${t.color} 10%,transparent)">` +
+          (v > 0 ? `<strong style="color:${t.color}">${v.toFixed(1)}</strong>` : `<span style="color:var(--muted)">—</span>`) + `</td>`;
+      }).join('');
+      const rowTotal = d.shifts.reduce((s, sh) => s + sh.total_fte, 0);
+      const isPeak = d.dow === 4 || d.dow === 5;
+      const avail = totalsAvail[di] ?? 0;
+      const gap = totalsGap[di] ?? 0;
+      return `<tr class="${isPeak ? 'roster-pivot-peak-row' : ''}">
+        <td class="rdth-role-cell"><strong>${d.label}</strong> ${covBadge}</td>
+        ${shiftCells}
+        <td class="rdc-weekly"><strong>${rowTotal.toFixed(1)}</strong></td>
+        <td class="rdc-total rdc-avail">${(+avail || 0).toFixed(1)}</td>
+        <td class="rdc-total ${gapCls(gap)}">${gap >= 0 ? '+' : ''}${(+gap || 0).toFixed(1)}</td>
+      </tr>`;
+    }).join('') + `<tr class="rd-total-row">
+      <td class="rdth-role-cell"><strong>Avg/Day</strong></td>
+      ${avgByShift.map((v, i) => `<td class="roster-shift-hdr-cell" style="background:color-mix(in srgb,${shiftTemplates[i].color} 10%,transparent)"><strong style="color:${shiftTemplates[i].color}">${v.toFixed(1)}</strong></td>`).join('')}
+      <td class="rdc-weekly"><strong>${avgTotal.toFixed(1)}</strong></td>
+      <td class="rdc-total rdc-avail"><strong>${avgAvail.toFixed(1)}</strong></td>
+      <td class="rdc-total ${gapCls(avgGap)}"><strong>${avgGap >= 0 ? '+' : ''}${avgGap.toFixed(1)}</strong></td>
+    </tr>`;
+  } else {
+    // ── Normal: rows = Shifts → Skills, columns = Days ───────────────────────
+    sHead.innerHTML = `<tr>
+      <th class="rdth-role">Shift / Role</th>
+      ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''} rdth-cov-${d.coverage || 'roster_only'}">${d.label}</th>`).join('')}
+      <th class="rdth-weekly">Avg/Day</th>
+    </tr>${covRow2}`;
 
-  sBody.innerHTML = shiftRows;
+    const shiftTemplates = data.shift_templates;
+    let shiftRows = '';
+
+    shiftTemplates.forEach(tmpl => {
+      const shiftTotalCells = days.map(d => {
+        const sh = d.shifts.find(s => s.id === tmpl.id);
+        const fte = sh ? sh.total_fte : 0;
+        return `<td class="roster-shift-hdr-cell" style="background:color-mix(in srgb,${tmpl.color} 10%,transparent)">` +
+          (fte > 0 ? `<strong style="color:${tmpl.color}">${fte.toFixed(1)}</strong>` : `<span style="color:var(--muted)">—</span>`) + `</td>`;
+      }).join('');
+      const avgShiftFte = days.reduce((s, d) => {
+        const sh = d.shifts.find(sh => sh.id === tmpl.id); return s + (sh ? sh.total_fte : 0);
+      }, 0) / days.length;
+
+      shiftRows += `<tr class="roster-shift-section-hdr" data-expanded="false" style="cursor:pointer" onclick="toggleRosterGroup(this, '${tmpl.id}', 'shift')">
+        <td class="rdth-role-cell roster-shift-section-hdr-label">
+          <span class="rs-expand-icon" style="margin-right:4px;font-size:0.65rem;opacity:0.7">▶</span>
+          <span class="rs-band-dot" style="background:${tmpl.color}"></span>
+          <strong style="color:${tmpl.color}">${tmpl.name}</strong>
+        </td>
+        ${shiftTotalCells}
+        <td class="rdc-weekly"><strong style="color:${tmpl.color}">${avgShiftFte > 0 ? avgShiftFte.toFixed(1) : '—'}</strong></td>
+      </tr>`;
+
+      skills.forEach(sk => {
+        const color = SKILL_COLOR[sk] || stringToColor(sk);
+        const skillCells = days.map(d => {
+          const sh = d.shifts.find(s => s.id === tmpl.id);
+          const v = sh ? (sh.skills[sk] || 0) : 0;
+          return `<td class="roster-shift-skill-cell" title="${tmpl.name} — ${sk}: ${v.toFixed(2)} FTE">` +
+            (v > 0.05 ? `<span style="color:${color}">${v.toFixed(1)}</span>` : `<span style="color:var(--muted)">—</span>`) + `</td>`;
+        }).join('');
+        const avgSkill = days.reduce((s, d) => {
+          const sh = d.shifts.find(sh => sh.id === tmpl.id);
+          return s + (sh ? (sh.skills[sk] || 0) : 0);
+        }, 0) / days.length;
+        shiftRows += `<tr class="roster-shift-skill-row" data-roster-group="shift-${tmpl.id}" style="display:none">
+          <td class="rdth-role-cell roster-shift-skill-label">
+            <span class="rd-skill-dot" style="background:${color}"></span>
+            <span style="color:${color};font-size:0.8rem">${sk}</span>
+          </td>
+          ${skillCells}
+          <td class="rdc-weekly" style="color:${color};font-size:0.8rem">${avgSkill > 0.05 ? avgSkill.toFixed(1) : '—'}</td>
+        </tr>`;
+      });
+    });
+
+    const totalFteCells = days.map(d => {
+      const total = d.shifts.reduce((s, sh) => s + sh.total_fte, 0);
+      return `<td class="rdc-total">${total.toFixed(1)}</td>`;
+    }).join('');
+    const avgTotalFte = days.reduce((s, d) =>
+      s + d.shifts.reduce((ss, sh) => ss + sh.total_fte, 0), 0) / days.length;
+
+    const totalAvailCells = totalsAvail.map(v => `<td class="rdc-total rdc-avail">${(+v || 0).toFixed(1)}</td>`).join('');
+    const gapRowCells = totalsGap.map(g => `<td class="rdc-total ${gapCls(g)}">${g >= 0 ? '+' : ''}${(+g || 0).toFixed(1)}</td>`).join('');
+
+    shiftRows += `<tr class="rd-total-row">
+      <td class="rdth-role-cell"><strong>Total FTE Required</strong></td>
+      ${totalFteCells}
+      <td class="rdc-weekly"><strong>${avgTotalFte.toFixed(1)}</strong></td>
+    </tr>
+    <tr class="rd-total-row rd-avail-row">
+      <td class="rdth-role-cell"><strong>Total Available</strong></td>
+      ${totalAvailCells}
+      <td class="rdc-weekly rdc-avail"><strong>${avgAvail.toFixed(1)}</strong></td>
+    </tr>
+    <tr class="rd-total-row rd-gap-row">
+      <td class="rdth-role-cell"><strong>Gap (Avail − Req)</strong></td>
+      ${gapRowCells}
+      <td class="rdc-weekly ${gapCls(avgGap)}"><strong>${avgGap >= 0 ? '+' : ''}${avgGap.toFixed(1)}</strong></td>
+    </tr>`;
+
+    sBody.innerHTML = shiftRows;
+  }
+
+  // ── Table 3: 3-Hour Block FTE ────────────────────────────────────────────
+  document.getElementById('roster-block-title').textContent =
+    `3-Hour Block FTE — ${weekLabel}`;
+
+  const bHead = document.getElementById('roster-block-head');
+  const bBody = document.getElementById('roster-block-body');
+  const blockDefs = data.time_block_defs || [];
+
+  // Gradient: map block index 0-7 to a colour scale (cooler overnight → warmer day)
+  const BLOCK_COLORS = [
+    '#64748b','#78716c','#f97316','#f59e0b',
+    '#eab308','#f97316','#ef4444','#8b5cf6',
+  ];
+
+  if (_blockPivoted) {
+    // ── Pivoted: rows = Days, columns = Time Blocks (total FTE) ─────────────
+    bHead.innerHTML = `<tr>
+      <th class="rdth-role">Day</th>
+      ${blockDefs.map((tb, i) =>
+        `<th class="rdth-day" style="color:${BLOCK_COLORS[i]}">${tb.label}</th>`
+      ).join('')}
+      <th class="rdth-weekly">Total FTE</th>
+      <th class="rdth-weekly" style="color:var(--teal)">Available</th>
+      <th class="rdth-weekly">Gap</th>
+    </tr>`;
+
+    const avgByBlock = blockDefs.map((tb, i) =>
+      days.reduce((s, d) => {
+        const bl = d.time_blocks && d.time_blocks.find(b => b.id === tb.id);
+        return s + (bl ? bl.total_fte : 0);
+      }, 0) / days.length
+    );
+    const avgTotal = avgByBlock.reduce((s, v) => s + v, 0);
+
+    bBody.innerHTML = days.map((d, di) => {
+      const covBadge = isCurrent ? (COV_BADGES[d.coverage] || '') : '';
+      const isPeak = d.dow === 4 || d.dow === 5;
+      const blockCells = blockDefs.map((tb, i) => {
+        const bl = d.time_blocks && d.time_blocks.find(b => b.id === tb.id);
+        const v = bl ? bl.total_fte : 0;
+        const intensity = v / (days.reduce((mx, dd) => {
+          const b2 = dd.time_blocks && dd.time_blocks.find(b => b.id === tb.id);
+          return Math.max(mx, b2 ? b2.total_fte : 0);
+        }, 0.01));
+        const bg = `color-mix(in srgb,${BLOCK_COLORS[i]} ${Math.round(intensity * 22)}%,transparent)`;
+        return `<td class="roster-block-cell" style="background:${bg}">` +
+          (v > 0.05 ? `<span style="color:${BLOCK_COLORS[i]};font-weight:600">${v.toFixed(1)}</span>` : `<span style="color:var(--muted)">—</span>`) + `</td>`;
+      }).join('');
+      const rowTotal = (d.time_blocks || []).reduce((s, b) => s + b.total_fte, 0);
+      const avail = totalsAvail[di] ?? 0;
+      const gap = totalsGap[di] ?? 0;
+      return `<tr class="${isPeak ? 'roster-pivot-peak-row' : ''}">
+        <td class="rdth-role-cell"><strong>${d.label}</strong> ${covBadge}</td>
+        ${blockCells}
+        <td class="rdc-weekly"><strong>${rowTotal.toFixed(1)}</strong></td>
+        <td class="rdc-total rdc-avail">${(+avail || 0).toFixed(1)}</td>
+        <td class="rdc-total ${gapCls(gap)}">${gap >= 0 ? '+' : ''}${(+gap || 0).toFixed(1)}</td>
+      </tr>`;
+    }).join('') + `<tr class="rd-total-row">
+      <td class="rdth-role-cell"><strong>Avg/Day</strong></td>
+      ${avgByBlock.map((v, i) => `<td class="roster-block-cell" style="background:color-mix(in srgb,${BLOCK_COLORS[i]} 15%,transparent)"><strong style="color:${BLOCK_COLORS[i]}">${v.toFixed(1)}</strong></td>`).join('')}
+      <td class="rdc-weekly"><strong>${avgTotal.toFixed(1)}</strong></td>
+      <td class="rdc-total rdc-avail"><strong>${avgAvail.toFixed(1)}</strong></td>
+      <td class="rdc-total ${gapCls(avgGap)}"><strong>${avgGap >= 0 ? '+' : ''}${avgGap.toFixed(1)}</strong></td>
+    </tr>`;
+  } else {
+    // ── Normal: rows = Blocks (section hdr) → Skills (sub-rows), columns = Days ──
+    const covRow3 = isCurrent
+      ? `<tr class="rdth-cov-row"><th></th>${days.map(d =>
+          `<th class="rdth-cov-cell">${COV_BADGES[d.coverage] || ''}</th>`
+        ).join('')}<th></th></tr>`
+      : '';
+
+    bHead.innerHTML = `<tr>
+      <th class="rdth-role">Block / Touchpoint</th>
+      ${days.map(d => `<th class="rdth-day ${d.dow === 4 || d.dow === 5 ? 'rdth-peak' : ''} rdth-cov-${d.coverage || 'roster_only'}">${d.label}</th>`).join('')}
+      <th class="rdth-weekly">Avg/Day</th>
+    </tr>${covRow3}`;
+
+    let blockRows = '';
+
+    blockDefs.forEach((tb, i) => {
+      const bColor = BLOCK_COLORS[i];
+
+      // Block section header: total FTE across all skills for this block
+      const blkTotalCells = days.map(d => {
+        const bl = d.time_blocks && d.time_blocks.find(b => b.id === tb.id);
+        const v = bl ? bl.total_fte : 0;
+        return `<td class="roster-shift-hdr-cell" style="background:color-mix(in srgb,${bColor} 12%,transparent)">` +
+          (v > 0 ? `<strong style="color:${bColor}">${v.toFixed(1)}</strong>` : `<span style="color:var(--muted)">—</span>`) + `</td>`;
+      }).join('');
+      const avgBlkTotal = days.reduce((s, d) => {
+        const bl = d.time_blocks && d.time_blocks.find(b => b.id === tb.id);
+        return s + (bl ? bl.total_fte : 0);
+      }, 0) / days.length;
+
+      blockRows += `<tr class="roster-shift-section-hdr" data-expanded="false" style="cursor:pointer" onclick="toggleRosterGroup(this, '${tb.id}', 'block')">
+        <td class="rdth-role-cell roster-shift-section-hdr-label">
+          <span class="rs-expand-icon" style="margin-right:4px;font-size:0.65rem;opacity:0.7">▶</span>
+          <span class="rs-band-dot" style="background:${bColor}"></span>
+          <strong style="color:${bColor}">${tb.label}</strong>
+        </td>
+        ${blkTotalCells}
+        <td class="rdc-weekly"><strong style="color:${bColor}">${avgBlkTotal > 0 ? avgBlkTotal.toFixed(1) : '—'}</strong></td>
+      </tr>`;
+
+      // Sub-row per touchpoint (skill)
+      skills.forEach(sk => {
+        const skColor = SKILL_COLOR[sk] || stringToColor(sk);
+        const skillCells = days.map(d => {
+          const bl = d.time_blocks && d.time_blocks.find(b => b.id === tb.id);
+          const v = bl ? (bl.skills[sk] || 0) : 0;
+          return `<td class="roster-block-skill-cell" title="${tb.label} — ${sk}: ${v.toFixed(2)} FTE">` +
+            (v > 0.05
+              ? `<span style="color:${skColor}">${v.toFixed(1)}</span>`
+              : `<span style="color:var(--muted)">—</span>`) + `</td>`;
+        }).join('');
+        const avgSkInBlock = days.reduce((s, d) => {
+          const bl = d.time_blocks && d.time_blocks.find(b => b.id === tb.id);
+          return s + (bl ? (bl.skills[sk] || 0) : 0);
+        }, 0) / days.length;
+
+        blockRows += `<tr class="roster-block-row" data-roster-group="block-${tb.id}" style="display:none">
+          <td class="rdth-role-cell roster-block-label">
+            <span class="rd-skill-dot" style="background:${skColor}"></span>
+            <span style="color:${skColor};font-size:0.78rem">${sk}</span>
+          </td>
+          ${skillCells}
+          <td class="rdc-weekly" style="color:${skColor};font-size:0.78rem">${avgSkInBlock > 0.05 ? avgSkInBlock.toFixed(1) : '—'}</td>
+        </tr>`;
+      });
+    });
+
+    // Grand total row (daily total FTE across all blocks / skills)
+    const blkTotCells = days.map(d => `<td class="rdc-total">${(d.total_fte || 0).toFixed(1)}</td>`).join('');
+    const blkGrandAvg = days.reduce((s, d) => s + (d.total_fte || 0), 0) / days.length;
+    const blkAvailCells = totalsAvail.map(v => `<td class="rdc-total rdc-avail">${(+v || 0).toFixed(1)}</td>`).join('');
+    const blkGapCells = totalsGap.map(g => `<td class="rdc-total ${gapCls(g)}">${g >= 0 ? '+' : ''}${(+g || 0).toFixed(1)}</td>`).join('');
+
+    blockRows += `<tr class="rd-total-row">
+      <td class="rdth-role-cell"><strong>Daily Total FTE Required</strong></td>
+      ${blkTotCells}
+      <td class="rdc-weekly"><strong>${blkGrandAvg.toFixed(1)}</strong></td>
+    </tr>
+    <tr class="rd-total-row rd-avail-row">
+      <td class="rdth-role-cell"><strong>Total Available</strong></td>
+      ${blkAvailCells}
+      <td class="rdc-weekly rdc-avail"><strong>${avgAvail.toFixed(1)}</strong></td>
+    </tr>
+    <tr class="rd-total-row rd-gap-row">
+      <td class="rdth-role-cell"><strong>Gap (Avail − Req)</strong></td>
+      ${blkGapCells}
+      <td class="rdc-weekly ${gapCls(avgGap)}"><strong>${avgGap >= 0 ? '+' : ''}${avgGap.toFixed(1)}</strong></td>
+    </tr>`;
+
+    bBody.innerHTML = blockRows;
+  }
 }
 
 // (four-week-roster init is wired via the shared sub-tab click handler above)

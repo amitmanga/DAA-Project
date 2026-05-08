@@ -9,9 +9,9 @@ const ID = {
 };
 
 const ID_SKILL_COLOR = {
-  'checkin': '#2563EB', 'security': '#DC2626', 'cbp': '#7C3AED',
-  'lounge': '#059669', 'boarding': '#D97706', 'immigration': '#0891B2',
-  'baggage': '#4B5563',
+  'Checkin': '#2563EB', 'Security': '#DC2626', 'CBP': '#7C3AED',
+  'Lounge': '#059669', 'Boarding': '#D97706', 'Immigration': '#0891B2',
+  'Baggage': '#4B5563',
   'GNIB': '#3498DB', 'CBP Pre-clearance': '#9B59B6', 'Bussing': '#E8850A',
   'PBZ': '#2ECC71', 'Mezz Operation': '#1ABC9C', 'Litter Picking': '#E74C3C',
   'Gate 335': '#F39C12', 'Arr Customer Service': '#5DADE2',
@@ -1235,7 +1235,7 @@ function closeManageModal() {
 
 // ── Hourly Workforce Coverage Heatmap ───────────────────────────
 const ID_COVERAGE_SKILLS = [
-  'checkin', 'security', 'cbp', 'lounge', 'boarding', 'immigration', 'baggage',
+  'Checkin', 'Security', 'CBP', 'Lounge', 'Boarding', 'Immigration', 'Baggage',
   'GNIB', 'Mezz Operation', 'CBP Pre-clearance', 'Gate 335',
   'Bussing', 'Arr Customer Service', 'Transfer Corridor',
   'Check-in/Trolleys', 'T1/T2 Trolleys L/UL', 'Dep/Trolleys',
