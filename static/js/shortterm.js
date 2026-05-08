@@ -20,11 +20,21 @@ const ST_SKILL_COLOR = {
   'Dep / Trolleys': '#8E44AD', 'T1/T2 Trolleys L/UL': '#E91E63',
 };
 
+function fmtSkill(sk) {
+  if (!sk) return '';
+  const found = Object.keys(ST_SKILL_COLOR).find(k => k.toLowerCase() === sk.toLowerCase());
+  if (found) return found;
+  const allUpper = ['CBP','GNIB','PBZ'];
+  if (allUpper.includes(sk.toUpperCase())) return sk.toUpperCase();
+  return sk.charAt(0).toUpperCase() + sk.slice(1);
+}
+
 let ST_DATES = [];
 let ST_CURRENT_DATE = null;
 let ST_DATA = null;
 let ST_ACTIVE_TAB = 'staff-timeline';
 const ST_CHARTS = {};
+let ST_OPT_RESULTS_CACHE = null; // persists across sub-tab switches
 
 // Coverage heatmap defaults and skills (PAX-derived skills will be merged)
 const ST_COVERAGE_SKILLS = [
@@ -35,6 +45,22 @@ const ST_COVERAGE_SKILLS = [
   'PBZ', 'Departures', 'Litter Picking'
 ];
 let ST_COVERAGE_PAX_ONLY = true;
+
+// 3-hour block definitions shared across tabs
+const ST_TIME_BLOCKS = [
+  {id:'b00_03',label:'00–03',start:0,   end:180},
+  {id:'b03_06',label:'03–06',start:180, end:360},
+  {id:'b06_09',label:'06–09',start:360, end:540},
+  {id:'b09_12',label:'09–12',start:540, end:720},
+  {id:'b12_15',label:'12–15',start:720, end:900},
+  {id:'b15_18',label:'15–18',start:900, end:1080},
+  {id:'b18_21',label:'18–21',start:1080,end:1260},
+  {id:'b21_24',label:'21–24',start:1260,end:1440},
+];
+
+// View-mode state (persists across date switches)
+let _stStaffBlockView  = false;
+let _stTimelineView    = '15min';
 
 
 // ── Boot ───────────────────────────────────────────────────────
@@ -105,7 +131,6 @@ function renderShortTermDay() {
     <div id="st-alerts-panel"></div>
     <!-- Sub-tabs -->
     <div class="sub-tabs" style="margin-top:20px">
-      <button class="sub-tab ${ST_ACTIVE_TAB==='staff'?'active':''}" data-sttab="staff">👥 Staff List</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='roster-board'?'active':''}" data-sttab="roster-board">📋 Roster Board</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='opt'?'active':''}" data-sttab="opt">⚙ Optimization</button>
@@ -448,8 +473,9 @@ async function applySTRecommendation(btn) {
 // ── Sub-content router ─────────────────────────────────────────
 function renderSTSubContent() {
   const el = document.getElementById('st-sub-content');
+  // guard: if legacy 'staff' tab was active, redirect to timeline
+  if (ST_ACTIVE_TAB === 'staff') ST_ACTIVE_TAB = 'staff-timeline';
   if (ST_ACTIVE_TAB === 'demand') renderSTDemandTab(el);
-  else if (ST_ACTIVE_TAB === 'staff') renderSTStaffTab(el);
   else if (ST_ACTIVE_TAB === 'staff-timeline') renderSTRosterTimeline(el);
   else if (ST_ACTIVE_TAB === 'roster-board') renderSTRosterBoard(el);
   else if (ST_ACTIVE_TAB === 'opt') renderSTOptimization(el);
@@ -463,18 +489,19 @@ async function renderSTRosterTimeline(container) {
     <div class="panel mt-16">
       <div class="panel-title-row">
         <span class="panel-title">Operational Roster Timeline — ${ST_DATA.date_label}</span>
-        <div class="filter-row">
-          <input class="search-input" id="st-staff-timeline-search" placeholder="Search staff ID / skill…" style="width:200px" />
+        <div class="filter-row" style="flex-wrap:wrap;gap:6px">
+          <input class="search-input" id="st-staff-timeline-search" placeholder="Search staff ID / skill…" style="width:180px" />
           <select id="st-staff-timeline-shift" class="select-input">
             <option value="">All Shifts</option>
-            <option value="00:00">00:00 (00:00 - 12:00)</option>
-            <option value="03:00">03:00 (03:00 - 15:00)</option>
-            <option value="07:00">07:00 (07:00 - 19:00)</option>
-            <option value="12:00">12:00 (12:00 - 00:00)</option>
+            ${[...new Set((ST_DATA.staff||[]).map(s=>s.shift).filter(Boolean))].sort().map(sh => {
+              const samp = (ST_DATA.staff||[]).find(s=>s.shift===sh);
+              const lbl  = samp?.shift_label || sh;
+              return `<option value="${sh}">${lbl}</option>`;
+            }).join('')}
           </select>
         </div>
       </div>
-      <div id="st-staff-timeline" style="margin-top:20px; overflow-x:auto;"></div>
+      <div id="st-staff-timeline" style="margin-top:16px;overflow-x:auto;"></div>
     </div>
   `;
 
@@ -543,7 +570,7 @@ async function renderSTRosterTimeline(container) {
           <div class="rt-staff-label">
             <div style="text-align:right">
               <div style="font-weight:700; color:var(--text); line-height:1.1; font-size:0.75rem">${s.id}</div>
-              <div style="font-size:0.55rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.02em">${s.skill1}</div>
+              <div style="font-size:0.55rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.02em">${fmtSkill(s.skill1)}</div>
             </div>
           </div>
           <div class="rt-track">
@@ -566,9 +593,22 @@ async function renderSTRosterTimeline(container) {
       </div>`;
   };
 
-  searchInput.addEventListener('input', refreshTimeline);
-  shiftSelect.addEventListener('change', refreshTimeline);
-  refreshTimeline();
+  const doRefresh = () => {
+    const q = searchInput.value.toLowerCase();
+    const sf = shiftSelect.value;
+    const filtered = (ST_DATA.staff || []).filter(s => {
+      const mq = !q || s.id.toLowerCase().includes(q) || s.skill1.toLowerCase().includes(q);
+      const ms = !sf || s.shift.toLowerCase() === sf.toLowerCase();
+      return mq && ms;
+    });
+    const timelineEl = document.getElementById('st-staff-timeline');
+    if (!timelineEl) return;
+    renderST3HrBlocksTable(timelineEl, filtered);
+  };
+
+  searchInput.addEventListener('input', doRefresh);
+  shiftSelect.addEventListener('change', doRefresh);
+  doRefresh();
 
   // Render the Workforce Coverage heatmap beneath the roster timeline
   try {
@@ -578,84 +618,299 @@ async function renderSTRosterTimeline(container) {
   }
 }
 
+// ── Roster Timeline 3-Hour Block Table ────────────────────────────
+function renderST3HrBlocksTable(el, staffList) {
+  if (!staffList.length) {
+    el.innerHTML = '<div class="muted small" style="padding:16px">No staff match your filter.</div>';
+    return;
+  }
+
+  function getBlockInfo(s, block) {
+    const S = s.shift_start || 0;
+    const E = s.shift_end   || (S + 720);
+    if (!(S < block.end && E > block.start)) return null;
+    const inBlock = (s.assignments || []).filter(a =>
+      a.start_mins < block.end && a.end_mins > block.start
+    );
+    const blockBreaks = (s.breaks || []).filter(b =>
+      b.start_mins < block.end && b.end_mins > block.start
+    );
+    if (!inBlock.length) return { skill: null, terminal: null, color: '#94a3b8', blockBreaks };
+    const skillTime = {};
+    inBlock.forEach(a => {
+      const ov = Math.min(a.end_mins, block.end) - Math.max(a.start_mins, block.start);
+      skillTime[a.skill] = (skillTime[a.skill] || 0) + ov;
+    });
+    const topSk = Object.entries(skillTime).sort((a,b)=>b[1]-a[1])[0][0];
+    const domAsgn = inBlock.filter(a => a.skill === topSk)
+      .sort((a,b) => (Math.min(b.end_mins,block.end)-Math.max(b.start_mins,block.start)) -
+                     (Math.min(a.end_mins,block.end)-Math.max(a.start_mins,block.start)))[0];
+    return { skill: topSk, terminal: domAsgn?.terminal || null, color: ST_SKILL_COLOR[topSk] || '#888', blockBreaks };
+  }
+
+  const rows = staffList.map(s => {
+    const utilColor = s.utilisation_pct > 90 ? ST.crit : s.utilisation_pct > 70 ? ST.warn : ST.ok;
+    const sk1 = fmtSkill(s.skill1);
+    const grp = s.break_group || '';
+    const grpColor = grp === 'A' ? '#2563EB' : '#059669';
+
+    const cells = ST_TIME_BLOCKS.map(b => {
+      const info = getBlockInfo(s, b);
+      if (!info) return `<td class="st3-cell st3-off">–</td>`;
+
+      // Build break rows to embed inside the cell
+      const brkRows = info.blockBreaks.map(br => {
+        const isShort = (br.type || '').toLowerCase().includes('short');
+        const icon  = isShort ? '☕' : '🍽';
+        const color = isShort ? '#f97316' : '#dc2626';
+        return `<div style="margin-top:3px;padding:2px 4px;border-radius:3px;
+                             background:${color}22;border:1px solid ${color}66;
+                             font-size:0.52rem;font-weight:800;color:${color};
+                             white-space:nowrap;line-height:1.3">
+                  ${icon} ${br.start}–${br.end}
+                </div>`;
+      }).join('');
+
+      // "No task, but on shift" cell
+      if (!info.skill) {
+        return `<td class="st3-cell" style="background:#94a3b814;color:#94a3b8;
+            border:1px solid #94a3b830;text-align:center;vertical-align:middle;padding:4px 3px"
+            title="${b.label}: On shift${info.blockBreaks.map(br=>' | '+br.type+' '+br.start+'–'+br.end).join('')}">
+          <div style="font-size:0.6rem;opacity:0.6">On shift</div>
+          ${brkRows}
+        </td>`;
+      }
+
+      const termBadge = info.terminal
+        ? `<div style="font-size:0.58rem;font-weight:800;opacity:0.9;line-height:1.1;letter-spacing:0.02em">${info.terminal}</div>`
+        : '';
+      // Thicker colored left border when a break falls in this block
+      const brkAccent = info.blockBreaks.length
+        ? `border-left:3px solid ${grpColor};`
+        : `border-left:3px solid transparent;`;
+
+      return `<td class="st3-cell" style="background:${info.color}20;color:${info.color};
+          border:1px solid ${info.color}50;${brkAccent}
+          text-align:center;vertical-align:middle;padding:3px 3px;min-width:68px"
+          title="${b.label}: ${info.skill}${info.terminal?' @ '+info.terminal:''}${info.blockBreaks.map(br=>' | '+br.type+' '+br.start+'–'+br.end).join('')}">
+        ${termBadge}
+        <div style="font-size:0.62rem;font-weight:700;line-height:1.2">${info.skill}</div>
+        ${brkRows}
+      </td>`;
+    }).join('');
+
+    return `<tr>
+      <td style="padding:6px 10px;font-weight:700;font-size:0.82rem;white-space:nowrap">${s.id}</td>
+      <td style="padding:6px 10px;font-size:0.78rem"><span style="color:${ST_SKILL_COLOR[sk1]||'#888'};font-weight:600">${sk1}</span></td>
+      <td style="padding:6px 10px;font-size:0.75rem;white-space:nowrap">${s.shift_label || s.shift}</td>
+      <td style="padding:6px 10px;font-size:0.75rem;font-weight:700;color:${utilColor}">${Math.round(s.utilisation_pct)}%</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border)">
+          <th style="padding:8px 10px;text-align:left">Staff</th>
+          <th style="padding:8px 10px;text-align:left">Skill</th>
+          <th style="padding:8px 10px;text-align:left">Shift</th>
+          <th style="padding:8px 10px;text-align:left">Util</th>
+          ${ST_TIME_BLOCKS.map(b=>`<th style="padding:6px 4px;text-align:center;font-size:0.72rem;white-space:nowrap">${b.label}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;padding:10px 0 2px;font-size:0.72rem;color:var(--muted);align-items:center">
+      <span><span style="display:inline-block;width:10px;height:6px;border-radius:2px;background:#f97316;margin-right:4px;vertical-align:middle"></span>☕ Short Break (30 min)</span>
+      <span><span style="display:inline-block;width:10px;height:6px;border-radius:2px;background:#dc2626;margin-right:4px;vertical-align:middle"></span>🍽 Meal Break (60 min)</span>
+      <span style="color:#2563EB;font-weight:700">| Grp A</span>
+      <span style="color:#059669;font-weight:700">| Grp B</span>
+      <span style="opacity:0.5">Colored left border = break falls in that block</span>
+    </div>
+  </div>`;
+}
+
 // ── Roster Board Tab ─────────────────────────────────────────────
 async function renderSTRosterBoard(container) {
   container.innerHTML = `
     <div class="panel mt-16" style="min-height:200px">
-      <div class="loading-spinner"><div class="spinner"></div><span>Loading multi-day roster board…</span></div>
-    </div>
-  `;
+      <div class="loading-spinner"><div class="spinner"></div><span>Loading optimised roster board…</span></div>
+    </div>`;
 
-  try {
-    const data = await fetch('/api/short-term/roster-board').then(r => r.json());
-    if (data.error) throw new Error(data.error);
+  // Shift template colours (must match _ROSTER_SHIFTS in app.py)
+  const TMPL = {
+    Early:   { color:'#f97316', range:'00–12' },
+    Mid:     { color:'#3b82f6', range:'06–18' },
+    Late:    { color:'#8b5cf6', range:'12–24' },
+    Evening: { color:'#10b981', range:'16–04' },
+    Night:   { color:'#ec4899', range:'22–10' },
+    LEAVE:   { color:'#6b7280', range:''      },
+    OFF:     { color:'#374151', range:''      },
+    OTHER:   { color:'#6b7280', range:''      },
+  };
 
-    const dates = data.dates;
-    const employees = data.employees;
+  const runOptimise = async (extendedShifts) => {
+    const baseShifts = [
+      [0, 720, '00:00'], [360, 1080, '06:00'], [720, 1440, '12:00'],
+      [960, 1680, '16:00'], [1320, 2040, '22:00'],
+    ];
+    const extShifts = [
+      ...baseShifts,
+      [180, 900, '03:00'], [540, 1260, '09:00'], [900, 1620, '15:00'],
+    ];
+    const payload = {
+      date: ST_CURRENT_DATE,
+      use_mip: true, shift_duration_hrs: 12,
+      b1_duration_mins: 30, b2_duration_mins: 60,
+      tt_t1_t2: 15, tt_skill_switch: 10,
+      use_primary_first: true, allow_overlaps: false,
+      leave_types_excluded: [],
+      permitted_shifts: extendedShifts ? extShifts : baseShifts,
+    };
+    ST_DATA = await fetch('/api/short-term/optimise', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    }).then(r => r.json());
+  };
 
-    container.innerHTML = `
-      <div class="panel mt-16">
-        <div class="panel-title-row" style="margin-bottom:24px; border-bottom:1px solid var(--border); padding-bottom:16px;">
-          <div>
-            <h2 class="panel-title" style="margin:0; font-size:1.4rem; color:var(--text); text-transform:none;">📋 Individual Roster Board — Short-Term Overview</h2>
-            <p class="section-hint" style="margin:6px 0 0; color:var(--muted); font-size:0.88rem;">Weekly shift patterns for all rostered staff across the next 3 days</p>
+  const draw = async () => {
+    container.innerHTML = `<div class="panel mt-16" style="min-height:200px">
+      <div class="loading-spinner"><div class="spinner"></div><span>Loading optimised roster board…</span></div>
+    </div>`;
+    try {
+      const data = await fetch('/api/short-term/roster-board').then(r => r.json());
+      if (data.error) throw new Error(data.error);
+      const { dates, employees, day_stats = {} } = data;
+
+      // Coverage header cells
+      const covHtml = dates.map(d => {
+        const st = day_stats[d.date] || {};
+        const pct = st.coverage_pct || 0;
+        const col = pct >= 85 ? 'var(--ok)' : pct >= 65 ? 'var(--warn)' : 'var(--crit)';
+        return `<th style="padding:10px 12px;text-align:center;min-width:120px">
+          <div style="font-weight:700;font-size:0.88rem">${d.label}</div>
+          <div style="font-size:0.72rem;color:${col};font-weight:700;margin-top:2px">${pct}% coverage</div>
+          <div style="font-size:0.67rem;color:var(--muted)">${st.staff_count||0} on duty · ${st.absent||0} absent</div>
+        </th>`;
+      }).join('');
+
+      container.innerHTML = `
+        <div class="panel mt-16">
+          <div class="panel-title-row" style="margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:14px;flex-wrap:wrap;gap:10px">
+            <div>
+              <h2 class="panel-title" style="margin:0;font-size:1.2rem;color:var(--text);text-transform:none;">📋 Roster Board — Optimised Shift Assignments</h2>
+              <p class="section-hint" style="margin:5px 0 0;font-size:0.82rem">Shifts auto-assigned to maximise PAX coverage using 5 base shift windows (Early/Mid/Late/Evening/Night).</p>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
+              <button id="rb-reopt-btn" class="btn-update-fluid" style="font-size:0.8rem;padding:7px 14px">⚡ Re-optimise</button>
+              <button id="rb-ext-btn"  class="btn-ghost"         style="font-size:0.8rem" title="Add 3 extra shift windows for higher coverage">+ Extended Shifts</button>
+            </div>
           </div>
-        </div>
-        
-        <div class="roster-board-container">
-          <table class="rb-table">
-            <thead>
-              <tr>
-                <th class="rb-staff-cell">Employee / Role</th>
-                ${dates.map(d => `<th>${d.label}</th>`).join('')}
-              </tr>
-            </thead>
-            <tbody>
-              ${employees.map(emp => `
-                <tr>
-                  <td class="rb-staff-cell">
-                    <div class="rb-staff-name">${emp.id}</div>
-                    <div class="rb-staff-skill">${emp.skill}</div>
-                  </td>
-                  ${dates.map(d => {
-                    const shift = emp.shifts[d.date];
-                    const cls = `rb-${shift.type.toLowerCase()}`;
-                    const label = shift.label.split(' ')[0];
-                    return `
-                      <td>
-                        <div class="rb-shift-block ${cls}" title="${shift.timings || shift.label}">
-                          <div class="rb-shift-label">${label}</div>
-                          <div class="rb-shift-time">${shift.timings}</div>
-                        </div>
-                      </td>
-                    `;
-                  }).join('')}
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
 
-        <div class="rb-legend">
-          <div class="rb-leg-item"><div class="rb-leg-swatch rb-early"></div><span>Early shift (E)</span></div>
-          <div class="rb-leg-item"><div class="rb-leg-swatch rb-late"></div><span>Late shift (L)</span></div>
-          <div class="rb-leg-item"><div class="rb-leg-swatch rb-night"></div><span>Night shift (N)</span></div>
-          <div class="rb-leg-item"><div class="rb-leg-swatch rb-leave"></div><span>Annual leave</span></div>
-          <div class="rb-leg-item"><div class="rb-leg-swatch rb-off"></div><span>Off duty</span></div>
-        </div>
-      </div>
-    `;
-  } catch (err) {
-    container.innerHTML = `
-      <div class="panel mt-16" style="border-top:4px solid var(--crit);">
+          <!-- Shift template legend -->
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;padding:8px 0;border-bottom:1px solid var(--border)">
+            ${Object.entries(TMPL).filter(([t])=>!['LEAVE','OFF','OTHER'].includes(t)).map(([t,v])=>`
+              <div style="display:flex;align-items:center;gap:5px;font-size:0.78rem">
+                <div style="width:12px;height:12px;border-radius:3px;background:${v.color}"></div>
+                <strong>${t}</strong><span style="color:var(--muted)">${v.range}</span>
+              </div>`).join('')}
+            <div style="display:flex;align-items:center;gap:5px;font-size:0.78rem">
+              <div style="width:12px;height:12px;border-radius:3px;background:#6b7280"></div><span style="color:var(--muted)">Leave / Other</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:0.78rem">
+              <div style="width:12px;height:12px;border-radius:3px;background:#374151"></div><span style="color:var(--muted)">Off</span>
+            </div>
+          </div>
+
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+              <thead>
+                <tr style="border-bottom:2px solid var(--border)">
+                  <th style="padding:10px 12px;text-align:left;min-width:70px">Staff</th>
+                  <th style="padding:10px 12px;text-align:left;min-width:80px">Skill</th>
+                  ${covHtml}
+                </tr>
+              </thead>
+              <tbody>
+                ${employees.map(emp => `
+                  <tr style="border-bottom:1px solid var(--border)">
+                    <td style="padding:6px 12px;font-weight:700;font-size:0.82rem">${emp.id}</td>
+                    <td style="padding:6px 12px;font-size:0.75rem;color:${ST_SKILL_COLOR[fmtSkill(emp.skill)]||ST_SKILL_COLOR[emp.skill]||'#888'};font-weight:600">${fmtSkill(emp.skill)}</td>
+                    ${dates.map(d => {
+                      const sh = emp.shifts[d.date] || {template_id:'OFF',timings:'',is_absent:false};
+                      const tid = sh.template_id || (sh.is_absent ? 'LEAVE' : 'OFF');
+                      const meta = TMPL[tid] || TMPL.OTHER;
+                      const label = tid === 'OFF' ? 'Off' : tid === 'LEAVE' ? 'Leave' : tid;
+                      return `<td style="padding:5px 8px">
+                        <div style="background:${meta.color}20;border:1px solid ${meta.color}55;border-radius:5px;padding:5px 8px;text-align:center">
+                          <div style="font-size:0.8rem;font-weight:700;color:${meta.color}">${label}</div>
+                          ${sh.timings ? `<div style="font-size:0.65rem;color:var(--muted)">${sh.timings}</div>` : ''}
+                        </div>
+                      </td>`;
+                    }).join('')}
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Shift distribution summary -->
+          <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:24px;flex-wrap:wrap">
+            ${dates.map(d => {
+              const cnt = {};
+              employees.forEach(e => {
+                const t = e.shifts[d.date]?.template_id || 'OFF';
+                cnt[t] = (cnt[t]||0) + 1;
+              });
+              return `<div>
+                <div style="font-size:0.78rem;font-weight:700;margin-bottom:6px">${d.label}</div>
+                ${Object.entries(cnt).map(([t,n]) => {
+                  const c = (TMPL[t]||TMPL.OTHER).color;
+                  return `<div style="font-size:0.72rem;margin-bottom:3px;display:flex;align-items:center;gap:4px">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c}"></span>${t}: ${n}
+                  </div>`;
+                }).join('')}
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+
+      const refreshAllTabs = async () => {
+        // Re-render KPIs and alerts from the updated ST_DATA
+        if (ST_DATA?.kpis) renderSTKPIs(ST_DATA.kpis);
+        if (ST_DATA?.alerts !== undefined) renderSTAlerts(ST_DATA.alerts, ST_DATA.date);
+        // Rebuild the Roster Board grid
+        await draw();
+        // If the user is currently on another sub-tab, refresh it too
+        if (ST_ACTIVE_TAB !== 'roster-board') renderSTSubContent();
+      };
+
+      // Re-optimise current day button (MIP always on)
+      document.getElementById('rb-reopt-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('rb-reopt-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 0.6s linear infinite;vertical-align:middle;margin-right:5px"></span>Optimising…';
+        await runOptimise(false);
+        await refreshAllTabs();
+      });
+
+      // Extended shifts button
+      document.getElementById('rb-ext-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('rb-ext-btn');
+        btn.disabled = true; btn.textContent = 'Adding shifts…';
+        await runOptimise(true);
+        await refreshAllTabs();
+      });
+
+    } catch (err) {
+      container.innerHTML = `<div class="panel mt-16" style="border-top:4px solid var(--crit)">
         <h2 class="panel-title">Roster Board Error</h2>
-        <div class="alert-crit" style="border-radius:6px; padding:16px;">
-          ${err.message}
-        </div>
-        <p class="muted small mt-12">This may happen if data for the requested dates is not yet available or the optimizer failed.</p>
-      </div>
-    `;
-  }
+        <div style="padding:12px;border-radius:6px;background:var(--crit-light);color:var(--crit)">${err.message}</div>
+      </div>`;
+    }
+  };
+
+  await draw();
 }
 
 // ── Workforce Coverage (Hourly Heatmap) for Short-Term ─────────────
@@ -663,31 +918,52 @@ function buildSTCoverageData(tasks) {
   const hours = [];
   for (let h = 4; h <= 23; h++) hours.push(h);
 
-  // dynamic skills
-  const baseSkills = Array.isArray(ST_COVERAGE_SKILLS) ? ST_COVERAGE_SKILLS.slice() : [];
+  // Always PAX skills only
   const paxSkills = Array.isArray(ST_DATA?.pax_coverage_skills) ? ST_DATA.pax_coverage_skills : [];
-  let skills;
-  if (ST_COVERAGE_PAX_ONLY && paxSkills.length) skills = paxSkills.slice();
-  else skills = [...new Set([...baseSkills, ...paxSkills])];
+  const skills = paxSkills.length ? paxSkills.slice()
+    : Array.isArray(ST_COVERAGE_SKILLS) ? ST_COVERAGE_SKILLS.slice() : [];
 
-  const data = {};
+  // Accumulate per-15-min slot (96 slots in a day)
+  const slotData = {};
   skills.forEach(sk => {
-    data[sk] = {};
-    hours.forEach(h => { data[sk][h] = { req: 0, assigned: 0 }; });
+    slotData[sk] = Array.from({length: 96}, () => ({ req: 0, assigned: new Set() }));
   });
 
   (tasks || []).forEach(task => {
-    let sk = task.role || task.task || task.skill || 'GNIB';
-    if (!data[sk]) {
+    let sk = task.skill || task.role || task.task || '';
+    if (!slotData[sk]) {
       const base = sk.split(' -- ')[0];
-      if (data[base]) sk = base; else if (!data[sk]) return;
+      if (slotData[base]) sk = base; else return;
     }
-    const startH = Math.floor(task.start_mins / 60);
-    const endH   = Math.floor((task.end_mins - 1) / 60);
-    for (let h = Math.max(4, startH); h <= Math.min(23, endH); h++) {
-      data[sk][h].req      += (task.staff_needed || 0);
-      data[sk][h].assigned += (task.assigned ? task.assigned.length : 0);
+    const startSlot = Math.floor(task.start_mins / 15);
+    const endSlot   = Math.ceil(task.end_mins / 15) - 1;
+    const staffIds  = task.assigned || [];
+    for (let slot = startSlot; slot <= endSlot; slot++) {
+      if (slot < 0 || slot >= 96) continue;
+      slotData[sk][slot].req += (task.staff_needed || 0);
+      staffIds.forEach(sid => slotData[sk][slot].assigned.add(sid));
     }
+  });
+
+  // Aggregate to hourly: average the 4 slots within each hour
+  const data = {};
+  skills.forEach(sk => {
+    data[sk] = {};
+    hours.forEach(h => {
+      let reqSum = 0, asgnSum = 0, filled = 0;
+      for (let m = 0; m < 4; m++) {
+        const slot = h * 4 + m;
+        if (slot < 96) {
+          reqSum  += slotData[sk][slot].req;
+          asgnSum += slotData[sk][slot].assigned.size;
+          filled++;
+        }
+      }
+      data[sk][h] = {
+        req:      filled ? Math.round(reqSum  / filled) : 0,
+        assigned: filled ? Math.round(asgnSum / filled) : 0,
+      };
+    });
   });
 
   return { data, hours, skills };
@@ -754,10 +1030,7 @@ function renderSTHourlyCoverage() {
     section.innerHTML = `
       <div class="section-header" style="margin-bottom:8px;">
         <h2 style="font-size:1rem;font-weight:700;color:var(--text);">Workforce Coverage — Short-Term</h2>
-        <span class="section-hint">Assigned / Required per skill per hour.</span>
-        <div style="float:right;margin-left:12px">
-          <label style="font-size:0.85rem;opacity:0.9"><input id="st-coverage-pax-only" type="checkbox" checked style="margin-right:6px">PAX only</label>
-        </div>
+        <span class="section-hint">Assigned / Required per skill per hour. PAX touchpoints only.</span>
       </div>
       <div class="legend-row mb-12">
         <span class="leg surplus"></span><span>Surplus</span>
@@ -770,18 +1043,6 @@ function renderSTHourlyCoverage() {
       </div>`;
     const panel = wrapper.querySelector('.panel');
     if (panel) panel.appendChild(section);
-
-    setTimeout(() => {
-      const paxToggle = document.getElementById('st-coverage-pax-only');
-      if (paxToggle) {
-        paxToggle.checked = !!ST_COVERAGE_PAX_ONLY;
-        paxToggle.addEventListener('change', (e) => {
-          ST_COVERAGE_PAX_ONLY = !!e.target.checked;
-          const table = document.getElementById('st-hourly-heatmap');
-          if (table) table.innerHTML = buildSTCoverageTableHTML(ST_DATA.tasks || []);
-        });
-      }
-    }, 50);
   }
 
   const table = document.getElementById('st-hourly-heatmap');
@@ -790,15 +1051,15 @@ function renderSTHourlyCoverage() {
 
 // ── Optimization Tab ─────────────────────────────────────────────
 async function renderSTOptimization(container) {
-  const SKILL_COLORS = {
-    'GNIB':'#3498DB','CBP Pre-clearance':'#9B59B6','Bussing':'#E8850A',
-    'PBZ':'#2ECC71','Mezz Operation':'#1ABC9C','Litter Picking':'#E74C3C',
-    'Ramp / Marshalling':'#F39C12','Arr Customer Service':'#5DADE2',
-    'Check-in/Trolleys':'#A9CCE3','Transfer Corridor':'#27AE60',
-    'Dep / Trolleys':'#8E44AD','T1/T2 Trolleys L/UL':'#E91E63',
+  const SHIFT_META = {
+    Early:   { color:'#f97316', range:'00:00–12:00', s:0,    e:720  },
+    Mid:     { color:'#3b82f6', range:'06:00–18:00', s:360,  e:1080 },
+    Late:    { color:'#8b5cf6', range:'12:00–00:00', s:720,  e:1440 },
+    Evening: { color:'#10b981', range:'16:00–04:00', s:960,  e:1680 },
+    Night:   { color:'#ec4899', range:'22:00–10:00', s:1320, e:2040 },
   };
 
-  // Load current constraints to pre-fill the form
+  // Load existing constraints for pre-fill
   container.innerHTML = `<div class="panel mt-20"><div class="loading-spinner"><div class="spinner"></div><span>Loading optimiser…</span></div></div>`;
   let constraints = {};
   try {
@@ -808,311 +1069,438 @@ async function renderSTOptimization(container) {
 
   container.innerHTML = `
     <div class="panel mt-20" style="border-top:4px solid var(--accent);">
-      <div class="panel-title-row" style="margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:16px;">
+      <div class="panel-title-row" style="margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:16px;flex-wrap:wrap;gap:10px;">
         <div>
-          <h2 class="panel-title" style="margin:0;font-size:1.4rem;color:var(--text);text-transform:none;">⚙ Unified Optimiser</h2>
+          <h2 class="panel-title" style="margin:0;font-size:1.4rem;color:var(--text);text-transform:none;">⚙ Unified Optimiser — 3-Day Short Term</h2>
           <p class="section-hint" style="margin:6px 0 0;font-size:0.88rem;">
-            Adjust all constraints then run — results are applied live across all tabs.
-            &nbsp;·&nbsp; <em>Phase 1</em>: schedule tasks by skill &nbsp;·&nbsp; <em>Phase 2</em>: assign shifts via Greedy + MIP
+            Configure hard &amp; soft constraints, then run optimisation across all three short-term days.
+            Results show day-by-day impact — apply selectively per day.
           </p>
         </div>
-        <button class="btn-update-fluid" id="st-opt-run" style="min-width:180px;">⚡ Run &amp; Apply</button>
+        <button class="btn-update-fluid" id="st-opt-run" style="min-width:200px;">⚡ Run All 3 Days</button>
       </div>
 
-      <div class="opt-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-bottom:8px;">
-
-        <!-- Shift & Rest -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--info)">⏱</span> Shift &amp; Rest</div>
-          <div style="display:flex;gap:10px;margin-bottom:12px;">
-            <div style="flex:1"><label class="opt-label">Shift Duration (hrs)</label>
-              <input type="number" id="opt-shift-hrs" class="select-input" value="${constraints.shift_duration_hrs||12}" min="6" max="16" style="width:100%"/></div>
-            <div style="flex:1"><label class="opt-label">Min Rest (hrs)</label>
-              <input type="number" id="opt-rest-hrs" class="select-input" value="11" min="8" max="16" style="width:100%"/></div>
-          </div>
-          <div style="display:flex;gap:10px;">
-            <div style="flex:1"><label class="opt-label">Short Break (min)</label>
-              <input type="number" id="opt-b1" class="select-input" value="${constraints.b1_duration_mins||30}" min="15" max="60" style="width:100%"/></div>
-            <div style="flex:1"><label class="opt-label">Meal Break (min)</label>
-              <input type="number" id="opt-b2" class="select-input" value="${constraints.b2_duration_mins||60}" min="30" max="120" style="width:100%"/></div>
-          </div>
+      <!-- ══ HARD CONSTRAINTS ══ -->
+      <div style="margin-bottom:24px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #ef444430;">
+          <div style="width:4px;height:20px;border-radius:2px;background:#ef4444;flex-shrink:0;"></div>
+          <span style="font-weight:800;font-size:0.88rem;color:#ef4444;text-transform:uppercase;letter-spacing:.05em;">Hard Constraints</span>
+          <span style="font-size:0.78rem;color:var(--muted);">— must be satisfied during optimisation</span>
         </div>
+        <div class="opt-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:16px;">
 
-        <!-- Travel buffers -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--accent)">🚶</span> Travel Buffers (min)</div>
-          <div class="input-group" style="margin-bottom:14px">
-            <label class="opt-label">T1 → T2 Transfer</label>
-            <input type="number" id="opt-tt-t1t2" class="select-input" value="${constraints.tt_t1_t2||15}" min="0" max="60" style="width:100%"/>
-          </div>
-          <div class="input-group">
-            <label class="opt-label">Skill-Switch Transfer</label>
-            <input type="number" id="opt-tt-sk" class="select-input" value="${constraints.tt_skill_switch||10}" min="0" max="60" style="width:100%"/>
-          </div>
-        </div>
-
-        <!-- Solver mode -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--ok)">🧮</span> Solver</div>
-          <p class="opt-hint">MIP (CBC) minimises skill mismatch + workload inequality after greedy pass. Requires PuLP.</p>
-          <div style="display:flex;align-items:center;gap:12px;margin:12px 0;">
-            <input type="checkbox" id="opt-mip" style="width:20px;height:20px;accent-color:var(--accent);cursor:pointer" checked/>
-            <label for="opt-mip" class="opt-label" style="margin:0;cursor:pointer">Enable MIP Refinement</label>
-          </div>
-          <p class="opt-hint" style="margin-top:6px;font-size:0.74rem;">Obj: Σ skill-mismatch + L1 workload deviation + Σ demand-gap × priority</p>
-          <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <input type="checkbox" id="opt-prim-first" style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${constraints.use_primary_first!==false?'checked':''}/>
-              <label for="opt-prim-first" class="opt-label" style="margin:0;cursor:pointer">Primary Skills First</label>
+          <!-- Coverage & Time Rules -->
+          <div class="opt-card" style="border-left:3px solid #ef4444;">
+            <div class="opt-card-title"><span style="color:#ef4444">📊</span> Coverage &amp; Time Rules</div>
+            <div style="display:flex;gap:10px;margin-bottom:10px;">
+              <div style="flex:1"><label class="opt-label">Shift Duration (hrs)</label>
+                <input type="number" id="opt-shift-hrs" class="select-input" value="${constraints.shift_duration_hrs||12}" min="6" max="16" style="width:100%"/></div>
+              <div style="flex:1"><label class="opt-label">Min Rest (hrs)</label>
+                <input type="number" id="opt-rest-hrs" class="select-input" value="${constraints.min_rest_hrs||11}" min="8" max="16" style="width:100%"/></div>
             </div>
-            <div style="display:flex;align-items:center;gap:12px;">
-              <input type="checkbox" id="opt-overlap" style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${(constraints.allow_overlaps||constraints.allow_overlap)?'checked':''}/>
-              <label for="opt-overlap" class="opt-label" style="margin:0;cursor:pointer">Allow Schedule Overlaps</label>
+            <div>
+              <label class="opt-label">Min Coverage Threshold (%)</label>
+              <input type="number" id="opt-min-cov" class="select-input" value="${constraints.min_coverage_pct||80}" min="50" max="100" style="width:100%;margin-top:4px"/>
+              <p class="opt-hint" style="margin-top:4px">Days falling below this are flagged as LOW_COVERAGE.</p>
             </div>
           </div>
-        </div>
 
-        <!-- Absence exclusions -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--crit)">🚫</span> Exclude Leave Types</div>
-          <p class="opt-hint">Staff on these leave types are removed before optimisation.</p>
-          <div id="opt-leave-toggles" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
-            ${["Annual Leave","Paternity Leave","Jury Duty","Sick Leave","Training"].map(lt => `
-              <div style="display:flex;align-items:center;gap:12px;">
-                <input type="checkbox" id="opt-lt-${lt.replace(/\s+/g,'-')}" value="${lt}"
-                  style="width:18px;height:18px;accent-color:var(--info);cursor:pointer"
-                  ${(constraints.leave_types_excluded||[]).includes(lt)?'checked':''}/>
-                <label for="opt-lt-${lt.replace(/\s+/g,'-')}" class="opt-label" style="margin:0;cursor:pointer">${lt}</label>
-              </div>`).join('')}
+          <!-- Break Rules + Skill Eligibility -->
+          <div class="opt-card" style="border-left:3px solid #ef4444;">
+            <div class="opt-card-title"><span style="color:#ef4444">☕</span> Break Rules &amp; Skill Eligibility</div>
+            <div style="display:flex;gap:10px;margin-bottom:12px;">
+              <div style="flex:1"><label class="opt-label">Short Break (min)</label>
+                <input type="number" id="opt-b1" class="select-input" value="${constraints.b1_duration_mins||30}" min="15" max="60" style="width:100%"/></div>
+              <div style="flex:1"><label class="opt-label">Meal Break (min)</label>
+                <input type="number" id="opt-b2" class="select-input" value="${constraints.b2_duration_mins||60}" min="30" max="120" style="width:100%"/></div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:8px;background:#ef444410;border-radius:5px;border:1px solid #ef444425;">
+              <input type="checkbox" id="opt-prim-first" style="width:16px;height:16px;accent-color:#ef4444;cursor:pointer;margin-top:2px;flex-shrink:0" ${constraints.use_primary_first!==false?'checked':''}/>
+              <label for="opt-prim-first" style="font-size:0.82rem;cursor:pointer;color:var(--text)">
+                <strong>Primary Skills First</strong><br>
+                <span style="font-size:0.72rem;color:var(--muted)">Staff are assigned to tasks matching their primary skill before secondary skills are considered.</span>
+              </label>
+            </div>
           </div>
-        </div>
 
-        <!-- Permitted shifts -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--ok)">📅</span> Permitted Shift Windows</div>
-          <div id="opt-shift-toggles" style="display:flex;flex-direction:column;gap:10px;margin-top:8px;">
-            ${[
-              {label:'00:00', display:'Day (00:00 – 12:00)', s:0,   e:720},
-              {label:'03:00', display:'Morning (03:00 – 15:00)', s:180, e:900},
-              {label:'07:00', display:'Early (07:00 – 19:00)', s:420, e:1140},
-              {label:'12:00', display:'Night (12:00 – 00:00)', s:720, e:1440},
-            ].map((sh,i) => {
-              const chk = (constraints.permitted_shifts||[]).some(p=>p[0]===sh.s&&p[1]===sh.e)||(!constraints.permitted_shifts&&i<2);
-              return `<div style="display:flex;align-items:center;gap:12px;">
-                <input type="checkbox" class="opt-sh-chk" id="opt-sh-${i}"
-                  data-label="${sh.label}" data-start="${sh.s}" data-end="${sh.e}"
-                  style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${chk?'checked':''}/>
-                <label for="opt-sh-${i}" class="opt-label" style="margin:0;cursor:pointer">${sh.display}</label>
-              </div>`;
-            }).join('')}
+          <!-- Leave Exclusion -->
+          <div class="opt-card" style="border-left:3px solid #ef4444;">
+            <div class="opt-card-title"><span style="color:#ef4444">🚫</span> Leave Exclusion</div>
+            <p class="opt-hint">Staff on these leave types are removed before optimisation runs.</p>
+            <div id="opt-leave-toggles" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+              ${["Annual Leave","Sick Leave","Jury Duty","Paternity Leave","Training"].map(lt => `
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <input type="checkbox" id="opt-lt-${lt.replace(/\s+/g,'-')}" value="${lt}"
+                    style="width:16px;height:16px;accent-color:#ef4444;cursor:pointer"
+                    ${(constraints.leave_types_excluded||[]).includes(lt)?'checked':''}/>
+                  <label for="opt-lt-${lt.replace(/\s+/g,'-')}" class="opt-label" style="margin:0;cursor:pointer;font-size:0.82rem">${lt}</label>
+                </div>`).join('')}
+            </div>
           </div>
+
+          <!-- Permitted Shift Windows -->
+          <div class="opt-card" style="border-left:3px solid #ef4444;">
+            <div class="opt-card-title"><span style="color:#ef4444">📅</span> Permitted Shift Windows</div>
+            <p class="opt-hint">Only ticked shift patterns will be assigned. Unchecked shifts become invalid for scheduling.</p>
+            <div id="opt-shift-toggles" style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+              ${Object.entries(SHIFT_META).map(([name, m], i) => {
+                const def = i < 3;
+                const chk = (constraints.permitted_shifts||[]).some(p => p[0]===m.s && p[1]===m.e)
+                          || (!constraints.permitted_shifts && def);
+                return `<div style="display:flex;align-items:center;gap:10px;">
+                  <input type="checkbox" class="opt-sh-chk" id="opt-sh-${i}"
+                    data-label="${name}" data-start="${m.s}" data-end="${m.e}"
+                    style="width:16px;height:16px;accent-color:${m.color};cursor:pointer" ${chk?'checked':''}/>
+                  <label for="opt-sh-${i}" style="margin:0;cursor:pointer;font-size:0.82rem;display:flex;align-items:center;gap:7px;">
+                    <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${m.color};flex-shrink:0"></span>
+                    <strong style="color:${m.color}">${name}</strong>
+                    <span style="color:var(--muted)">${m.range}</span>
+                  </label>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>
+
         </div>
+      </div>
 
-      </div><!-- /opt-grid -->
+      <!-- ══ SOFT CONSTRAINTS ══ -->
+      <div style="margin-bottom:24px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:8px;border-bottom:2px solid #3b82f630;">
+          <div style="width:4px;height:20px;border-radius:2px;background:#3b82f6;flex-shrink:0;"></div>
+          <span style="font-weight:800;font-size:0.88rem;color:#3b82f6;text-transform:uppercase;letter-spacing:.05em;">Soft Constraints</span>
+          <span style="font-size:0.78rem;color:var(--muted);">— optimisation preferences &amp; objective weights</span>
+        </div>
+        <div class="opt-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:16px;">
 
-      <!-- Results -->
+          <!-- Solver -->
+          <div class="opt-card" style="border-left:3px solid #3b82f6;">
+            <div class="opt-card-title"><span style="color:#3b82f6">🧮</span> Solver</div>
+            <p class="opt-hint">MIP (CBC) minimises skill mismatch + workload inequality after greedy pass. Requires PuLP.</p>
+            <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <input type="checkbox" id="opt-mip" style="width:18px;height:18px;accent-color:#3b82f6;cursor:pointer" checked/>
+                <label for="opt-mip" class="opt-label" style="margin:0;cursor:pointer">Enable MIP Refinement</label>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <input type="checkbox" id="opt-overlap" style="width:18px;height:18px;accent-color:#3b82f6;cursor:pointer" ${(constraints.allow_overlaps)?'checked':''}/>
+                <label for="opt-overlap" class="opt-label" style="margin:0;cursor:pointer">Allow Schedule Overlaps</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Fairness & Overtime Minimisation -->
+          <div class="opt-card" style="border-left:3px solid #3b82f6;">
+            <div class="opt-card-title"><span style="color:#3b82f6">⚖</span> Fairness &amp; Overtime Minimisation</div>
+            <div style="margin-bottom:14px;">
+              <label class="opt-label">Fairness Weight</label>
+              <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+                <input type="range" id="opt-fairness-weight" min="0" max="1" step="0.1"
+                  value="${constraints.fairness_weight!=null?constraints.fairness_weight:0.5}"
+                  style="flex:1;accent-color:#3b82f6;cursor:pointer"/>
+                <span id="opt-fairness-val" style="font-size:0.88rem;font-weight:700;min-width:28px;text-align:right;color:#3b82f6">${constraints.fairness_weight!=null?(+constraints.fairness_weight).toFixed(1):'0.5'}</span>
+              </div>
+              <p class="opt-hint" style="margin-top:3px">0 = ignore fairness · 1 = maximise equal utilisation (Gini in MIP objective).</p>
+            </div>
+            <div>
+              <label class="opt-label">Overtime Minimisation — Max Utilisation (%)</label>
+              <input type="number" id="opt-max-util" class="select-input" value="${constraints.max_utilisation_pct||95}" min="50" max="100" style="width:100%;margin-top:4px"/>
+              <p class="opt-hint" style="margin-top:3px">Staff exceeding this threshold are flagged as OVERTIME_RISK.</p>
+            </div>
+          </div>
+
+          <!-- Secondary Skill Preference & Stability -->
+          <div class="opt-card" style="border-left:3px solid #3b82f6;">
+            <div class="opt-card-title"><span style="color:#3b82f6">🎓</span> Secondary Skill Preference</div>
+            <div style="display:flex;align-items:flex-start;gap:10px;padding:8px;background:#3b82f610;border-radius:5px;border:1px solid #3b82f625;margin-bottom:12px;">
+              <input type="checkbox" id="opt-allow-sec" style="width:16px;height:16px;accent-color:#3b82f6;cursor:pointer;margin-top:2px;flex-shrink:0" ${constraints.allow_secondary_skills!==false?'checked':''}/>
+              <label for="opt-allow-sec" style="font-size:0.82rem;cursor:pointer;color:var(--text)">
+                <strong>Allow Secondary Skills</strong><br>
+                <span style="font-size:0.72rem;color:var(--muted)">When primary skill demand is met, staff can cover tasks using their secondary/tertiary skills.</span>
+              </label>
+            </div>
+            <div style="padding:8px;background:#3b82f610;border-radius:5px;border-left:2px solid #3b82f6;">
+              <p style="font-size:0.78rem;color:var(--muted);margin:0;">
+                <strong style="color:#3b82f6">Stable Roster Patterns:</strong> D+1 to D+3 share the same permitted shift windows above, minimising pattern fragmentation across the 3-day horizon.
+              </p>
+            </div>
+          </div>
+
+          <!-- Travel Buffers -->
+          <div class="opt-card" style="border-left:3px solid #3b82f6;">
+            <div class="opt-card-title"><span style="color:#3b82f6">🚶</span> Travel Buffers (min)</div>
+            <div style="margin-bottom:12px;">
+              <label class="opt-label">T1 → T2 Transfer</label>
+              <input type="number" id="opt-tt-t1t2" class="select-input" value="${constraints.tt_t1_t2||15}" min="0" max="60" style="width:100%;margin-top:4px"/>
+            </div>
+            <div>
+              <label class="opt-label">Skill-Switch Transfer</label>
+              <input type="number" id="opt-tt-sk" class="select-input" value="${constraints.tt_skill_switch||10}" min="0" max="60" style="width:100%;margin-top:4px"/>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Results area -->
       <div id="opt-results"></div>
     </div>`;
 
-  // Auto-render results if already available in global state
-  if (ST_DATA && ST_DATA.roster && ST_DATA.roster.roster_available) {
-    const resEl = document.getElementById('opt-results');
-    if (resEl) _renderOptResults(resEl, ST_DATA);
+  // Live fairness weight display
+  const fwInput = document.getElementById('opt-fairness-weight');
+  const fwVal   = document.getElementById('opt-fairness-val');
+  if (fwInput && fwVal) {
+    fwInput.addEventListener('input', () => { fwVal.textContent = parseFloat(fwInput.value).toFixed(1); });
   }
 
-  // ── Run & Apply handler ───────────────────────────────────────────
-  document.getElementById('st-opt-run').addEventListener('click', async () => {
-    const btn     = document.getElementById('st-opt-run');
-    const results = document.getElementById('opt-results');
-    btn.disabled  = true;
-    btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Optimising…';
-    results.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Running two-phase optimisation and applying to all tabs…</span></div>';
+  // Restore cached results on tab re-visit
+  if (ST_OPT_RESULTS_CACHE) {
+    const resEl = document.getElementById('opt-results');
+    if (resEl) _renderOptDayResults(resEl, ST_OPT_RESULTS_CACHE);
+  }
 
+  // ── Build payload for one date ─────────────────────────────────
+  function _buildPayload(date) {
     const leaves = Array.from(document.querySelectorAll('#opt-leave-toggles input:checked')).map(cb => cb.value);
     const shifts  = Array.from(document.querySelectorAll('#opt-shift-toggles input:checked')).map(cb => [
-      parseInt(cb.dataset.start,10), parseInt(cb.dataset.end,10), cb.dataset.label
+      parseInt(cb.dataset.start, 10), parseInt(cb.dataset.end, 10), cb.dataset.label,
     ]);
-
-    const payload = {
-      date:                 ST_CURRENT_DATE,
-      use_mip:              document.getElementById('opt-mip').checked,
-      min_rest_hrs:         parseFloat(document.getElementById('opt-rest-hrs').value),
-      shift_duration_hrs:   parseInt(document.getElementById('opt-shift-hrs').value, 10),
-      b1_duration_mins:     parseInt(document.getElementById('opt-b1').value, 10),
-      b2_duration_mins:     parseInt(document.getElementById('opt-b2').value, 10),
-      tt_t1_t2:             parseInt(document.getElementById('opt-tt-t1t2').value, 10),
-      tt_skill_switch:      parseInt(document.getElementById('opt-tt-sk').value, 10),
-      use_primary_first:    document.getElementById('opt-prim-first').checked,
-      allow_overlaps:       document.getElementById('opt-overlap').checked,
-      leave_types_excluded: leaves,
-      permitted_shifts:     shifts,
+    return {
+      date,
+      use_mip:               document.getElementById('opt-mip').checked,
+      min_rest_hrs:          parseFloat(document.getElementById('opt-rest-hrs').value),
+      shift_duration_hrs:    parseInt(document.getElementById('opt-shift-hrs').value, 10),
+      b1_duration_mins:      parseInt(document.getElementById('opt-b1').value, 10),
+      b2_duration_mins:      parseInt(document.getElementById('opt-b2').value, 10),
+      tt_t1_t2:              parseInt(document.getElementById('opt-tt-t1t2').value, 10),
+      tt_skill_switch:       parseInt(document.getElementById('opt-tt-sk').value, 10),
+      use_primary_first:     document.getElementById('opt-prim-first').checked,
+      allow_overlaps:        document.getElementById('opt-overlap').checked,
+      leave_types_excluded:  leaves,
+      permitted_shifts:      shifts,
+      min_coverage_pct:      parseFloat(document.getElementById('opt-min-cov').value),
+      max_utilisation_pct:   parseFloat(document.getElementById('opt-max-util').value),
+      fairness_weight:       parseFloat(document.getElementById('opt-fairness-weight').value),
+      allow_secondary_skills: document.getElementById('opt-allow-sec').checked,
     };
+  }
+
+  // ── Run All 3 Days ─────────────────────────────────────────────
+  document.getElementById('st-opt-run').addEventListener('click', async () => {
+    const btn   = document.getElementById('st-opt-run');
+    const resEl = document.getElementById('opt-results');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Optimising 3 Days…';
+    resEl.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Running optimisation across all 3 short-term days…</span></div>';
+
+    const activeDates = ST_DATES.filter(d => d.has_data);
 
     try {
-      const res  = await fetch('/api/short-term/optimise', {
-        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Optimiser failed');
+      // Fetch before-state and run all days in parallel
+      const [boardData, ...dayResults] = await Promise.all([
+        fetch('/api/short-term/roster-board').then(r => r.json()),
+        ...activeDates.map(d =>
+          fetch('/api/short-term/optimise', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(_buildPayload(d.date)),
+          }).then(r => r.json()).then(data => ({ date: d.date, label: d.label, data }))
+        ),
+      ]);
 
-      // ── Apply result to global state and refresh all tabs ──────────
-      ST_DATA = data;
-      ST_ACTIVE_TAB = 'opt'; // Ensure we stay on the optimization tab
-      renderShortTermDay();
+      const before  = boardData.day_stats || {};
+      const results = {};
+      dayResults.forEach(({ date, data }) => { results[date] = data; });
 
-      // ── Show results inline in the newly rendered tab ─────────────
-      const el = document.getElementById('st-sub-content');
-      if (el) {
-        const resEl = el.querySelector('#opt-results');
-        if (resEl) _renderOptResults(resEl, data);
-      }
+      ST_OPT_RESULTS_CACHE = {
+        dates:   activeDates.map(d => ({ date: d.date, label: d.label })),
+        before,
+        results,
+        applied: {},
+      };
+
+      // Apply current date result to ST_DATA immediately
+      if (results[ST_CURRENT_DATE]) ST_DATA = results[ST_CURRENT_DATE];
+
+      _renderOptDayResults(resEl, ST_OPT_RESULTS_CACHE);
 
     } catch (err) {
-      results.innerHTML = `<div class="panel mt-8" style="padding:16px;border-left:4px solid var(--crit);">
-        <strong style="color:var(--crit)">✕ Optimiser error</strong><br/><span style="font-size:0.85rem">${err.message}</span></div>`;
+      resEl.innerHTML = `<div class="panel mt-8" style="padding:16px;border-left:4px solid var(--crit);">
+        <strong style="color:var(--crit)">✕ Optimiser error</strong><br/>
+        <span style="font-size:0.85rem">${err.message}</span></div>`;
     } finally {
-      btn.disabled  = false;
-      btn.innerHTML = '⚡ Run &amp; Apply';
+      btn.disabled = false;
+      btn.innerHTML = '⚡ Run All 3 Days';
     }
   });
 
-  // ── Render optimiser results (roster section) ──────────────────────
-  function _renderOptResults(resultsEl, data) {
-    const r = data.roster || {};
-    
-    // Always show the status banner
-    const statusBanner = `
-      <div class="panel mt-16" style="padding:16px;border-left:4px solid var(--ok);">
-        <strong style="color:var(--ok)">✓ Schedule updated</strong>
-        <span style="margin-left:12px;font-size:0.85rem;color:var(--muted)">
-          ${r.roster_available ? 'Roster optimized and tactical constraints applied. All tabs refreshed.' : 'Roster optimiser unavailable — tactical constraints applied. All tabs refreshed.'}
-        </span>
-        ${r.error ? `<div style="font-size:0.8rem;color:var(--warn);margin-top:6px;">Reason: ${r.error}</div>` : ''}
-      </div>`;
+  // ── Render per-day impact cards ────────────────────────────────
+  function _renderOptDayResults(el, cache) {
+    const { dates, before, results, applied } = cache;
 
-    if (!r.roster_available) {
-      resultsEl.innerHTML = statusBanner;
-      return;
-    }
+    const dayCardsHtml = dates.map(({ date, label }) => {
+      const bef    = before[date] || {};
+      const res    = results[date] || {};
+      const roster = res.roster   || {};
+      const kpis   = res.kpis     || {};
+      const fair   = roster.fairness || {};
 
-    const fairness  = r.fairness || {};
-    const gini      = fairness.gini_coefficient ?? '—';
-    const giniLabel = fairness.interpretation  || '—';
-    const giniColor = giniLabel==='excellent'?'var(--ok)':giniLabel==='good'?'var(--info)':giniLabel==='moderate'?'var(--warn)':'var(--crit)';
-    const solverBadge = (r.solver_used||'').includes('MIP')||(r.solver_used||'').includes('CBC')
-      ? `<span class="badge-solver badge-mip">MIP CBC</span>`
-      : `<span class="badge-solver badge-greedy">Greedy</span>`;
+      const covB = typeof bef.coverage_pct  === 'number' ? bef.coverage_pct  : null;
+      const covA = typeof kpis.coverage_pct === 'number' ? kpis.coverage_pct : null;
+      const covDelta = (covB !== null && covA !== null) ? (covA - covB) : null;
+      const covColor = covA === null ? '#6b7280' : covA >= 90 ? '#10b981' : covA >= 75 ? '#f59e0b' : '#ef4444';
 
-    // KPIs
-    const staffCount = (data.staff||[]).length;
-    const kpiHtml = `
-      <div class="ro-kpi-row" style="margin-top:20px;">
-        <div class="ro-kpi"><div class="ro-kpi-val" style="color:var(--ok)">✓ Applied</div><div class="ro-kpi-lbl">All Tabs Updated</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${r.pattern_count||0}</div><div class="ro-kpi-lbl">Shift Patterns</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${staffCount}</div><div class="ro-kpi-lbl">Staff On Duty</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val" style="color:${giniColor}">${typeof gini==='number'?gini.toFixed(3):gini}</div><div class="ro-kpi-lbl">Gini (${giniLabel})</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${fairness.mean_utilisation_pct??'—'}%</div><div class="ro-kpi-lbl">Mean Util</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${solverBadge}</div><div class="ro-kpi-lbl">Solver</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${(r.flags||[]).length}</div><div class="ro-kpi-lbl">Flags</div></div>
-      </div>`;
+      const staffCount = (res.staff || []).length;
+      const absCount   = bef.absent ?? 0;
+      const flags      = roster.flags || [];
+      const flagCount  = flags.length;
+      const gini       = typeof fair.gini_coefficient === 'number' ? fair.gini_coefficient.toFixed(3) : '—';
+      const giniInterp = fair.interpretation || '';
+      const giniColor  = giniInterp === 'excellent' ? '#10b981' : giniInterp === 'good' ? '#3b82f6' : giniInterp === 'moderate' ? '#f59e0b' : '#6b7280';
+      const solver     = roster.solver_used || '—';
+      const isMIP      = solver.toLowerCase().includes('mip') || solver.toLowerCase().includes('cbc');
 
-    // Shift patterns grid
-    const patternHtml = (r.patterns||[]).map(p => {
-      const chips = Object.entries(p.demand_profile||{}).map(([sk,v]) =>
-        `<span class="ro-skill-chip" style="background:${SKILL_COLORS[sk]||'#666'}20;color:${SKILL_COLORS[sk]||'#666'}">${sk}: ${v.toFixed(1)}</span>`
-      ).join('') || '<span class="ro-no-demand">No demand data</span>';
-      const pct = Math.round(((p.net_mins||630)/720)*100);
+      // Shift distribution
+      const shiftCounts = {};
+      (res.staff || []).forEach(s => {
+        const sh = s.shift || 'Other';
+        shiftCounts[sh] = (shiftCounts[sh] || 0) + 1;
+      });
+      const shiftBadges = Object.entries(shiftCounts).map(([sh, n]) => {
+        const c = (SHIFT_META[sh] || {}).color || '#6b7280';
+        return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:${c}20;border:1px solid ${c}40;font-size:0.72rem;font-weight:700;color:${c}">
+          <span style="width:7px;height:7px;border-radius:50%;background:${c};display:inline-block;"></span>${sh}&nbsp;${n}
+        </span>`;
+      }).join('');
+
+      // Flag previews
+      const flagHtml = flagCount
+        ? `<div style="margin-bottom:10px;padding:8px;background:#ef444410;border-radius:5px;border-left:2px solid #ef4444;">
+            <div style="font-size:0.72rem;font-weight:700;color:#ef4444;margin-bottom:4px;">⚠ ${flagCount} Flag${flagCount>1?'s':''}</div>
+            ${flags.slice(0, 3).map(f => `<div style="font-size:0.72rem;color:var(--muted);padding:1px 0;">${f.flag_id}: ${f.detail}</div>`).join('')}
+            ${flagCount > 3 ? `<div style="font-size:0.7rem;color:var(--muted);">+${flagCount-3} more</div>` : ''}
+          </div>`
+        : `<div style="margin-bottom:10px;padding:6px 10px;background:#10b98110;border-radius:5px;border-left:2px solid #10b981;font-size:0.75rem;color:#10b981;font-weight:600;">✓ No flags</div>`;
+
+      const isApplied = !!applied[date];
+      const noResult  = !Object.keys(res).length;
+
       return `
-        <div class="ro-pattern-card">
-          <div class="ro-pattern-label">${p.label}</div>
-          <div class="ro-pattern-meta" style="display:flex;gap:10px;font-size:0.78rem;">
-            <span>Score: ${p.coverage_score.toFixed(1)}</span>
-            <span>👤 ${p.staff_count}</span>
-            <span>${pct}% net</span>
+        <div class="opt-card" style="border-top:3px solid ${covColor};min-width:230px;flex:1 1 230px;display:flex;flex-direction:column;gap:0;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div style="font-weight:800;font-size:0.95rem;color:var(--text)">📅 ${label}</div>
+            ${isApplied ? `<span style="font-size:0.72rem;padding:2px 8px;border-radius:10px;background:#10b98120;border:1px solid #10b98140;color:#10b981;font-weight:700;">✓ Applied</span>` : ''}
           </div>
-          <div style="height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin:4px 0;">
-            <div style="width:${pct}%;height:100%;background:var(--info);border-radius:2px;"></div>
+
+          <!-- Coverage before/after -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div style="padding:8px;background:var(--surface);border-radius:6px;text-align:center;">
+              <div style="font-size:0.65rem;color:var(--muted);margin-bottom:2px;">Before</div>
+              <div style="font-size:1.05rem;font-weight:700;color:var(--muted)">${covB !== null ? covB.toFixed(1)+'%' : '—'}</div>
+            </div>
+            <div style="padding:8px;background:${covColor}18;border-radius:6px;text-align:center;border:1px solid ${covColor}35;">
+              <div style="font-size:0.65rem;color:var(--muted);margin-bottom:2px;">After</div>
+              <div style="font-size:1.05rem;font-weight:700;color:${covColor}">${covA !== null ? covA.toFixed(1)+'%' : '—'}</div>
+              ${covDelta !== null ? `<div style="font-size:0.68rem;font-weight:700;color:${covDelta>=0?'#10b981':'#ef4444'}">${covDelta>=0?'+':''}${covDelta.toFixed(1)}%</div>` : ''}
+            </div>
           </div>
-          <div class="ro-skills-wrap">${chips}</div>
+
+          <!-- Key metrics -->
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px;">
+            <div style="padding:5px 4px;background:var(--surface);border-radius:5px;text-align:center;">
+              <div style="font-size:0.6rem;color:var(--muted);">Staff</div>
+              <div style="font-weight:700;font-size:0.88rem;">${staffCount||'—'}</div>
+            </div>
+            <div style="padding:5px 4px;background:var(--surface);border-radius:5px;text-align:center;">
+              <div style="font-size:0.6rem;color:var(--muted);">Absent</div>
+              <div style="font-weight:700;font-size:0.88rem;">${absCount}</div>
+            </div>
+            <div style="padding:5px 4px;background:${flagCount>0?'#ef444415':'#10b98115'};border-radius:5px;text-align:center;border:1px solid ${flagCount>0?'#ef444430':'#10b98130'};">
+              <div style="font-size:0.6rem;color:var(--muted);">Flags</div>
+              <div style="font-weight:700;font-size:0.88rem;color:${flagCount>0?'#ef4444':'#10b981'}">${noResult?'—':flagCount}</div>
+            </div>
+            <div style="padding:5px 4px;background:${isMIP?'#3b82f615':'var(--surface)'};border-radius:5px;text-align:center;">
+              <div style="font-size:0.6rem;color:var(--muted);">Solver</div>
+              <div style="font-weight:700;font-size:0.72rem;color:${isMIP?'#3b82f6':'var(--muted)'}">${isMIP?'MIP':'Greedy'}</div>
+            </div>
+          </div>
+
+          <!-- Gini -->
+          ${gini !== '—' ? `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:5px;">
+            <span style="font-size:0.75rem;color:var(--muted)">Fairness (Gini)</span>
+            <span style="font-weight:700;font-size:0.82rem;color:${giniColor}">${gini} <span style="font-size:0.68rem">(${giniInterp||'—'})</span></span>
+          </div>` : ''}
+
+          <!-- Flags -->
+          ${flagHtml}
+
+          <!-- Shift distribution -->
+          ${shiftBadges ? `
+          <div style="margin-bottom:12px;">
+            <div style="font-size:0.7rem;color:var(--muted);font-weight:600;margin-bottom:5px;">Shift Distribution</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;">${shiftBadges}</div>
+          </div>` : ''}
+
+          <!-- Apply button -->
+          <div style="margin-top:auto;padding-top:10px;">
+            <button class="opt-apply-btn ${isApplied?'btn-ghost':'btn-update-fluid'}"
+              data-date="${date}" data-label="${label}"
+              style="width:100%;font-size:0.82rem;padding:7px 12px;"
+              ${noResult ? 'disabled' : ''}>
+              ${isApplied ? '✓ Applied — Switch to this Day' : `Apply to ${label}`}
+            </button>
+          </div>
         </div>`;
     }).join('');
 
-    // Coverage bars
-    const coverageHtml = Object.entries(r.coverage||{}).map(([sk,cv]) => {
-      const pct = cv.coverage_pct||0;
-      const col = pct>=90?'var(--ok)':pct>=70?'var(--warn)':'var(--crit)';
-      return `<div style="margin-bottom:8px;">
-        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:2px;">
-          <span style="font-weight:600">${sk}</span>
-          <span style="color:${col};font-weight:700">${pct}%</span>
-        </div>
-        <div style="height:8px;border-radius:4px;background:var(--surface);overflow:hidden;">
-          <div style="width:${Math.min(pct,100)}%;height:100%;background:${col};border-radius:4px;transition:width 0.4s;"></div>
-        </div>
-      </div>`;
-    }).join('');
-
-    // Flags
-    const flagsHtml = (r.flags||[]).length
-      ? (r.flags||[]).map(f=>`<div class="ro-flag"><strong>${f.flag_id}</strong> — ${f.detail}</div>`).join('')
-      : '<div class="ro-no-flags">✓ No roster flags</div>';
-
-    // Fairness grid
-    const fairHtml = `
-      <div class="ro-fairness-grid">
-        <div class="ro-fair-stat"><span class="ro-fair-val" style="color:${giniColor}">${typeof gini==='number'?gini.toFixed(3):gini}</span><span class="ro-fair-lbl">Gini</span></div>
-        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.mean_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Mean</span></div>
-        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.std_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Std Dev</span></div>
-        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.min_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Min</span></div>
-        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.max_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Max</span></div>
+    el.innerHTML = `
+      <div style="margin-top:24px;padding-top:20px;border-top:2px solid var(--border);">
+        <div style="font-weight:800;font-size:1rem;margin-bottom:4px;color:var(--text);">📊 Optimisation Results — Day-by-Day Impact</div>
+        <div style="font-size:0.8rem;color:var(--muted);margin-bottom:16px;">Click <strong>Apply</strong> on any day to activate its optimised schedule across all tabs.</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;">${dayCardsHtml}</div>
       </div>`;
 
-    // Staff table from updated ST_DATA
-    const matchIcon  = m => m==='primary'?'✓':m==='secondary'?'~':'✗';
-    const matchColor = m => m==='primary'?'var(--ok)':m==='secondary'?'var(--warn)':'var(--crit)';
-    const staffRows = (data.staff||[]).map(s => `
-      <tr>
-        <td style="font-weight:600">${s.id||s.name}</td>
-        <td><span class="ro-skill-chip" style="background:${SKILL_COLORS[s.skill1]||'#666'}20;color:${SKILL_COLORS[s.skill1]||'#666'}">${s.skill1||'—'}</span></td>
-        <td style="font-size:0.8rem">${s.shift_label||s.shift||'—'}</td>
-        <td style="color:${matchColor(s.skill_match)};font-weight:700">${matchIcon(s.skill_match||'primary')}</td>
-        <td>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <div style="flex:1;background:var(--surface);border-radius:4px;height:6px;overflow:hidden;">
-              <div style="width:${s.utilisation_pct||0}%;height:100%;background:${(s.utilisation_pct||0)>85?'var(--ok)':'var(--info)'};border-radius:4px;"></div>
-            </div>
-            <span style="font-size:0.75rem;font-weight:600;min-width:34px">${s.utilisation_pct||0}%</span>
-          </div>
-        </td>
-        <td style="font-size:0.78rem;color:var(--muted)">${(s.breaks||[]).map(b=>`${(b.type||'').split(' ')[0]} ${b.start_str||''}`).join(', ')||'—'}</td>
-      </tr>`).join('');
+    // Apply button handlers
+    el.querySelectorAll('.opt-apply-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const date  = btn.dataset.date;
+        const label = btn.dataset.label;
+        const res   = cache.results[date];
+        if (!res) return;
 
-    resultsEl.innerHTML = `
-      ${statusBanner}
-      ${kpiHtml}
-      <div class="row-2col mt-20" style="gap:20px;align-items:start;">
-        <div>
-          <div class="section-subhead">Shift Patterns</div>
-          <div class="ro-patterns-grid">${patternHtml||'<div class="ro-no-demand">No patterns generated.</div>'}</div>
-        </div>
-        <div>
-          <div class="section-subhead">Skill Coverage</div>
-          ${coverageHtml||'<div class="ro-no-demand">No coverage data.</div>'}
-          <div class="section-subhead" style="margin-top:16px;">Workload Fairness</div>
-          ${fairHtml}
-          <div class="section-subhead" style="margin-top:16px;">Flags</div>
-          ${flagsHtml}
-        </div>
-      </div>
-      <div class="section-subhead mt-16">Staff Assignment (Updated)</div>
-      <div class="table-scroll">
-        <table class="data-table" style="font-size:0.82rem;">
-          <thead><tr><th>ID</th><th>Skill</th><th>Shift</th><th>Match</th><th>Utilisation</th><th>Breaks</th></tr></thead>
-          <tbody>${staffRows||'<tr><td colspan="6" class="empty-state small">No staff data.</td></tr>'}</tbody>
-        </table>
-      </div>`;
+        // Switch global state to this day
+        ST_CURRENT_DATE = date;
+        ST_DATA         = res;
+
+        // Update day-tab highlight
+        document.querySelectorAll('.day-tab').forEach(b =>
+          b.classList.toggle('active', b.dataset.date === date));
+
+        // Refresh KPIs + alerts inline
+        if (ST_DATA.kpis)              renderSTKPIs(ST_DATA.kpis);
+        if (ST_DATA.alerts !== undefined) renderSTAlerts(ST_DATA.alerts, ST_DATA.date);
+
+        // Mark applied and re-render cards
+        cache.applied[date] = true;
+        _renderOptDayResults(el, cache);
+      });
+    });
   }
 }
+
+// ──────────────────────────────────────────────────────────────────
+// LEGACY SKILL COLORS (kept for compatibility with older references)
+// ──────────────────────────────────────────────────────────────────
+const _OPT_SKILL_COLORS = {
+  'GNIB':'#3498DB','CBP Pre-clearance':'#9B59B6','Bussing':'#E8850A',
+    'PBZ':'#2ECC71','Mezz Operation':'#1ABC9C','Litter Picking':'#E74C3C',
+    'Ramp / Marshalling':'#F39C12','Arr Customer Service':'#5DADE2',
+    'Check-in/Trolleys':'#A9CCE3','Transfer Corridor':'#27AE60',
+    'Dep / Trolleys':'#8E44AD','T1/T2 Trolleys L/UL':'#E91E63',
+  };
+
+
 
 function renderSTDemandTab(container) {
   const tasks = ST_DATA.tasks || [];
@@ -1308,22 +1696,25 @@ function renderSTStaffTab(container) {
   const staff = ST_DATA.staff || [];
   const absent = ST_DATA.absent_staff || [];
 
+  // Build unique shift options from actual staff data
+  const uniqueShifts = [...new Set(staff.map(s => s.shift).filter(Boolean))].sort();
+
   container.innerHTML = `
     <div class="panel mt-16">
       <div class="panel-title-row">
-        <span class="panel-title">Staff Roster \u2014 ${ST_DATA.date_label}</span>
-        <div class="filter-row">
-          <input class="search-input" id="st-staff-search" placeholder="Search by ID, skill\u2026" />
+        <span class="panel-title">Staff Roster — ${ST_DATA.date_label}</span>
+        <div class="filter-row" style="flex-wrap:wrap;gap:6px">
+          <input class="search-input" id="st-staff-search" placeholder="Search by ID, skill…" />
           <select id="st-shift-filter" class="select-input">
             <option value="">All Shifts</option>
-            <option value="00:00">00:00</option>
-            <option value="03:00">03:00</option>
-            <option value="07:00">07:00</option>
-            <option value="12:00">12:00</option>
+            ${uniqueShifts.map(sh => {
+              const sample = staff.find(s => s.shift === sh);
+              return `<option value="${sh}">${sample?.shift_label || sh}</option>`;
+            }).join('')}
           </select>
         </div>
       </div>
-      <div class="staff-grid" id="st-staff-grid"></div>
+      <div id="st-staff-grid"></div>
     </div>
     ${absent.length ? `
       <div class="panel mt-16">
@@ -1333,18 +1724,81 @@ function renderSTStaffTab(container) {
             <div class="absent-card">
               <div class="absent-id">${a.id}</div>
               <div class="absent-skill">
-                ${[a.skill1, a.skill2, a.skill3, a.skill4].filter(Boolean).join(' • ')}
+                ${[a.skill1, a.skill2, a.skill3, a.skill4].filter(Boolean).map(fmtSkill).join(' • ')}
               </div>
               <div class="badge badge-warn">${a.leave_type}</div>
             </div>`).join('')}
         </div>
       </div>` : ''}`;
 
-  renderSTStaffCards(staff);
+  filterSTStaff();
   document.getElementById('st-staff-search').addEventListener('input', filterSTStaff);
   document.getElementById('st-shift-filter').addEventListener('change', filterSTStaff);
 }
+function renderSTStaff3HourBlocks(staffList) {
+  const grid = document.getElementById('st-staff-grid');
+  if (!grid) return;
+  if (!staffList.length) {
+    grid.innerHTML = '<div class="muted small" style="padding:16px">No staff match your search.</div>';
+    return;
+  }
 
+  function getBlockInfo(s, block) {
+    const S = s.shift_start || 0;
+    const E = s.shift_end   || (S + 720);
+    if (!(S < block.end && E > block.start)) return null;
+    const inBlock = (s.assignments || []).filter(a =>
+      a.start_mins < block.end && a.end_mins > block.start
+    );
+    if (!inBlock.length) return { skill: null, terminal: null, color: '#94a3b8' };
+    const skillTime = {};
+    inBlock.forEach(a => {
+      const ov = Math.min(a.end_mins, block.end) - Math.max(a.start_mins, block.start);
+      skillTime[a.skill] = (skillTime[a.skill] || 0) + ov;
+    });
+    const topSk = Object.entries(skillTime).sort((a,b)=>b[1]-a[1])[0][0];
+    const domAsgn = inBlock.filter(a => a.skill === topSk)
+      .sort((a,b) => (Math.min(b.end_mins,block.end)-Math.max(b.start_mins,block.start)) -
+                     (Math.min(a.end_mins,block.end)-Math.max(a.start_mins,block.start)))[0];
+    return { skill: topSk, terminal: domAsgn?.terminal || null, color: ST_SKILL_COLOR[topSk] || '#888' };
+  }
+
+  const rows = staffList.map(s => {
+    const utilColor = s.utilisation_pct > 90 ? ST.crit : s.utilisation_pct > 70 ? ST.warn : ST.ok;
+    const sk1 = fmtSkill(s.skill1);
+    const cells = ST_TIME_BLOCKS.map(b => {
+      const info = getBlockInfo(s, b);
+      if (!info) return `<td class="st3-cell st3-off">–</td>`;
+      if (!info.skill) return `<td class="st3-cell" style="background:#94a3b820;color:#94a3b8;border:1px solid #94a3b840;text-align:center;padding:4px 2px" title="${b.label}: On shift"><div style="font-size:0.6rem;opacity:0.7">On</div></td>`;
+      const termBadge = info.terminal
+        ? `<div style="font-size:0.58rem;font-weight:800;letter-spacing:0.03em;opacity:0.85;line-height:1.1">${info.terminal}</div>`
+        : '';
+      return `<td class="st3-cell" style="background:${info.color}22;color:${info.color};border:1px solid ${info.color}55;text-align:center;vertical-align:middle;padding:3px 2px" title="${b.label}: ${info.skill}${info.terminal ? ' @ '+info.terminal : ''}">${termBadge}<div style="font-size:0.62rem;font-weight:700;line-height:1.2">${info.skill}</div></td>`;
+    }).join('');
+    return `<tr>
+      <td style="padding:6px 10px;font-weight:700;font-size:0.82rem;white-space:nowrap">${s.id}</td>
+      <td style="padding:6px 10px;font-size:0.78rem"><span style="color:${ST_SKILL_COLOR[sk1]||ST_SKILL_COLOR[s.skill1]||'#888'};font-weight:600">${sk1}</span></td>
+      <td style="padding:6px 10px;font-size:0.75rem;white-space:nowrap">${s.shift_label || s.shift}</td>
+      <td style="padding:6px 10px;font-size:0.75rem;font-weight:700;color:${utilColor}">${Math.round(s.utilisation_pct)}%</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  grid.innerHTML = `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border)">
+          <th style="padding:8px 10px;text-align:left">Staff</th>
+          <th style="padding:8px 10px;text-align:left">Skill</th>
+          <th style="padding:8px 10px;text-align:left">Shift</th>
+          <th style="padding:8px 10px;text-align:left">Util</th>
+          ${ST_TIME_BLOCKS.map(b=>`<th style="padding:6px 4px;text-align:center;font-size:0.72rem;white-space:nowrap">${b.label}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
 function filterSTStaff() {
   const q = (document.getElementById('st-staff-search')?.value || '').toLowerCase();
   const shift = document.getElementById('st-shift-filter')?.value || '';
@@ -1354,9 +1808,8 @@ function filterSTStaff() {
     const matchShift = !shift || s.shift === shift;
     return matchQ && matchShift;
   });
-  renderSTStaffCards(filtered);
+  renderSTStaff3HourBlocks(filtered);
 }
-
 function renderSTStaffCards(staffList) {
   const grid = document.getElementById('st-staff-grid');
   if (!grid) return;

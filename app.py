@@ -1387,6 +1387,68 @@ _ROSTER_SHIFTS = [
      'hours': list(range(22, 24)) + list(range(0, 10))},
 ]
 
+# ── Staggered Break Templates ──────────────────────────────────────────────────
+# Key: (shift_start_mins, shift_end_mins) → {group: [break_dict, ...]}
+# Each group has one 30-min short break and one 60-min meal break, staggered
+# by 1 hour relative to the other group to maintain continuous coverage.
+STAGGER_BREAK_TEMPLATES = {
+    (0, 720): {        # Early  00:00–12:00
+        'name': 'Early',
+        'A': [
+            {'start': '03:00', 'end': '03:30', 'start_mins': 180,  'end_mins': 210,  'type': 'Short Break'},
+            {'start': '07:00', 'end': '08:00', 'start_mins': 420,  'end_mins': 480,  'type': 'Meal Break'},
+        ],
+        'B': [
+            {'start': '04:00', 'end': '04:30', 'start_mins': 240,  'end_mins': 270,  'type': 'Short Break'},
+            {'start': '08:00', 'end': '09:00', 'start_mins': 480,  'end_mins': 540,  'type': 'Meal Break'},
+        ],
+    },
+    (360, 1080): {     # Mid    06:00–18:00
+        'name': 'Mid',
+        'A': [
+            {'start': '09:00', 'end': '09:30', 'start_mins': 540,  'end_mins': 570,  'type': 'Short Break'},
+            {'start': '13:00', 'end': '14:00', 'start_mins': 780,  'end_mins': 840,  'type': 'Meal Break'},
+        ],
+        'B': [
+            {'start': '10:00', 'end': '10:30', 'start_mins': 600,  'end_mins': 630,  'type': 'Short Break'},
+            {'start': '14:00', 'end': '15:00', 'start_mins': 840,  'end_mins': 900,  'type': 'Meal Break'},
+        ],
+    },
+    (720, 1440): {     # Late   12:00–00:00
+        'name': 'Late',
+        'A': [
+            {'start': '15:00', 'end': '15:30', 'start_mins': 900,  'end_mins': 930,  'type': 'Short Break'},
+            {'start': '19:00', 'end': '20:00', 'start_mins': 1140, 'end_mins': 1200, 'type': 'Meal Break'},
+        ],
+        'B': [
+            {'start': '16:00', 'end': '16:30', 'start_mins': 960,  'end_mins': 990,  'type': 'Short Break'},
+            {'start': '20:00', 'end': '21:00', 'start_mins': 1200, 'end_mins': 1260, 'type': 'Meal Break'},
+        ],
+    },
+    (960, 1680): {     # Evening 16:00–04:00
+        'name': 'Evening',
+        'A': [
+            {'start': '19:00', 'end': '19:30', 'start_mins': 1140, 'end_mins': 1170, 'type': 'Short Break'},
+            {'start': '23:00', 'end': '00:00', 'start_mins': 1380, 'end_mins': 1440, 'type': 'Meal Break'},
+        ],
+        'B': [
+            {'start': '20:00', 'end': '20:30', 'start_mins': 1200, 'end_mins': 1230, 'type': 'Short Break'},
+            {'start': '00:00', 'end': '01:00', 'start_mins': 1440, 'end_mins': 1500, 'type': 'Meal Break'},
+        ],
+    },
+    (1320, 2040): {    # Night  22:00–10:00
+        'name': 'Night',
+        'A': [
+            {'start': '01:00', 'end': '01:30', 'start_mins': 1500, 'end_mins': 1530, 'type': 'Short Break'},
+            {'start': '05:00', 'end': '06:00', 'start_mins': 1740, 'end_mins': 1800, 'type': 'Meal Break'},
+        ],
+        'B': [
+            {'start': '02:00', 'end': '02:30', 'start_mins': 1560, 'end_mins': 1590, 'type': 'Short Break'},
+            {'start': '06:00', 'end': '07:00', 'start_mins': 1800, 'end_mins': 1860, 'type': 'Meal Break'},
+        ],
+    },
+}
+
 # 24-hour aviation demand profile (relative units, index 0=00:00 … 23=23:00)
 _HOURLY_PROFILE = [
     0.5, 0.3, 0.2, 0.2, 0.3, 0.8,   # 00–05
@@ -2212,11 +2274,15 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
     path_staff = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
     with open(path_staff, encoding='utf-8-sig') as f:
         staff_rows = list(csv.DictReader(f))
+    staff_rows = [{k: v.replace('\x00', '').strip() if isinstance(v, str) else v
+                   for k, v in row.items()} for row in staff_rows]
 
     # Load absences
     path_abs = os.path.join(BASE_DIR, 'data', 'Staff_absence_schedule.csv')
     with open(path_abs, encoding='utf-8-sig') as f:
         abs_rows = list(csv.DictReader(f))
+    abs_rows = [{k: v.replace('\x00', '').strip() if isinstance(v, str) else v
+                 for k, v in row.items()} for row in abs_rows]
 
     # Build absent_set
     absent_set = {}
@@ -2400,12 +2466,13 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
             st, en, lb = sys_defaults[i % len(sys_defaults)]
 
 
+        _shift_name = {0:'Early',360:'Mid',720:'Late',960:'Evening',1320:'Night'}.get(st, lb.upper().replace(' SHIFT',''))
         on_duty.append({
-            'id': emp_id, 
+            'id': emp_id,
             'skill1': skill1, 'skill2': skill2, 'skill3': skill3, 'skill4': skill4,
-            'employment': employment, 'shift': lb.upper().replace(' SHIFT',''),
+            'employment': employment, 'shift': _shift_name,
             'shift_start': st, 'shift_end': en,
-            'shift_label': f"{lb} {mins_to_time(st)}–{mins_to_time(en)}",
+            'shift_label': f"{_shift_name} {mins_to_time(st)}–{mins_to_time(en)}",
             'assignments': [], 'breaks': [], 'utilisation_pct': 0
         })
 
@@ -2465,10 +2532,12 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                 oe = optimised_lookup.get(s['id'])
                 if oe and oe.get('pattern_id') != 'unassigned':
                     s = dict(s)
-                    s['shift']          = oe['shift_label'].upper()[:12]
-                    s['shift_start']    = oe['shift_start']
+                    _oe_st = oe.get('shift_start', 0)
+                    _oe_name = {0:'Early',360:'Mid',720:'Late',960:'Evening',1320:'Night'}.get(_oe_st, oe.get('pattern_id', oe['shift_label']))
+                    s['shift']          = _oe_name
+                    s['shift_start']    = _oe_st
                     s['shift_end']      = oe['shift_end']
-                    s['shift_label']    = oe['shift_label']
+                    s['shift_label']    = f"{_oe_name} {mins_to_time(_oe_st)}–{mins_to_time(oe['shift_end'])}"
                     s['breaks']         = oe.get('breaks', [])
                     s['utilisation_pct'] = oe.get('utilisation_pct', 0)
                     s['pattern_id']     = oe.get('pattern_id', '')
@@ -2629,31 +2698,56 @@ def schedule_breaks(staff, assigned_windows, custom_constraints=None):
     return sorted(breaks, key=lambda b: b['start_mins'])
 
 
-def schedule_staff_breaks(staff_list, custom_constraints=None):
-    """Plan mandatory breaks for a full roster, staggering same-shift staff."""
+def assign_stagger_breaks(staff_list, custom_constraints=None):
+    """Assign fixed staggered break templates (Group A / Group B) to all staff.
+
+    Staff within each shift are split 50/50: first half → Group A, second half → Group B.
+    Shifts not matching a fixed template fall back to dynamic schedule_breaks with a
+    60-minute stagger for Group B members.
+
+    Side-effect: sets s['break_group'] = 'A' or 'B' on every staff dict.
+    Returns {staff_id: [break_dict, ...]} matching the existing breaks API shape.
+    """
+    from copy import deepcopy
     if custom_constraints is None:
         custom_constraints = {}
 
-    stagger_enabled = custom_constraints.get('stagger_breaks', True)
+    planned = {}
     groups = defaultdict(list)
     for s in staff_list:
-        groups[(s.get('shift_start'), s.get('shift_end'))].append(s)
+        key = (s.get('shift_start', 0), s.get('shift_end', 720))
+        groups[key].append(s)
 
-    planned = {}
-    for _shift_key, members in groups.items():
+    for (sh_start, sh_end), members in groups.items():
         ordered = sorted(members, key=lambda s: str(s.get('id', s.get('name', ''))))
-        delay_count = (len(ordered) // 2) if stagger_enabled and len(ordered) > 1 else 0
-        delayed_ids = {
-            str(s.get('id', s.get('name', '')))
-            for s in ordered[-delay_count:]
-        } if delay_count else set()
+        template = STAGGER_BREAK_TEMPLATES.get((sh_start, sh_end))
+        half = (len(ordered) + 1) // 2  # Group A gets the larger half when odd
 
-        for s in ordered:
-            sid = str(s.get('id', s.get('name', '')))
-            s['_break_delay_mins'] = 60 if sid in delayed_ids else 0
-            planned[sid] = schedule_breaks(s, [], custom_constraints)
+        if template:
+            for i, s in enumerate(ordered):
+                grp = 'A' if i < half else 'B'
+                s['break_group'] = grp
+                sid = str(s.get('id', s.get('name', '')))
+                planned[sid] = deepcopy(template[grp])
+        else:
+            # Fallback: dynamic scheduling with 60-min stagger for second half
+            delayed_ids = {
+                str(s.get('id', s.get('name', '')))
+                for s in ordered[half:]
+            }
+            for i, s in enumerate(ordered):
+                grp = 'A' if i < half else 'B'
+                s['break_group'] = grp
+                sid = str(s.get('id', s.get('name', '')))
+                s['_break_delay_mins'] = 60 if sid in delayed_ids else 0
+                planned[sid] = schedule_breaks(s, [], custom_constraints)
 
     return planned
+
+
+# Keep old name as alias so any external callers continue to work
+def schedule_staff_breaks(staff_list, custom_constraints=None):
+    return assign_stagger_breaks(staff_list, custom_constraints)
 
 
 def enforce_break_conflicts(result):
@@ -3241,7 +3335,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
     # busy_map: emp_id → [(start, end, terminal, skill)]
     busy_map = defaultdict(list)
-    planned_breaks_by_id = schedule_staff_breaks(on_duty, custom_constraints)
+    planned_breaks_by_id = assign_stagger_breaks(on_duty, custom_constraints)
     for s in on_duty:
         sid = str(s.get('id', s.get('name', '')))
         s['breaks'] = planned_breaks_by_id.get(sid, [])
@@ -4120,42 +4214,60 @@ def st_roster_board():
         
     # Aggregate by employee
     emp_map = {}
+    day_stats = {}
     for i, day in enumerate(days_data):
         date_key = dates[i]['date']
+        day_stats[date_key] = {
+            'staff_count': len(day.get('staff', [])),
+            'coverage_pct': day.get('kpis', {}).get('coverage_pct', 0),
+            'absent': len(day.get('absent_staff', [])),
+        }
         # Regular staff
         for s in day.get('staff', []):
             eid = s['id']
             if eid not in emp_map:
                 emp_map[eid] = {
                     'id': eid,
-                    'name': eid, # Using ID as name for now as the image shows names/IDs
+                    'name': eid,
                     'skill': s.get('skill1', ''),
                     'shifts': {}
                 }
-            
-            # Extract shift type (E, L, N) based on start time
+
             start = s.get('shift_start', 0)
-            if 240 <= start < 600: # 4am to 10am
-                stype = 'EARLY'
-                code = 'E'
-            elif 600 <= start < 1080: # 10am to 6pm
-                stype = 'LATE'
-                code = 'L'
-            elif start >= 1080 or start < 240: # 6pm to 4am
-                stype = 'NIGHT'
-                code = 'N'
+            # Match against named _ROSTER_SHIFTS templates
+            tmpl_id = 'OTHER'
+            tmpl_color = '#6b7280'
+            for tmpl in _ROSTER_SHIFTS:
+                tmpl_start = min(tmpl['hours']) * 60
+                if abs(start - tmpl_start) <= 90:
+                    tmpl_id = tmpl['id']
+                    tmpl_color = tmpl['color']
+                    break
+
+            # Fallback E/L/N coding
+            if 240 <= start < 600:
+                stype, code = 'EARLY', 'E'
+            elif 600 <= start < 1080:
+                stype, code = 'LATE', 'L'
+            elif start >= 1080 or start < 240:
+                stype, code = 'NIGHT', 'N'
             else:
-                stype = 'OTHER'
-                code = 'O'
-                
+                stype, code = 'OTHER', 'O'
+
             timings = f"{mins_to_time(s['shift_start'])}-{mins_to_time(s['shift_end'])}"
+            shift_lbl = s.get('shift_label', f"{tmpl_id} {timings}")
             emp_map[eid]['shifts'][date_key] = {
-                'label': f"{code} {timings}",
-                'type': stype,
-                'timings': timings,
-                'is_absent': False
+                'label':          f"{code} {timings}",
+                'shift_label':    shift_lbl,
+                'template_id':    tmpl_id,
+                'template_color': tmpl_color,
+                'type':           stype,
+                'timings':        timings,
+                'shift_start':    s.get('shift_start', 0),
+                'shift_end':      s.get('shift_end', 720),
+                'is_absent':      False,
             }
-            
+
         # Absent staff
         for s in day.get('absent_staff', []):
             eid = s['id']
@@ -4167,30 +4279,33 @@ def st_roster_board():
                     'shifts': {}
                 }
             emp_map[eid]['shifts'][date_key] = {
-                'label': 'LEAVE',
-                'type': 'LEAVE',
-                'timings': s.get('leave_type', 'Absent'),
-                'is_absent': True
+                'label':       'LEAVE',
+                'shift_label': s.get('leave_type', 'Absent'),
+                'template_id': 'LEAVE',
+                'template_color': '#6b7280',
+                'type':        'LEAVE',
+                'timings':     s.get('leave_type', 'Absent'),
+                'is_absent':   True,
             }
-            
+
     # For employees who are "OFF" on some days, fill in the blanks
     for eid in emp_map:
         for d in dates:
             dk = d['date']
             if dk not in emp_map[eid]['shifts']:
                 emp_map[eid]['shifts'][dk] = {
-                    'label': 'OFF',
-                    'type': 'OFF',
-                    'timings': '',
-                    'is_absent': False
+                    'label': 'OFF', 'shift_label': 'Off duty',
+                    'template_id': 'OFF', 'template_color': '#374151',
+                    'type': 'OFF', 'timings': '', 'is_absent': False,
                 }
-            
+
     # Convert to sorted list
     employees = sorted(emp_map.values(), key=lambda x: x['id'])
-    
+
     return jsonify({
-        'dates': dates,
-        'employees': employees
+        'dates':     dates,
+        'employees': employees,
+        'day_stats': day_stats,
     })
 
 
@@ -5182,6 +5297,7 @@ def st_optimise():
         'tt_t1_t2', 'tt_skill_switch', 'use_primary_first', 'allow_overlaps',
         'shift_duration_hrs', 'b1_duration_mins', 'b2_duration_mins',
         'leave_types_excluded', 'permitted_shifts',
+        'min_coverage_pct', 'max_utilisation_pct', 'fairness_weight', 'allow_secondary_skills',
     ]
     if date not in _st_custom_constraints_by_date:
         _st_custom_constraints_by_date[date] = dict(_st_custom_constraints)
@@ -5238,11 +5354,13 @@ def st_optimise():
                 permitted_starts = [0, 180, 420, 720]
 
             roster_constraints = {
-                'shift_duration_hrs': active_constraints.get('shift_duration_hrs', 12),
-                'min_rest_mins':      int(min_rest_hrs * 60),
-                'b1_duration_mins':   active_constraints.get('b1_duration_mins', 30),
-                'b2_duration_mins':   active_constraints.get('b2_duration_mins', 60),
-                'permitted_starts':   permitted_starts,
+                'shift_duration_hrs':  active_constraints.get('shift_duration_hrs', 12),
+                'min_rest_mins':       int(min_rest_hrs * 60),
+                'b1_duration_mins':    active_constraints.get('b1_duration_mins', 30),
+                'b2_duration_mins':    active_constraints.get('b2_duration_mins', 60),
+                'permitted_starts':    permitted_starts,
+                'fairness_weight':     float(active_constraints.get('fairness_weight', 0.5)),
+                'max_utilisation_pct': float(active_constraints.get('max_utilisation_pct', 95)),
             }
 
             rr = _roster_generate(
@@ -5300,6 +5418,37 @@ def st_optimise():
     enforce_break_conflicts(result)
     refill_unassigned_tasks(result)
     enforce_break_conflicts(result)
+
+    # ── 4. Soft-constraint post-processing flags ──────────────────
+    if roster_info.get('roster_available'):
+        extra_flags = roster_info.get('flags', [])
+
+        # Overtime flag: staff exceeding max utilisation threshold
+        max_util = float(active_constraints.get('max_utilisation_pct', 95))
+        ot_staff = [s['id'] for s in result.get('staff', [])
+                    if (s.get('utilisation_pct') or 0) > max_util]
+        if ot_staff:
+            extra_flags.append({
+                'flag_id':  'OVERTIME_RISK',
+                'severity': 'warn',
+                'staff_id': None,
+                'detail':   f'{len(ot_staff)} staff exceed max utilisation ({max_util:.0f}%): '
+                            + ', '.join(ot_staff[:5]) + ('…' if len(ot_staff) > 5 else ''),
+            })
+
+        # Coverage floor flag
+        min_cov = float(active_constraints.get('min_coverage_pct', 80))
+        overall_cov = result.get('kpis', {}).get('coverage_pct', 100)
+        if overall_cov < min_cov:
+            extra_flags.append({
+                'flag_id':  'LOW_COVERAGE',
+                'severity': 'critical',
+                'staff_id': None,
+                'detail':   f'Overall coverage {overall_cov:.1f}% is below minimum threshold {min_cov:.0f}%',
+            })
+
+        roster_info['flags'] = extra_flags
+
     result['roster'] = roster_info
     result['constraints_applied'] = {
         k: active_constraints.get(k) for k in tactical_keys
