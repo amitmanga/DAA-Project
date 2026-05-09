@@ -121,10 +121,22 @@ async function stSelectDate(dateStr) {
 function renderShortTermDay() {
   const d = ST_DATA;
   const el = document.getElementById('st-content');
+  const carriedBanner = d.staff_data_carried_forward
+    ? `<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;margin-bottom:12px;
+                   background:#78350f22;border:1px solid #f59e0b55;border-radius:8px;">
+         <span style="font-size:1rem;">⚠️</span>
+         <span style="font-size:0.8rem;color:#f59e0b;">
+           No roster data available for this date — showing carried-forward schedule from
+           <strong>${d.staff_data_carried_forward}</strong>.
+           Upload the updated Staff_schedule.csv to see actual assignments.
+         </span>
+       </div>` : '';
+
   el.innerHTML = `
-    <div class="page-header" style="margin-bottom:16px">
+    <div class="page-header" style="margin-bottom:12px">
       <h2 class="page-title" style="font-size:1.3rem">${d.date_label}</h2>
     </div>
+    ${carriedBanner}
     <!-- KPI Cards -->
     <div class="kpi-grid st-kpi-grid" id="st-kpis"></div>
     <!-- Alerts -->
@@ -203,54 +215,350 @@ function renderSTAlerts(alerts, date) {
       <span>✅</span> All tasks fully covered — no staffing gaps.</div>`;
     return;
   }
-  const crit = alerts.filter(a => a.priority === 'Critical');
-  const high = alerts.filter(a => a.priority !== 'Critical');
+
+  const timeToMins = t => {
+    if (!t) return 0;
+    const [h, m] = (t + ':00').split(':').map(Number);
+    return h * 60 + (m || 0);
+  };
+
+  // Bucket every alert into a 3-hour block
+  const blockMap = {};
+  ST_TIME_BLOCKS.forEach(b => { blockMap[b.id] = { block: b, alerts: [] }; });
+
+  alerts.forEach(a => {
+    const sm = timeToMins(a.start);
+    const hit = ST_TIME_BLOCKS.find(b => sm >= b.start && sm < b.end)
+             || ST_TIME_BLOCKS[ST_TIME_BLOCKS.length - 1];
+    blockMap[hit.id].alerts.push(a);
+  });
+
+  const activeBlocks = ST_TIME_BLOCKS
+    .map(b => blockMap[b.id])
+    .filter(b => b.alerts.length > 0);
+
+  const totalCrit = alerts.filter(a => a.priority === 'Critical').length;
+  const totalHigh = alerts.filter(a => a.priority !== 'Critical').length;
+
+  // Mini timeline bar: all 8 blocks coloured by severity
+  const timelineHtml = ST_TIME_BLOCKS.map(b => {
+    const bA = blockMap[b.id].alerts;
+    const hasCrit = bA.some(a => a.priority === 'Critical');
+    const hasHigh = bA.length > 0;
+    const bg  = hasCrit ? '#ef4444' : hasHigh ? '#f59e0b' : 'var(--border)';
+    const tip = hasCrit ? `${bA.filter(a=>a.priority==='Critical').length} Critical`
+              : hasHigh ? `${bA.length} High` : 'OK';
+    return `<div title="${b.label.replace('–',':00–')}:00 — ${tip}" style="
+      flex:1;height:8px;border-radius:3px;background:${bg};
+      opacity:${hasHigh||hasCrit?1:0.25};cursor:default;position:relative;
+      transition:opacity .2s;" data-block="${b.id}"></div>`;
+  }).join('');
+
+  const timelineLabels = ST_TIME_BLOCKS.map((b, i) =>
+    i % 2 === 0 ? `<div style="flex:1;font-size:0.6rem;color:var(--muted);text-align:center">${b.label.split('–')[0]}:00</div>` : '<div style="flex:1"></div>'
+  ).join('');
+
   panel.innerHTML = `
     <div class="alerts-container">
-      <div class="alerts-header">
+      <div class="alerts-header" style="flex-wrap:wrap;gap:8px;">
         <span class="alerts-title">⚠ Staffing Alerts &amp; Recommendations</span>
-        <span class="alerts-count">
-          ${crit.length ? `<span class="badge badge-crit">${crit.length} Critical</span>` : ''}
-          ${high.length ? `<span class="badge badge-warn">${high.length} High</span>` : ''}
+        <span class="alerts-count" style="display:flex;gap:6px;align-items:center;">
+          ${totalCrit ? `<span class="badge badge-crit">${totalCrit} Critical</span>` : ''}
+          ${totalHigh ? `<span class="badge badge-warn">${totalHigh} High</span>` : ''}
+          <span style="font-size:0.72rem;color:var(--muted)">${activeBlocks.length}/8 blocks affected · ${alerts.length} gaps total</span>
         </span>
-        <button class="btn-ghost" id="st-alerts-toggle">Show top 10 ▾</button>
       </div>
-      <div id="st-alerts-list"></div>
-    </div>`;
 
-  const shown = alerts.slice(0, 10);
-  let expanded = false;
-  const list = document.getElementById('st-alerts-list');
+      <!-- 3-hour timeline bar -->
+      <div style="margin:10px 0 4px;display:flex;gap:3px;">${timelineHtml}</div>
+      <div style="display:flex;gap:3px;margin-bottom:12px;">${timelineLabels}</div>
 
-  function renderAlertsList(items) {
-    list.innerHTML = items.map(a => `
-      <div class="alert-row alert-${a.priority === 'Critical' ? 'crit' : 'warn'}">
-        <div class="alert-row-left">
-          <span class="badge ${a.priority === 'Critical' ? 'badge-crit' : 'badge-warn'}">${a.priority}</span>
-          <span class="alert-msg">${a.message}</span>
+      <!-- 3-hour block cards — single full-width row -->
+      <div id="st-alerts-blocks" style="display:flex;flex-direction:row;gap:10px;width:100%;"></div>
+</div>`;
+
+  const blocksEl = document.getElementById('st-alerts-blocks');
+
+  activeBlocks.forEach(({ block, alerts: bAlerts }) => {
+    const bCrit  = bAlerts.filter(a => a.priority === 'Critical');
+    const bHigh  = bAlerts.filter(a => a.priority !== 'Critical');
+    const hasCrit = bCrit.length > 0;
+    const accent  = hasCrit ? '#ef4444' : '#f59e0b';
+
+    // Aggregate by skill: worst gap, total tasks, rec staff union
+    const skillMap = {};
+    bAlerts.forEach(a => {
+      const sk = a.skill || a.task || 'Unknown';
+      if (!skillMap[sk]) {
+        skillMap[sk] = { skill: sk, needed: 0, assigned: 0, gap: 0,
+                         slots: 0, priority: 'High', recSet: new Set(),
+                         assignedSet: new Set(), firstAlert: a, allAlerts: [] };
+      }
+      const e = skillMap[sk];
+      e.gap      = Math.max(e.gap, a.gap || 0);
+      e.needed   = Math.max(e.needed, a.staff_needed || 0);
+      e.assigned = Math.max(e.assigned, a.assigned_count || 0);
+      e.slots++;
+      if (a.priority === 'Critical') e.priority = 'Critical';
+      (a.rec_staff || []).forEach(s => e.recSet.add(s));
+      (a.assigned_staff || []).forEach(s => e.assignedSet.add(s));
+      e.allAlerts.push(a);
+    });
+
+    const skills    = Object.values(skillMap).sort((a, b) => b.gap - a.gap);
+    const blockLbl  = block.label.replace('–', ':00 – ') + ':00';
+
+    // Worst-gap bar (relative to total needed across block)
+    const maxGap    = Math.max(...skills.map(s => s.gap));
+    const maxNeeded = Math.max(...skills.map(s => s.needed));
+
+    const skillRows = skills.map((s, si) => {
+      const c        = s.priority === 'Critical' ? '#ef4444' : '#f59e0b';
+      const barPct   = s.needed > 0 ? Math.round((s.assigned / s.needed) * 100) : 100;
+      const gapPct   = 100 - barPct;
+      const detailKey = `${block.id}__${si}`;
+      _stSkillDetailMap[detailKey] = { skill: s, blockLabel: block.label };
+
+      return `
+        <div class="st-skill-row" data-detail-key="${detailKey}"
+          style="margin-bottom:8px;padding:7px 9px;background:var(--surface);border-radius:6px;
+                 border-left:3px solid ${c};cursor:pointer;transition:opacity .15s;"
+          onmouseenter="this.style.opacity='0.8'" onmouseleave="this.style.opacity='1'">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:4px;">
+            <span style="font-size:0.75rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%">${s.skill}</span>
+            <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
+              <span style="font-size:0.62rem;color:var(--muted)">${s.slots}s</span>
+              <span style="font-size:0.68rem;font-weight:800;color:${c}">-${s.gap}</span>
+            </div>
+          </div>
+          <div style="height:5px;border-radius:3px;background:var(--border);overflow:hidden;margin-bottom:5px;">
+            <div style="width:${barPct}%;height:100%;background:#10b981;float:left;"></div>
+            <div style="width:${gapPct}%;height:100%;background:${c};float:left;opacity:0.7;"></div>
+          </div>
+          <div style="font-size:0.62rem;color:var(--muted);">
+            ${s.assigned}/${s.needed} · ${s.recSet.size ? s.recSet.size+' rec' : 'no rec'} ▶
+          </div>
+        </div>`;
+    }).join('');
+
+    const card = document.createElement('div');
+    card.style.cssText = `flex:1 1 0;min-width:0;border:1px solid ${accent}35;border-top:3px solid ${accent};border-radius:8px;padding:12px;background:${accent}06;overflow:hidden;`;
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:4px;">
+        <div style="font-weight:800;font-size:0.78rem;color:var(--text);white-space:nowrap;">${block.label}</div>
+        <div style="display:flex;gap:3px;align-items:center;flex-shrink:0;">
+          ${bCrit.length ? `<span class="badge badge-crit" style="font-size:0.58rem;padding:1px 4px">${bCrit.length}C</span>` : ''}
+          ${bHigh.length ? `<span class="badge badge-warn" style="font-size:0.58rem;padding:1px 4px">${bHigh.length}H</span>` : ''}
         </div>
-        <div class="alert-row-right">
-          ${a.rec_staff && a.rec_staff.length
-            ? `<span class="alert-rec">Rec: ${a.rec_staff.join(', ')}</span>
-               <button class="btn-apply-rec"
-                 data-date="${date}"
-                 data-task="${a.task_id}"
-                 data-staff='${JSON.stringify(a.rec_staff)}'>Apply ▶</button>`
-            : '<span class="alert-rec muted">No available staff</span>'}
-        </div>
-      </div>`).join('');
+      </div>
+      ${skillRows}`;
 
-    list.querySelectorAll('.btn-apply-rec').forEach(btn =>
-      btn.addEventListener('click', () => applySTRecommendation(btn)));
+    blocksEl.appendChild(card);
+  });
+
+  // Wire skill-row click → detail modal
+  blocksEl.querySelectorAll('.st-skill-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const entry = _stSkillDetailMap[row.dataset.detailKey];
+      if (entry) showSTSkillBlockDetail(entry.skill, entry.blockLabel, date);
+    });
+  });
+}
+
+const _stSkillDetailMap = {};
+
+function _generateAlertSuggestions(s, blockLabel, totalPax, avgPaxRate) {
+  const tips = [];
+  const skill = s.skill;
+  const gap   = s.gap;
+  const slots = s.slots;
+  const recCount = s.recSet.size;
+  const assignedCount = s.assignedSet.size;
+  const isCrit = s.priority === 'Critical';
+  const blockTime = blockLabel; // e.g. "06–09"
+
+  // 1 — Forecast / awareness
+  if (totalPax > 500) {
+    tips.push({ icon: '📊', text: `High PAX volume (${totalPax.toLocaleString()}) expected during ${blockTime} — plan for peak demand on ${skill}.` });
+  } else if (totalPax > 0) {
+    tips.push({ icon: '📊', text: `${totalPax.toLocaleString()} PAX expected in the ${blockTime} block — monitor ${skill} capacity closely.` });
   }
 
-  renderAlertsList(shown);
+  // 2 — Add staff
+  if (gap >= 5) {
+    tips.push({ icon: '👥', text: `Add at least ${gap} more agents to the ${skill} shift covering ${blockTime} to close the coverage gap.` });
+  } else if (gap > 0) {
+    tips.push({ icon: '👥', text: `Bring in ${gap} additional ${skill} staff for the ${blockTime} window to meet demand.` });
+  }
 
-  document.getElementById('st-alerts-toggle').addEventListener('click', function() {
-    expanded = !expanded;
-    renderAlertsList(expanded ? alerts : shown);
-    this.textContent = expanded ? `Show top 10 ▴` : `Show top 10 ▾`;
-  });
+  // 3 — Rebalance from over-staffed area
+  if (assignedCount > 0 && gap > 0) {
+    tips.push({ icon: '🔄', text: `Check if other skills are over-staffed in ${blockTime} — redeploy available agents to ${skill}.` });
+  }
+
+  // 4 — Secondary skills
+  if (recCount === 0 && gap > 0) {
+    tips.push({ icon: '🎯', text: `No direct ${skill} staff available — assign secondary-skilled agents who are qualified for this task.` });
+  } else if (recCount > 0 && recCount < gap) {
+    tips.push({ icon: '🎯', text: `Only ${recCount} recommended staff found — consider secondary-skilled staff to fill the remaining ${gap - recCount} gap.` });
+  }
+
+  // 5 — Shift adjustment
+  if (slots >= 4) {
+    tips.push({ icon: '🕐', text: `Gap persists across ${slots} consecutive slots in ${blockTime} — consider starting a ${skill} shift earlier to cover this window.` });
+  }
+
+  // 6 — Critical escalation
+  if (isCrit) {
+    tips.push({ icon: '🚨', text: `Critical shortage — escalate to shift supervisor and pre-authorise overtime for ${skill} staff if no cover is found.` });
+  }
+
+  // 7 — Roster optimisation
+  if (gap > 2 || isCrit) {
+    tips.push({ icon: '⚙️', text: `Run roster optimisation for this day to automatically redistribute staff and minimise gaps across all skills.` });
+  }
+
+  return tips;
+}
+
+function showSTSkillBlockDetail(s, blockLabel, date) {
+  const overlay = _getSTAlertOverlay();
+  const box = document.getElementById('st-alert-detail-box');
+  if (!box) return;
+
+  const accent = s.priority === 'Critical' ? '#ef4444' : '#f59e0b';
+  const recArr = [...s.recSet];
+  const assignedArr = [...s.assignedSet];
+
+  // Aggregate PAX data across all alerts for this skill
+  const totalPax = s.allAlerts.reduce((sum, a) => sum + (Number(a.passengers) || 0), 0);
+  const avgPaxRate = s.allAlerts.length
+    ? (s.allAlerts.reduce((sum, a) => sum + (Number(a.pax_rate) || 0), 0) / s.allAlerts.length).toFixed(1)
+    : 0;
+  const peakSlot = s.allAlerts.reduce((best, a) =>
+    (Number(a.passengers) || 0) > (Number(best.passengers) || 0) ? a : best, s.allAlerts[0] || {});
+
+  const slotRows = s.allAlerts
+    .sort((a, b) => (a.start || '').localeCompare(b.start || ''))
+    .map(a => {
+      const slotPct = a.staff_needed > 0 ? Math.round((a.assigned_count / a.staff_needed) * 100) : 100;
+      const pc = a.priority === 'Critical' ? '#ef4444' : '#f59e0b';
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);">
+          <span style="font-size:0.72rem;font-weight:700;color:var(--text);min-width:90px">${a.start}–${a.end}</span>
+          <div style="flex:1;height:6px;border-radius:3px;background:var(--border);overflow:hidden;">
+            <div style="width:${slotPct}%;height:100%;background:#10b981;float:left;"></div>
+            <div style="width:${100-slotPct}%;height:100%;background:${pc};float:left;opacity:0.7;"></div>
+          </div>
+          <span style="font-size:0.7rem;color:var(--muted);min-width:70px;text-align:right">${a.assigned_count}/${a.staff_needed}</span>
+          <span style="font-size:0.72rem;font-weight:800;color:${pc};min-width:40px;text-align:right">-${a.gap}</span>
+          <span class="badge ${a.priority==='Critical'?'badge-crit':'badge-warn'}" style="font-size:0.6rem;padding:1px 5px">${a.priority}</span>
+        </div>`;
+    }).join('');
+
+  box.innerHTML = `
+    <div class="modal-header" style="border-bottom:3px solid ${accent}">
+      <div style="flex:1">
+        <div class="modal-title">${s.skill} · ${blockLabel}</div>
+        <div class="fd-meta" style="margin-top:4px;color:rgba(255,255,255,0.75)">
+          ${s.slots} time slot${s.slots>1?'s':''} · Max gap: ${s.gap} · ${s.priority}
+        </div>
+      </div>
+      <button class="fd-close" onclick="closeSTAlertDetail()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="staff-detail-kpis">
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val" style="color:${accent}">${s.gap}</div><div class="staff-detail-kpi-lbl">Max Gap</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${s.needed}</div><div class="staff-detail-kpi-lbl">Max Needed</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${s.assigned}</div><div class="staff-detail-kpi-lbl">Assigned</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${totalPax.toLocaleString()}</div><div class="staff-detail-kpi-lbl">Total PAX</div></div>
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Time Slots — Coverage Breakdown</div>
+        ${slotRows || '<div class="muted small">No slot data.</div>'}
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Recommended Staff (${recArr.length})</div>
+        ${recArr.length
+          ? `<div class="staff-breaks" style="margin-bottom:10px;">
+               ${recArr.map(r => `<span class="break-chip">${r}</span>`).join('')}
+             </div>
+             <button class="btn-primary" style="font-size:0.8rem;padding:6px 16px;"
+               onclick="(async()=>{
+                 this.disabled=true; this.textContent='Applying…';
+                 try {
+                   ST_DATA = await fetch('/api/short-term/apply-rec',{method:'POST',
+                     headers:{'Content-Type':'application/json'},
+                     body:JSON.stringify({date:'${date}',task_id:'${s.firstAlert.task_id}',
+                       staff_ids:${JSON.stringify(recArr.slice(0,5))}})
+                   }).then(r=>r.json());
+                   closeSTAlertDetail();
+                   renderShortTermDay();
+                 } catch(e){ this.disabled=false; this.textContent='Apply Recommendations'; }
+               })()">Apply Recommendations</button>`
+          : '<div class="muted small">No available staff recommendations.</div>'}
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Currently Assigned Staff (${assignedArr.length})</div>
+        ${assignedArr.length
+          ? `<div class="staff-breaks">${assignedArr.map(r=>`<span class="break-chip" style="opacity:0.7">${r}</span>`).join('')}</div>`
+          : '<div class="muted small">No staff currently assigned.</div>'}
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">PAX Load — Slot Breakdown</div>
+        ${totalPax > 0 ? `
+          <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:120px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
+              <div style="font-size:1.3rem;font-weight:800;color:var(--text)">${totalPax.toLocaleString()}</div>
+              <div style="font-size:0.7rem;color:var(--muted)">Total PAX in block</div>
+            </div>
+            <div style="flex:1;min-width:120px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
+              <div style="font-size:1.3rem;font-weight:800;color:var(--text)">${avgPaxRate}</div>
+              <div style="font-size:0.7rem;color:var(--muted)">Avg PAX / staff / slot</div>
+            </div>
+            ${peakSlot.passengers ? `
+            <div style="flex:1;min-width:120px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
+              <div style="font-size:1.3rem;font-weight:800;color:${accent}">${Number(peakSlot.passengers).toLocaleString()}</div>
+              <div style="font-size:0.7rem;color:var(--muted)">Peak PAX (${peakSlot.start})</div>
+            </div>` : ''}
+          </div>
+          <div>
+            ${s.allAlerts.sort((a,b)=>(a.start||'').localeCompare(b.start||'')).map(a => {
+              const pax = Number(a.passengers) || 0;
+              const maxP = Math.max(...s.allAlerts.map(x => Number(x.passengers)||0)) || 1;
+              const pct = Math.round((pax / maxP) * 100);
+              return `
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+                  <span style="font-size:0.7rem;color:var(--muted);min-width:90px">${a.start}–${a.end}</span>
+                  <div style="flex:1;height:8px;border-radius:4px;background:var(--border);overflow:hidden;">
+                    <div style="width:${pct}%;height:100%;background:${accent};opacity:0.75;border-radius:4px;"></div>
+                  </div>
+                  <span style="font-size:0.7rem;font-weight:700;color:var(--text);min-width:50px;text-align:right">${pax.toLocaleString()} PAX</span>
+                </div>`;
+            }).join('')}
+          </div>`
+        : '<div class="muted small">No PAX data available for this skill.</div>'}
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title" style="color:#60a5fa;">💡 Suggestions</div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+          ${_generateAlertSuggestions(s, blockLabel, totalPax, avgPaxRate).map(t => `
+            <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;
+                        background:var(--surface);border-radius:8px;
+                        border-left:3px solid #3b82f6;">
+              <span style="font-size:1rem;flex-shrink:0;">${t.icon}</span>
+              <span style="font-size:0.8rem;color:var(--text);line-height:1.45;">${t.text}</span>
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+
+  overlay.classList.remove('hidden');
 }
 
 function _getSTAlertOverlay() {
@@ -331,125 +639,6 @@ function closeSTAlertDetail() {
 }
 window.showSTAlertDetail = showSTAlertDetail;
 window.closeSTAlertDetail = closeSTAlertDetail;
-
-renderSTAlerts = function(alerts, date) {
-  const panel = document.getElementById('st-alerts-panel');
-  if (!alerts || alerts.length === 0) {
-    panel.innerHTML = `<div class="alert-row alert-ok" style="padding:14px 18px;border-radius:var(--radius);font-size:0.83rem;">&#x2705; All tasks fully covered &mdash; no staffing gaps.</div>`;
-    return;
-  }
-
-  const byCrit = alerts.filter(a => a.priority === 'Critical').length;
-  const byHigh = alerts.filter(a => a.priority === 'High').length;
-  const byMed  = alerts.filter(a => a.priority === 'Medium').length;
-  const byLow  = alerts.filter(a => a.priority === 'Low').length;
-  const total  = alerts.length;
-
-  const severityCls = byCrit ? '--crit' : byHigh ? '--high' : byMed ? '--warn' : '--low';
-
-  const countChips = [
-    byCrit ? `<span class="badge badge-crit">${byCrit} Critical</span>` : '',
-    byHigh ? `<span class="badge badge-high">${byHigh} High</span>` : '',
-    byMed  ? `<span class="badge badge-warn">${byMed} Medium</span>` : '',
-    byLow  ? `<span class="badge badge-ok">${byLow} Low</span>` : '',
-  ].filter(Boolean).join('');
-
-  const critDot = byCrit ? '<span class="alerts-crit-dot"></span>' : '';
-
-  panel.innerHTML = `
-    <div class="alerts-container alerts-container${severityCls}">
-      <div class="alerts-header">
-        ${critDot}
-        <span style="font-size:1rem;line-height:1">&#x26A0;&#xFE0F;</span>
-        <span class="alerts-title">Staffing Alerts &amp; Recommendations</span>
-        <span style="display:flex;gap:5px;align-items:center">${countChips}</span>
-        <button class="btn-ghost" id="st-alerts-toggle" style="margin-left:6px;white-space:nowrap">Show top 10 &#9660;</button>
-      </div>
-      <div id="st-alerts-list"></div>
-    </div>`;
-
-  const shown = alerts.slice(0, 10);
-  let expanded = false;
-  const list = document.getElementById('st-alerts-list');
-
-  const CARD_CLASS  = { Critical: 'crit', High: 'high', Medium: 'warn', Low: 'low' };
-  const BADGE_CLASS = { Critical: 'badge-crit', High: 'badge-high', Medium: 'badge-warn', Low: 'badge-ok' };
-
-  function cleanTaskName(raw) {
-    // Strip trailing " - HH:MM-HH:MM - ..." time/staffing info if present
-    return (raw || '').replace(/\s*-\s*\d{2}:\d{2}-\d{2}:\d{2}.*$/, '').trim() || raw;
-  }
-
-  function renderAlertsList(items) {
-    list.innerHTML = items.map((a, idx) => {
-      const flights   = a.covered_flights || [];
-      const flightStr = flights.length
-        ? flights.slice(0, 3).map(f => f.flight_no).join(', ') + (flights.length > 3 ? ` +${flights.length - 3}` : '')
-        : (a.flight_no || '');
-      const cardCls  = CARD_CLASS[a.priority]  || 'warn';
-      const badgeCls = BADGE_CLASS[a.priority] || 'badge-warn';
-      const termLoc  = `${a.terminal || 'ALL'} / ${a.pier || 'ALL'}`;
-      const taskName = cleanTaskName(a.task);
-      const subDesc  = flightStr
-        ? `&#x2708; ${flightStr} &mdash; ${a.message}`
-        : (a.message || '');
-
-      const staffPct = a.staff_needed > 0
-        ? Math.min(100, Math.round((a.assigned_count / a.staff_needed) * 100))
-        : 0;
-
-      const recHtml = (a.rec_staff && a.rec_staff.length)
-        ? `<div class="alert-rec-chips">${a.rec_staff.map(s => `<span class="alert-rec-chip">${s}</span>`).join('')}</div>
-           <button class="btn-apply-rec"
-             data-date="${date}"
-             data-task="${a.task_id}"
-             data-staff='${JSON.stringify(a.rec_staff)}'>&#x25B6; Apply</button>`
-        : `<span class="alert-no-staff">No available staff</span>`;
-
-      return `
-        <div class="alert-card alert-card-${cardCls}" data-alert-idx="${idx}">
-          <div class="alert-card-stripe"></div>
-          <div class="alert-card-body">
-            <div class="alert-card-toprow">
-              <span class="badge ${badgeCls}" style="flex-shrink:0">${a.priority}</span>
-              <span class="alert-task-label">${taskName}</span>
-              <span class="alert-time-chip">${a.start}&ndash;${a.end}</span>
-              <span class="alert-loc-chip">${termLoc}</span>
-            </div>
-            <div class="alert-card-subrow">${subDesc}</div>
-          </div>
-          <div class="alert-staffing-col">
-            <div class="alert-staff-ratio">
-              <span class="alert-staff-cur">${a.assigned_count}</span>
-              <span class="alert-staff-total">/${a.staff_needed}</span>
-            </div>
-            <div class="alert-staffing-bar">
-              <div class="alert-staffing-bar-fill" style="width:${staffPct}%"></div>
-            </div>
-            <div class="alert-staff-lbl">staff</div>
-            <div class="alert-gap-pill">&minus;${a.gap} gap</div>
-          </div>
-          <div class="alert-rec-col">${recHtml}</div>
-        </div>`;
-    }).join('');
-
-    list.querySelectorAll('.btn-apply-rec').forEach(btn =>
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        applySTRecommendation(btn);
-      }));
-    list.querySelectorAll('.alert-card[data-alert-idx]').forEach(card =>
-      card.addEventListener('click', () => showSTAlertDetail(items[Number(card.dataset.alertIdx)])));
-  }
-
-  renderAlertsList(shown);
-
-  document.getElementById('st-alerts-toggle').addEventListener('click', function() {
-    expanded = !expanded;
-    renderAlertsList(expanded ? alerts : shown);
-    this.textContent = expanded ? 'Show top 10 ▲' : 'Show top 10 ▼';
-  });
-};
 
 async function applySTRecommendation(btn) {
   const date = btn.dataset.date;
@@ -1291,24 +1480,51 @@ async function renderSTOptimization(container) {
     const resEl = document.getElementById('opt-results');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Optimising 3 Days…';
-    resEl.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Running optimisation across all 3 short-term days…</span></div>';
 
     const activeDates = ST_DATES.filter(d => d.has_data);
 
     try {
-      // Fetch before-state and run all days in parallel
-      const [boardData, ...dayResults] = await Promise.all([
-        fetch('/api/short-term/roster-board').then(r => r.json()),
-        ...activeDates.map(d =>
+      // ── Phase 1: capture baseline BEFORE any optimisation changes the backend ──
+      resEl.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Capturing baseline schedule…</span></div>';
+      const beforeFetches = await Promise.all(
+        activeDates.map(d => fetch(`/api/short-term/${d.date}`).then(r => r.json())
+          .then(data => ({ date: d.date, data })))
+      );
+
+      // Build rich "before" snapshot: shifts, util, coverage, tasks
+      const before = {};
+      beforeFetches.forEach(({ date, data }) => {
+        const staff = data.staff || [];
+        const shiftCounts = {};
+        let utilSum = 0;
+        staff.forEach(s => {
+          const sh = s.shift || 'Other';
+          shiftCounts[sh] = (shiftCounts[sh] || 0) + 1;
+          utilSum += (s.utilisation_pct || 0);
+        });
+        before[date] = {
+          coverage_pct:   data.kpis?.coverage_pct ?? null,
+          tasks_covered:  data.kpis?.tasks_covered ?? null,
+          tasks_total:    data.kpis?.tasks_total   ?? null,
+          staff_count:    staff.length,
+          absent:         (data.absent_staff || []).length,
+          mean_util:      staff.length ? (utilSum / staff.length) : null,
+          shifts:         shiftCounts,
+        };
+      });
+
+      // ── Phase 2: run optimisation for all days in parallel ──
+      resEl.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Running MIP optimisation across all 3 days…</span></div>';
+      const dayResults = await Promise.all(
+        activeDates.map(d =>
           fetch('/api/short-term/optimise', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(_buildPayload(d.date)),
           }).then(r => r.json()).then(data => ({ date: d.date, label: d.label, data }))
-        ),
-      ]);
+        )
+      );
 
-      const before  = boardData.day_stats || {};
       const results = {};
       dayResults.forEach(({ date, data }) => { results[date] = data; });
 
@@ -1319,9 +1535,7 @@ async function renderSTOptimization(container) {
         applied: {},
       };
 
-      // Apply current date result to ST_DATA immediately
       if (results[ST_CURRENT_DATE]) ST_DATA = results[ST_CURRENT_DATE];
-
       _renderOptDayResults(resEl, ST_OPT_RESULTS_CACHE);
 
     } catch (err) {
@@ -1338,6 +1552,16 @@ async function renderSTOptimization(container) {
   function _renderOptDayResults(el, cache) {
     const { dates, before, results, applied } = cache;
 
+    // Helper: delta chip
+    const deltaChip = (val, unit='%', invert=false) => {
+      if (val === null || val === undefined || isNaN(val)) return '';
+      const pos = invert ? val < 0 : val > 0;
+      const neg = invert ? val > 0 : val < 0;
+      const col = pos ? '#10b981' : neg ? '#ef4444' : '#6b7280';
+      const sign = val > 0 ? '+' : '';
+      return `<span style="font-size:0.68rem;font-weight:800;color:${col}">${sign}${typeof val==='number'?val.toFixed(unit==='%'?1:0):val}${unit}</span>`;
+    };
+
     const dayCardsHtml = dates.map(({ date, label }) => {
       const bef    = before[date] || {};
       const res    = results[date] || {};
@@ -1345,109 +1569,173 @@ async function renderSTOptimization(container) {
       const kpis   = res.kpis     || {};
       const fair   = roster.fairness || {};
 
-      const covB = typeof bef.coverage_pct  === 'number' ? bef.coverage_pct  : null;
-      const covA = typeof kpis.coverage_pct === 'number' ? kpis.coverage_pct : null;
-      const covDelta = (covB !== null && covA !== null) ? (covA - covB) : null;
+      // Coverage
+      const covB = bef.coverage_pct ?? null;
+      const covA = kpis.coverage_pct ?? null;
+      const covD = (covB !== null && covA !== null) ? (covA - covB) : null;
       const covColor = covA === null ? '#6b7280' : covA >= 90 ? '#10b981' : covA >= 75 ? '#f59e0b' : '#ef4444';
 
-      const staffCount = (res.staff || []).length;
-      const absCount   = bef.absent ?? 0;
-      const flags      = roster.flags || [];
-      const flagCount  = flags.length;
-      const gini       = typeof fair.gini_coefficient === 'number' ? fair.gini_coefficient.toFixed(3) : '—';
-      const giniInterp = fair.interpretation || '';
-      const giniColor  = giniInterp === 'excellent' ? '#10b981' : giniInterp === 'good' ? '#3b82f6' : giniInterp === 'moderate' ? '#f59e0b' : '#6b7280';
-      const solver     = roster.solver_used || '—';
-      const isMIP      = solver.toLowerCase().includes('mip') || solver.toLowerCase().includes('cbc');
+      // Tasks covered
+      const tasksCovB = bef.tasks_covered ?? null;
+      const tasksTotB = bef.tasks_total   ?? null;
+      const tasksCovA = kpis.tasks_covered ?? null;
+      const tasksTotA = kpis.tasks_total   ?? null;
+      const tasksD = (tasksCovB !== null && tasksCovA !== null) ? (tasksCovA - tasksCovB) : null;
 
-      // Shift distribution
-      const shiftCounts = {};
+      // Staff / absent
+      const staffB = bef.staff_count  || 0;
+      const staffA = (res.staff || []).length;
+      const absB   = bef.absent ?? 0;
+      const absA   = (res.absent_staff || []).length;
+
+      // Utilisation
+      const utilB = bef.mean_util ?? null;
+      let utilASum = 0, utilACnt = 0;
+      (res.staff || []).forEach(s => { utilASum += (s.utilisation_pct||0); utilACnt++; });
+      const utilA = utilACnt ? (utilASum / utilACnt) : null;
+      const utilD = (utilB !== null && utilA !== null) ? (utilA - utilB) : null;
+
+      // Flags
+      const flags     = roster.flags || [];
+      const flagCount = flags.length;
+
+      // Gini
+      const gini      = typeof fair.gini_coefficient === 'number' ? fair.gini_coefficient.toFixed(3) : '—';
+      const giniInterp= fair.interpretation || '';
+      const giniColor = giniInterp==='excellent'?'#10b981':giniInterp==='good'?'#3b82f6':giniInterp==='moderate'?'#f59e0b':'#6b7280';
+
+      // Solver
+      const solver = roster.solver_used || '—';
+      const isMIP  = solver.toLowerCase().includes('mip') || solver.toLowerCase().includes('cbc');
+
+      // ── Shift distribution before & after ──
+      const shiftsB = bef.shifts || {};
+      const shiftsA = {};
       (res.staff || []).forEach(s => {
         const sh = s.shift || 'Other';
-        shiftCounts[sh] = (shiftCounts[sh] || 0) + 1;
+        shiftsA[sh] = (shiftsA[sh] || 0) + 1;
       });
-      const shiftBadges = Object.entries(shiftCounts).map(([sh, n]) => {
-        const c = (SHIFT_META[sh] || {}).color || '#6b7280';
-        return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;background:${c}20;border:1px solid ${c}40;font-size:0.72rem;font-weight:700;color:${c}">
-          <span style="width:7px;height:7px;border-radius:50%;background:${c};display:inline-block;"></span>${sh}&nbsp;${n}
-        </span>`;
+      const allShifts = [...new Set([...Object.keys(SHIFT_META), ...Object.keys(shiftsB), ...Object.keys(shiftsA)])];
+      const shiftRows = allShifts
+        .map(sh => ({ sh, b: shiftsB[sh]||0, a: shiftsA[sh]||0, d: (shiftsA[sh]||0)-(shiftsB[sh]||0) }))
+        .filter(r => r.b > 0 || r.a > 0);
+
+      const shiftTableHtml = shiftRows.map(r => {
+        const c   = (SHIFT_META[r.sh]||{}).color || '#6b7280';
+        const col = r.d > 0 ? '#10b981' : r.d < 0 ? '#ef4444' : '#6b7280';
+        const arr = r.d > 0 ? '↑' : r.d < 0 ? '↓' : '—';
+        return `<tr>
+          <td style="padding:3px 6px;font-size:0.75rem;font-weight:700;color:${c};white-space:nowrap;">
+            <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${c};margin-right:4px;vertical-align:middle;"></span>${r.sh}
+          </td>
+          <td style="padding:3px 6px;font-size:0.75rem;text-align:center;color:var(--muted);">${r.b||'—'}</td>
+          <td style="padding:3px 4px;font-size:0.65rem;color:var(--muted);">→</td>
+          <td style="padding:3px 6px;font-size:0.75rem;text-align:center;font-weight:700;">${r.a||'—'}</td>
+          <td style="padding:3px 6px;font-size:0.75rem;text-align:right;font-weight:800;color:${col};">${r.d!==0?(r.d>0?'+':'')+r.d+' '+arr:'—'}</td>
+        </tr>`;
       }).join('');
 
       // Flag previews
       const flagHtml = flagCount
-        ? `<div style="margin-bottom:10px;padding:8px;background:#ef444410;border-radius:5px;border-left:2px solid #ef4444;">
+        ? `<div style="padding:8px;background:#ef444410;border-radius:5px;border-left:2px solid #ef4444;margin-bottom:10px;">
             <div style="font-size:0.72rem;font-weight:700;color:#ef4444;margin-bottom:4px;">⚠ ${flagCount} Flag${flagCount>1?'s':''}</div>
-            ${flags.slice(0, 3).map(f => `<div style="font-size:0.72rem;color:var(--muted);padding:1px 0;">${f.flag_id}: ${f.detail}</div>`).join('')}
-            ${flagCount > 3 ? `<div style="font-size:0.7rem;color:var(--muted);">+${flagCount-3} more</div>` : ''}
+            ${flags.slice(0,3).map(f=>`<div style="font-size:0.7rem;color:var(--muted);padding:1px 0">${f.flag_id}: ${f.detail}</div>`).join('')}
+            ${flagCount>3?`<div style="font-size:0.68rem;color:var(--muted)">+${flagCount-3} more</div>`:''}
           </div>`
-        : `<div style="margin-bottom:10px;padding:6px 10px;background:#10b98110;border-radius:5px;border-left:2px solid #10b981;font-size:0.75rem;color:#10b981;font-weight:600;">✓ No flags</div>`;
+        : `<div style="padding:5px 10px;background:#10b98110;border-radius:5px;border-left:2px solid #10b981;font-size:0.73rem;color:#10b981;font-weight:600;margin-bottom:10px;">✓ No flags</div>`;
 
       const isApplied = !!applied[date];
       const noResult  = !Object.keys(res).length;
 
       return `
-        <div class="opt-card" style="border-top:3px solid ${covColor};min-width:230px;flex:1 1 230px;display:flex;flex-direction:column;gap:0;">
+        <div class="opt-card" style="border-top:3px solid ${covColor};min-width:260px;flex:1 1 260px;display:flex;flex-direction:column;">
+
+          <!-- Header -->
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
             <div style="font-weight:800;font-size:0.95rem;color:var(--text)">📅 ${label}</div>
-            ${isApplied ? `<span style="font-size:0.72rem;padding:2px 8px;border-radius:10px;background:#10b98120;border:1px solid #10b98140;color:#10b981;font-weight:700;">✓ Applied</span>` : ''}
-          </div>
-
-          <!-- Coverage before/after -->
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
-            <div style="padding:8px;background:var(--surface);border-radius:6px;text-align:center;">
-              <div style="font-size:0.65rem;color:var(--muted);margin-bottom:2px;">Before</div>
-              <div style="font-size:1.05rem;font-weight:700;color:var(--muted)">${covB !== null ? covB.toFixed(1)+'%' : '—'}</div>
-            </div>
-            <div style="padding:8px;background:${covColor}18;border-radius:6px;text-align:center;border:1px solid ${covColor}35;">
-              <div style="font-size:0.65rem;color:var(--muted);margin-bottom:2px;">After</div>
-              <div style="font-size:1.05rem;font-weight:700;color:${covColor}">${covA !== null ? covA.toFixed(1)+'%' : '—'}</div>
-              ${covDelta !== null ? `<div style="font-size:0.68rem;font-weight:700;color:${covDelta>=0?'#10b981':'#ef4444'}">${covDelta>=0?'+':''}${covDelta.toFixed(1)}%</div>` : ''}
+            <div style="display:flex;gap:6px;align-items:center;">
+              ${isMIP ? `<span style="font-size:0.65rem;padding:2px 6px;border-radius:8px;background:#3b82f615;border:1px solid #3b82f640;color:#3b82f6;font-weight:700">MIP</span>` : ''}
+              ${isApplied ? `<span style="font-size:0.65rem;padding:2px 6px;border-radius:8px;background:#10b98120;border:1px solid #10b98140;color:#10b981;font-weight:700">✓ Applied</span>` : ''}
             </div>
           </div>
 
-          <!-- Key metrics -->
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:10px;">
-            <div style="padding:5px 4px;background:var(--surface);border-radius:5px;text-align:center;">
-              <div style="font-size:0.6rem;color:var(--muted);">Staff</div>
-              <div style="font-weight:700;font-size:0.88rem;">${staffCount||'—'}</div>
+          <!-- Coverage comparison -->
+          <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:4px;align-items:center;margin-bottom:10px;padding:8px;background:var(--surface);border-radius:7px;">
+            <div style="text-align:center;">
+              <div style="font-size:0.62rem;color:var(--muted);margin-bottom:1px;">Coverage Before</div>
+              <div style="font-size:1.2rem;font-weight:800;color:var(--muted)">${covB!==null?covB.toFixed(1)+'%':'—'}</div>
             </div>
-            <div style="padding:5px 4px;background:var(--surface);border-radius:5px;text-align:center;">
-              <div style="font-size:0.6rem;color:var(--muted);">Absent</div>
-              <div style="font-weight:700;font-size:0.88rem;">${absCount}</div>
+            <div style="text-align:center;padding:0 6px;">
+              ${covD!==null ? `<div style="font-size:0.72rem;font-weight:800;color:${covD>=0?'#10b981':'#ef4444'};white-space:nowrap;">${covD>=0?'+':''}${covD.toFixed(1)}%</div><div style="font-size:1rem;color:${covD>=0?'#10b981':'#ef4444'}">${covD>=0?'▲':'▼'}</div>` : `<div style="color:var(--muted)">→</div>`}
             </div>
-            <div style="padding:5px 4px;background:${flagCount>0?'#ef444415':'#10b98115'};border-radius:5px;text-align:center;border:1px solid ${flagCount>0?'#ef444430':'#10b98130'};">
-              <div style="font-size:0.6rem;color:var(--muted);">Flags</div>
+            <div style="text-align:center;padding:8px;background:${covColor}18;border-radius:5px;border:1px solid ${covColor}35;">
+              <div style="font-size:0.62rem;color:var(--muted);margin-bottom:1px;">Coverage After</div>
+              <div style="font-size:1.2rem;font-weight:800;color:${covColor}">${covA!==null?covA.toFixed(1)+'%':'—'}</div>
+            </div>
+          </div>
+
+          <!-- Key metrics row -->
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:10px;">
+            <div style="padding:6px 4px;background:var(--surface);border-radius:5px;text-align:center;">
+              <div style="font-size:0.58rem;color:var(--muted);margin-bottom:1px;">Staff on Duty</div>
+              <div style="font-weight:700;font-size:0.88rem;">${staffA||'—'}</div>
+              ${staffA!==staffB&&staffB>0 ? `<div style="font-size:0.62rem;color:${staffA>staffB?'#10b981':'#ef4444'}">${staffA>staffB?'+':''}${staffA-staffB}</div>` : ''}
+            </div>
+            <div style="padding:6px 4px;background:var(--surface);border-radius:5px;text-align:center;">
+              <div style="font-size:0.58rem;color:var(--muted);margin-bottom:1px;">Mean Util</div>
+              <div style="font-weight:700;font-size:0.88rem;">${utilA!==null?utilA.toFixed(1)+'%':'—'}</div>
+              ${utilD!==null&&Math.abs(utilD)>0.05 ? deltaChip(utilD) : ''}
+            </div>
+            <div style="padding:6px 4px;background:${flagCount>0?'#ef444415':'#10b98115'};border-radius:5px;text-align:center;border:1px solid ${flagCount>0?'#ef444430':'#10b98130'};">
+              <div style="font-size:0.58rem;color:var(--muted);margin-bottom:1px;">Flags</div>
               <div style="font-weight:700;font-size:0.88rem;color:${flagCount>0?'#ef4444':'#10b981'}">${noResult?'—':flagCount}</div>
             </div>
-            <div style="padding:5px 4px;background:${isMIP?'#3b82f615':'var(--surface)'};border-radius:5px;text-align:center;">
-              <div style="font-size:0.6rem;color:var(--muted);">Solver</div>
-              <div style="font-weight:700;font-size:0.72rem;color:${isMIP?'#3b82f6':'var(--muted)'}">${isMIP?'MIP':'Greedy'}</div>
-            </div>
           </div>
 
-          <!-- Gini -->
-          ${gini !== '—' ? `
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:5px;">
-            <span style="font-size:0.75rem;color:var(--muted)">Fairness (Gini)</span>
-            <span style="font-weight:700;font-size:0.82rem;color:${giniColor}">${gini} <span style="font-size:0.68rem">(${giniInterp||'—'})</span></span>
+          <!-- Tasks covered -->
+          ${tasksCovA!==null&&tasksTotA!==null ? `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:5px 8px;background:var(--surface);border-radius:5px;">
+            <span style="font-size:0.72rem;color:var(--muted);">Tasks Covered</span>
+            <span style="font-size:0.78rem;font-weight:700;">
+              ${tasksCovB!==null?`<span style="color:var(--muted)">${tasksCovB}/${tasksTotB}</span> → `:''}<span style="color:${covColor}">${tasksCovA}/${tasksTotA}</span>
+              ${tasksD!==null&&tasksD!==0?deltaChip(tasksD,'',false):''}
+            </span>
+          </div>` : ''}
+
+          <!-- Fairness -->
+          ${gini!=='—' ? `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:5px 8px;background:var(--surface);border-radius:5px;">
+            <span style="font-size:0.72rem;color:var(--muted);">Fairness (Gini)</span>
+            <span style="font-weight:700;font-size:0.78rem;color:${giniColor}">${gini} <span style="font-size:0.66rem;font-weight:600;">(${giniInterp||'—'})</span></span>
           </div>` : ''}
 
           <!-- Flags -->
           ${flagHtml}
 
-          <!-- Shift distribution -->
-          ${shiftBadges ? `
-          <div style="margin-bottom:12px;">
-            <div style="font-size:0.7rem;color:var(--muted);font-weight:600;margin-bottom:5px;">Shift Distribution</div>
-            <div style="display:flex;flex-wrap:wrap;gap:4px;">${shiftBadges}</div>
+          <!-- Shift movement table -->
+          ${shiftTableHtml ? `
+          <div style="margin-bottom:10px;">
+            <div style="font-size:0.7rem;color:var(--muted);font-weight:700;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em;">Shift Movement</div>
+            <table style="width:100%;border-collapse:collapse;">
+              <thead>
+                <tr style="border-bottom:1px solid var(--border);">
+                  <th style="padding:2px 6px;font-size:0.62rem;color:var(--muted);text-align:left;font-weight:600;">Shift</th>
+                  <th style="padding:2px 6px;font-size:0.62rem;color:var(--muted);text-align:center;font-weight:600;">Before</th>
+                  <th></th>
+                  <th style="padding:2px 6px;font-size:0.62rem;color:var(--muted);text-align:center;font-weight:600;">After</th>
+                  <th style="padding:2px 6px;font-size:0.62rem;color:var(--muted);text-align:right;font-weight:600;">Change</th>
+                </tr>
+              </thead>
+              <tbody>${shiftTableHtml}</tbody>
+            </table>
           </div>` : ''}
 
           <!-- Apply button -->
-          <div style="margin-top:auto;padding-top:10px;">
+          <div style="margin-top:auto;padding-top:8px;">
             <button class="opt-apply-btn ${isApplied?'btn-ghost':'btn-update-fluid'}"
               data-date="${date}" data-label="${label}"
               style="width:100%;font-size:0.82rem;padding:7px 12px;"
-              ${noResult ? 'disabled' : ''}>
+              ${noResult?'disabled':''}>
               ${isApplied ? '✓ Applied — Switch to this Day' : `Apply to ${label}`}
             </button>
           </div>
@@ -2159,75 +2447,5 @@ function renderSTGateTimeline(container) {
 
 // ── Expose to global ───────────────────────────────────────────
 // Final clean override to avoid mojibake in the alerts header/toggle text.
-renderSTAlerts = function(alerts, date) {
-  const panel = document.getElementById('st-alerts-panel');
-  if (!alerts || alerts.length === 0) {
-    panel.innerHTML = `<div class="alert-panel alert-ok"><span>OK</span> All tasks fully covered - no staffing gaps.</div>`;
-    return;
-  }
-
-  const crit = alerts.filter(a => a.priority === 'Critical');
-  const high = alerts.filter(a => a.priority !== 'Critical');
-  panel.innerHTML = `
-    <div class="alerts-container">
-      <div class="alerts-header">
-        <span class="alerts-title">Staffing Alerts &amp; Recommendations</span>
-        <span class="alerts-count">
-          ${crit.length ? `<span class="badge badge-crit">${crit.length} Critical</span>` : ''}
-          ${high.length ? `<span class="badge badge-warn">${high.length} High</span>` : ''}
-        </span>
-        <button class="btn-ghost" id="st-alerts-toggle">Show top 10 v</button>
-      </div>
-      <div id="st-alerts-list"></div>
-    </div>`;
-
-  const shown = alerts.slice(0, 10);
-  let expanded = false;
-  const list = document.getElementById('st-alerts-list');
-
-  function renderAlertsList(items) {
-    list.innerHTML = items.map((a, idx) => {
-      const flights = a.covered_flights || [];
-      const flightLabel = flights.length
-        ? flights.slice(0, 2).map(f => f.flight_no).join(', ') + (flights.length > 2 ? ` +${flights.length - 2}` : '')
-        : (a.flight_no || 'No linked flight');
-      return `
-        <div class="alert-row alert-${a.priority === 'Critical' ? 'crit' : 'warn'} alert-row-clickable" data-alert-idx="${idx}">
-          <div class="alert-row-left alert-row-detail">
-            <span class="badge ${a.priority === 'Critical' ? 'badge-crit' : 'badge-warn'}">${a.priority}</span>
-            <div class="alert-msg">
-              <div class="alert-msg-title">${flightLabel} - ${a.task} - ${a.start}-${a.end} - ${a.terminal || 'ALL'} / ${a.pier || 'ALL'} - Need ${a.staff_needed}, assigned ${a.assigned_count}, gap ${a.gap} - ${a.message}</div>
-            </div>
-          </div>
-          <div class="alert-row-right">
-            ${a.rec_staff && a.rec_staff.length
-              ? `<span class="alert-rec">Rec: ${a.rec_staff.join(', ')}</span>
-                 <button class="btn-apply-rec"
-                   data-date="${date}"
-                   data-task="${a.task_id}"
-                   data-staff='${JSON.stringify(a.rec_staff)}'>Apply</button>`
-              : '<span class="alert-rec muted">No available staff</span>'}
-          </div>
-        </div>`;
-    }).join('');
-
-    list.querySelectorAll('.btn-apply-rec').forEach(btn =>
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        applySTRecommendation(btn);
-      }));
-    list.querySelectorAll('.alert-row[data-alert-idx]').forEach(row =>
-      row.addEventListener('click', () => showSTAlertDetail(items[Number(row.dataset.alertIdx)])));
-  }
-
-  renderAlertsList(shown);
-
-  document.getElementById('st-alerts-toggle').addEventListener('click', function() {
-    expanded = !expanded;
-    renderAlertsList(expanded ? alerts : shown);
-    this.textContent = expanded ? `Show top 10 ^` : `Show top 10 v`;
-  });
-};
-
 window.initShortTerm = initShortTerm;
 

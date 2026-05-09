@@ -2304,6 +2304,32 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                  if (r.get('DATE', '').strip() == staff_date_key_full or r.get('DATE', '').strip() == staff_date_key_short)
                  and r.get('EMPLOYEE NUMBER', '').strip()]
 
+    # Carry-forward fallback: if no staff data for requested date, use the
+    # most recent available date in the CSV so D+3 still renders meaningfully.
+    _carried_forward_from = None
+    if not day_staff:
+        # Collect all distinct dates present in the CSV
+        known_dates = []
+        for fmt in ('%d-%m-%Y', '%d-%m-%y', '%d-%m'):
+            for r in staff_rows:
+                raw = r.get('DATE', '').strip()
+                try:
+                    pd = datetime.strptime(raw, fmt)
+                    if fmt == '%d-%m':
+                        pd = pd.replace(year=d.year)
+                    if pd < d:
+                        known_dates.append(pd)
+                except ValueError:
+                    pass
+        if known_dates:
+            fallback_d = max(known_dates)
+            fb_full  = fallback_d.strftime('%d-%m-%Y')
+            fb_short = fallback_d.strftime('%d-%m-%y')
+            day_staff = [r for r in staff_rows
+                         if (r.get('DATE', '').strip() == fb_full or r.get('DATE', '').strip() == fb_short)
+                         and r.get('EMPLOYEE NUMBER', '').strip()]
+            _carried_forward_from = fallback_d.strftime('%d %b %Y')
+
     on_duty = []
     absent_staff = []
 
@@ -2553,7 +2579,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                 "Roster optimiser failed — falling back to density heuristic: %s", _exc
             )
 
-    return on_duty, absent_staff
+    return on_duty, absent_staff, _carried_forward_from
 
 
 def schedule_breaks(staff, assigned_windows, custom_constraints=None):
@@ -2941,7 +2967,7 @@ def refill_unassigned_tasks(result):
                 s['assignments'] = [a for a in (s.get('assignments') or []) if a.get('task_id') != task.get('id')]
                 continue
             assigned.append(sid)
-        max_staff = task.get('staff_capacity', task.get('staff_needed', 1))
+        max_staff = task.get('staff_needed', 1)  # cap at requirement, not excess capacity
         if len(assigned) > max_staff:
             assigned = assigned[:max_staff]
         task['assigned'] = assigned
@@ -3281,7 +3307,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     delay_map = {}
     rules = []
     stands_map = {}
-    on_duty, absent_staff = get_staff_for_date(date_str, custom_constraints)
+    on_duty, absent_staff, _cf = get_staff_for_date(date_str, custom_constraints)
     print(f"[DEBUG] On-duty: {len(on_duty)}, Absent: {len(absent_staff)}")
 
     # Build skill lookup dicts using raw CSV skill names.
@@ -3585,6 +3611,104 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                         'end_mins':   task['end_mins'],
                     })
                     busy_map[emp_id].append((task['start_mins'], task['end_mins'], task.get('terminal', 'ALL'), task.get('skill', 'GNIB')))
+
+    # ── Block-level PAX pre-assignment ───────────────────────────────────────
+    # Group PAX 15-min tasks into 3-hour blocks (same skill + terminal).
+    # Assign staff for the FULL block window so nobody switches skill/terminal
+    # every 15 minutes. The full block is recorded in busy_map, preventing the
+    # greedy loop from scattering staff across different positions intra-block.
+    # Continuity is tracked across consecutive blocks to minimise skill/terminal
+    # changes over the full day.
+    _PAX_TIME_BLOCKS = [
+        (0, 180), (180, 360), (360, 540), (540, 720),
+        (720, 900), (900, 1080), (1080, 1260), (1260, 1440),
+    ]
+
+    _pax_blk_groups: dict = defaultdict(list)
+    for _t in all_tasks:
+        if _t.get('sharing_mode') != 'pax_15min' or _t.get('is_past'):
+            continue
+        _sm = _t['start_mins']
+        for _bi, (_bs, _be) in enumerate(_PAX_TIME_BLOCKS):
+            if _bs <= _sm < _be:
+                _pax_blk_groups[(_bi, _t.get('skill', ''), _t.get('terminal', 'ALL'))].append(_t)
+                break
+
+    # (skill, terminal) → list of emp_ids assigned in the previous block (continuity)
+    _blk_continuity: dict = defaultdict(list)
+
+    for _bi in range(len(_PAX_TIME_BLOCKS)):
+        _blk_start, _blk_end = _PAX_TIME_BLOCKS[_bi]
+        _next_continuity: dict = defaultdict(list)
+
+        for (_bi2, _skill, _term), _group in sorted(_pax_blk_groups.items()):
+            if _bi2 != _bi:
+                continue
+            _peak_need = max((_t['staff_needed'] for _t in _group), default=0)
+            if _peak_need == 0:
+                continue
+
+            _already_ids: set = set()
+            for _t in _group:
+                _already_ids.update(_t['assigned'])
+            _needed = max(0, _peak_need - len(_already_ids))
+
+            if _needed > 0:
+                # Prefer: (1) continuity staff, (2) primary-skill pool, (3) any-skill pool
+                _prim_pool, _any_pool = _candidate_pools(_skill)
+                _prev_ids = _blk_continuity.get((_skill, _term), [])
+                _seen_cands: set = set()
+                _ordered_cands: list = []
+
+                for _sid in _prev_ids:
+                    if _sid in _already_ids or _sid in _seen_cands:
+                        continue
+                    _s = next((x for x in on_duty if x['id'] == _sid), None)
+                    if _s and available(_s, _blk_start, _blk_end, _term, _skill):
+                        _ordered_cands.append(_s)
+                        _seen_cands.add(_sid)
+
+                for _s in _prim_pool:
+                    if _s['id'] in _seen_cands or _s['id'] in _already_ids:
+                        continue
+                    if available(_s, _blk_start, _blk_end, _term, _skill):
+                        _ordered_cands.append(_s)
+                        _seen_cands.add(_s['id'])
+
+                for _s in _any_pool:
+                    if _s['id'] in _seen_cands or _s['id'] in _already_ids:
+                        continue
+                    if available(_s, _blk_start, _blk_end, _term, _skill):
+                        _ordered_cands.append(_s)
+                        _seen_cands.add(_s['id'])
+
+                for _s in _ordered_cands:
+                    if _needed <= 0:
+                        break
+                    _sid = str(_s['id'])
+                    # Assign this staff to every 15-min task in the block where still needed
+                    for _t in _group:
+                        if _sid not in _t['assigned'] and len(_t['assigned']) < _t['staff_needed']:
+                            _t['assigned'].append(_sid)
+                    # Block the FULL 3-hr window so greedy won't re-assign elsewhere
+                    busy_map[_sid].append((_blk_start, _blk_end, _term, _skill))
+                    # One clean block entry on the staff record (for roster display)
+                    _s.setdefault('assignments', []).append({
+                        'task_id':    f"BLK_{_bi}_{_skill}_{_term}",
+                        'task':       f"{_term} {_skill}",
+                        'skill':      _skill,
+                        'terminal':   _term,
+                        'start':      mins_to_time(_blk_start),
+                        'end':        mins_to_time(_blk_end),
+                        'start_mins': _blk_start,
+                        'end_mins':   _blk_end,
+                    })
+                    _already_ids.add(_sid)
+                    _needed -= 1
+
+            _next_continuity[(_skill, _term)] = list(_already_ids)
+
+        _blk_continuity = _next_continuity
 
     # Sort tasks for assignment.
     # Key objectives in order:
@@ -3918,7 +4042,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                 t_skill = _t.get('skill', 'GNIB')
                 if t_skill not in s_skills:
                     continue
-                cap = _t.get('staff_capacity', _t['staff_needed'])
+                cap = _t['staff_needed']  # cap at requirement, not excess capacity
                 if len(_t['assigned']) >= cap:
                     continue
                 if emp_id in _t['assigned']:
@@ -4092,6 +4216,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     result = {
         'date':          iso_date_key,
         'date_label':    date_label,
+        'staff_data_carried_forward': _cf,  # None or date string if fallback used
         'kpis': {
             'total_flights':  len(flights_sorted),
             'staff_on_duty':  len(on_duty),
@@ -4448,6 +4573,48 @@ def intraday_assign():
     result = optimize_day(today_str, _intraday_overrides, _manual_assigns.get(today_str, {}),
                           current_time_mins=current_time_mins,
                           prefer_early=True,
+                          custom_constraints=_intraday_custom_constraints)
+    if 'error' in result:
+        return jsonify(result), 404
+    return jsonify(result)
+
+
+@app.route('/api/intraday/assign-block', methods=['POST'])
+def intraday_assign_block():
+    """Assign or unassign a staff member across all tasks in a 3-hour block."""
+    body       = request.get_json(force=True) or {}
+    staff_id   = body.get('staff_id', '').strip()
+    skill      = body.get('skill', '').strip()
+    terminal   = body.get('terminal', 'ALL').strip()
+    blk_start  = int(body.get('block_start', 0))
+    blk_end    = int(body.get('block_end', 180))
+    action     = body.get('action', 'assign')   # 'assign' | 'unassign'
+    if not staff_id:
+        return jsonify({'error': 'staff_id required'}), 400
+    now = datetime.now()
+    today_str = now.strftime('%Y-%m-%d')
+    cur_mins  = now.hour * 60 + now.minute
+    if today_str not in _manual_assigns:
+        _manual_assigns[today_str] = {}
+    # Find all matching task IDs by running a quick schedule pass
+    _tmp = optimize_day(today_str, _intraday_overrides,
+                        _manual_assigns.get(today_str, {}),
+                        current_time_mins=cur_mins, prefer_early=True,
+                        custom_constraints=_intraday_custom_constraints)
+    for _t in _tmp.get('tasks', []):
+        if (_t.get('skill') == skill
+                and _t.get('terminal', 'ALL') == terminal
+                and blk_start <= (_t.get('start_mins') or 0) < blk_end):
+            tid = _t['id']
+            existing = list(_manual_assigns[today_str].get(tid, []))
+            if action == 'assign' and staff_id not in existing:
+                existing.append(staff_id)
+            elif action == 'unassign':
+                existing = [x for x in existing if x != staff_id]
+            _manual_assigns[today_str][tid] = existing
+    result = optimize_day(today_str, _intraday_overrides,
+                          _manual_assigns.get(today_str, {}),
+                          current_time_mins=cur_mins, prefer_early=True,
                           custom_constraints=_intraday_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
@@ -5557,7 +5724,7 @@ def roster_optimised():
     # We call the existing path (without the optimiser branch) to get the raw
     # staff list and absent staff.  The optimiser branch is applied below after
     # we have built demand windows from the day's flights.
-    on_duty_raw, absent_staff = get_staff_for_date(
+    on_duty_raw, absent_staff, _cf = get_staff_for_date(
         date_str,
         custom_constraints={
             'shift_duration_hrs':  constraints['shift_duration_hrs'],

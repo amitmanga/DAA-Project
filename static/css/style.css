@@ -3213,6 +3213,66 @@ canvas { display: block; }
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   LIVE STAFF REALLOCATION TAB
+══════════════════════════════════════════════════════════════════ */
+
+/* KPI tile strip */
+.rl-kpi-tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 10px 20px;
+  min-width: 100px;
+}
+.rl-kpi-val {
+  font-size: 1.45rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--text);
+}
+.rl-kpi-lbl {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted, #6c757d);
+  margin-top: 2px;
+}
+
+/* Heatmap cells */
+.rl-cell {
+  transition: transform 0.1s, box-shadow 0.1s;
+  user-select: none;
+}
+.rl-cell:hover {
+  transform: scale(1.1) !important;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.2) !important;
+  z-index: 2;
+  position: relative;
+}
+.rl-cell-sel {
+  transform: scale(1.1) !important;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.5) !important;
+  z-index: 2;
+  position: relative;
+}
+
+/* Gap list item */
+.rl-gap-item {
+  transition: background 0.12s;
+}
+.rl-gap-item:hover {
+  background: var(--surface-3, #2a2a2a) !important;
+}
+.rl-gap-sel {
+  background: var(--surface-3, #2a2a2a) !important;
+  border-color: var(--border) !important;
+}
+
+/* Action buttons */
+.rl-assign-btn:hover { filter: brightness(1.15); }
+.rl-remove-btn:hover { background: var(--crit) !important; color: #fff !important; }
+
+/* ══════════════════════════════════════════════════════════════════
    MONTE CARLO / SIMULATION UI
 ══════════════════════════════════════════════════════════════════ */
 

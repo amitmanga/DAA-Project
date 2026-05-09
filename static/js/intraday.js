@@ -23,7 +23,7 @@ const ID_SKILL_COLOR = {
 let ID_DATA = null;
 let ID_SELECTED_FLIGHT = null;
 let ID_MANAGE_TASK = null;
-let ID_ACTIVE_TAB = 'staff';
+let ID_ACTIVE_TAB = 'staff-timeline';
 let ID_AUTO_REFRESH = null;
 let ID_SIM_TIMER = null;
 let ID_SIM_TIME = null;
@@ -130,10 +130,8 @@ function renderIntradayPage() {
     <div class="kpi-grid st-kpi-grid" id="id-kpis"></div>
     <div id="id-alerts-panel"></div>
     <div class="sub-tabs" style="margin-top:20px">
-      <button class="sub-tab ${ID_ACTIVE_TAB==='staff'?'active':''}" data-idtab="staff">👤 Staff Roster</button>
+      <button class="sub-tab ${ID_ACTIVE_TAB==='staff-timeline'?'active':''}" data-idtab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='demand'?'active':''}" data-idtab="demand">PAX Demand</button>
-      <button class="sub-tab ${ID_ACTIVE_TAB==='staff-timeline'?'active':''}" data-idtab="staff-timeline">📅 Roster Timeline</button>
-
       <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Optimization</button>
     </div>
     <div id="id-sub-content"></div>
@@ -268,36 +266,149 @@ function renderIDKPIs(kpis) {
 
 // ── Alerts ──────────────────────────────────────────────────────
 function renderIDAlerts(alerts) {
-  const panel = document.getElementById('id-alerts-panel');
-  if (!alerts || !alerts.length) {
-    panel.innerHTML = '<div class="alert-panel alert-ok"><span>✅</span> All tasks fully covered.</div>';
-    return;
-  }
-  const shown = alerts.slice(0, 5);
-  panel.innerHTML = `
-    <div class="alerts-container">
-      <div class="alerts-header">
-        <span class="alerts-title">⚠ Live Alerts</span>
-        <span class="alerts-count">
-          ${alerts.filter(a=>a.priority==='Critical').length
-            ? `<span class="badge badge-crit">${alerts.filter(a=>a.priority==='Critical').length} Critical</span>` : ''}
-        </span>
+  // stub — overridden below
+}
+
+function showIDSkillBlockDetail(s, blockLabel, date) {
+  const overlay = _getIDAlertOverlay();
+  const box = document.getElementById('id-alert-detail-box');
+  if (!box) return;
+
+  const accent = s.priority === 'Critical' ? '#ef4444' : '#f59e0b';
+  const recArr = [...s.recSet];
+  const assignedArr = [...s.assignedSet];
+
+  const totalPax = s.allAlerts.reduce((sum, a) => sum + (Number(a.passengers) || 0), 0);
+  const avgPaxRate = s.allAlerts.length
+    ? (s.allAlerts.reduce((sum, a) => sum + (Number(a.pax_rate) || 0), 0) / s.allAlerts.length).toFixed(1)
+    : 0;
+  const peakSlot = s.allAlerts.reduce((best, a) =>
+    (Number(a.passengers) || 0) > (Number(best.passengers) || 0) ? a : best, s.allAlerts[0] || {});
+
+  const slotRows = s.allAlerts
+    .sort((a, b) => (a.start || '').localeCompare(b.start || ''))
+    .map(a => {
+      const slotPct = a.staff_needed > 0 ? Math.round((a.assigned_count / a.staff_needed) * 100) : 100;
+      const pc = a.priority === 'Critical' ? '#ef4444' : '#f59e0b';
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);">
+          <span style="font-size:0.72rem;font-weight:700;color:var(--text);min-width:90px">${a.start}–${a.end}</span>
+          <div style="flex:1;height:6px;border-radius:3px;background:var(--border);overflow:hidden;">
+            <div style="width:${slotPct}%;height:100%;background:#10b981;float:left;"></div>
+            <div style="width:${100-slotPct}%;height:100%;background:${pc};float:left;opacity:0.7;"></div>
+          </div>
+          <span style="font-size:0.7rem;color:var(--muted);min-width:70px;text-align:right">${a.assigned_count}/${a.staff_needed}</span>
+          <span style="font-size:0.72rem;font-weight:800;color:${pc};min-width:40px;text-align:right">-${a.gap}</span>
+          <span class="badge ${a.priority==='Critical'?'badge-crit':'badge-warn'}" style="font-size:0.6rem;padding:1px 5px">${a.priority}</span>
+        </div>`;
+    }).join('');
+
+  // Reuse suggestion generator from shortterm.js if available
+  const suggestions = (typeof _generateAlertSuggestions === 'function')
+    ? _generateAlertSuggestions(s, blockLabel, totalPax, avgPaxRate)
+    : [];
+
+  box.innerHTML = `
+    <div class="modal-header" style="border-bottom:3px solid ${accent}">
+      <div style="flex:1">
+        <div class="modal-title">${s.skill} · ${blockLabel} <span style="font-size:0.75rem;opacity:0.7">● Live</span></div>
+        <div class="fd-meta" style="margin-top:4px;color:rgba(255,255,255,0.75)">
+          ${s.slots} time slot${s.slots>1?'s':''} · Max gap: ${s.gap} · ${s.priority}
+        </div>
       </div>
-      <div id="id-alerts-list">
-        ${shown.map(a => `
-          <div class="alert-row alert-${a.priority==='Critical'?'crit':'warn'}">
-            <div class="alert-row-left">
-              <span class="badge ${a.priority==='Critical'?'badge-crit':'badge-warn'}">${a.priority}</span>
-              <span class="alert-msg">${a.message}</span>
-            </div>
-            <div class="alert-row-right">
-              ${a.rec_staff && a.rec_staff.length
-                ? `<span class="alert-rec">Rec: ${a.rec_staff.slice(0,2).join(', ')}</span>` : ''}
-            </div>
-          </div>`).join('')}
-        ${alerts.length > 5 ? `<div class="muted small" style="padding:6px 12px">+${alerts.length - 5} more alerts</div>` : ''}
+      <button class="fd-close" onclick="closeIDAlertDetail()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="staff-detail-kpis">
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val" style="color:${accent}">${s.gap}</div><div class="staff-detail-kpi-lbl">Max Gap</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${s.needed}</div><div class="staff-detail-kpi-lbl">Max Needed</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${s.assigned}</div><div class="staff-detail-kpi-lbl">Assigned</div></div>
+        <div class="staff-detail-kpi"><div class="staff-detail-kpi-val">${totalPax.toLocaleString()}</div><div class="staff-detail-kpi-lbl">Total PAX</div></div>
       </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Time Slots — Coverage Breakdown</div>
+        ${slotRows || '<div class="muted small">No slot data.</div>'}
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Recommended Staff (${recArr.length})</div>
+        ${recArr.length
+          ? `<div class="staff-breaks" style="margin-bottom:10px;">
+               ${recArr.map(r => `<span class="break-chip">${r}</span>`).join('')}
+             </div>
+             <button class="btn-primary" style="font-size:0.8rem;padding:6px 16px;"
+               onclick="(async()=>{
+                 this.disabled=true; this.textContent='Applying…';
+                 try {
+                   const res = await fetch('/api/intraday/apply-rec',{method:'POST',
+                     headers:{'Content-Type':'application/json'},
+                     body:JSON.stringify({task_id:'${s.firstAlert.task_id}',
+                       staff_ids:${JSON.stringify(recArr.slice(0,5))}})
+                   }).then(r=>r.json());
+                   if (res.data) { ID_DATA = res.data; }
+                   closeIDAlertDetail();
+                   renderIntradayPage();
+                 } catch(e){ this.disabled=false; this.textContent='Apply Recommendations'; }
+               })()">Apply Recommendations</button>`
+          : '<div class="muted small">No available staff recommendations.</div>'}
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">Currently Assigned Staff (${assignedArr.length})</div>
+        ${assignedArr.length
+          ? `<div class="staff-breaks">${assignedArr.map(r=>`<span class="break-chip" style="opacity:0.7">${r}</span>`).join('')}</div>`
+          : '<div class="muted small">No staff currently assigned.</div>'}
+      </div>
+
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title">PAX Load — Slot Breakdown</div>
+        ${totalPax > 0 ? `
+          <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:100px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
+              <div style="font-size:1.2rem;font-weight:800;color:var(--text)">${totalPax.toLocaleString()}</div>
+              <div style="font-size:0.7rem;color:var(--muted)">Total PAX</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
+              <div style="font-size:1.2rem;font-weight:800;color:var(--text)">${avgPaxRate}</div>
+              <div style="font-size:0.7rem;color:var(--muted)">Avg PAX/FTE/slot</div>
+            </div>
+            ${peakSlot.passengers ? `
+            <div style="flex:1;min-width:100px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
+              <div style="font-size:1.2rem;font-weight:800;color:${accent}">${Number(peakSlot.passengers).toLocaleString()}</div>
+              <div style="font-size:0.7rem;color:var(--muted)">Peak PAX (${peakSlot.start})</div>
+            </div>` : ''}
+          </div>
+          ${s.allAlerts.sort((a,b)=>(a.start||'').localeCompare(b.start||'')).map(a => {
+            const pax = Number(a.passengers) || 0;
+            const maxP = Math.max(...s.allAlerts.map(x => Number(x.passengers)||0)) || 1;
+            const pct = Math.round((pax / maxP) * 100);
+            return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;">
+              <span style="font-size:0.7rem;color:var(--muted);min-width:90px">${a.start}–${a.end}</span>
+              <div style="flex:1;height:8px;border-radius:4px;background:var(--border);overflow:hidden;">
+                <div style="width:${pct}%;height:100%;background:${accent};opacity:0.75;border-radius:4px;"></div>
+              </div>
+              <span style="font-size:0.7rem;font-weight:700;color:var(--text);min-width:55px;text-align:right">${pax.toLocaleString()} PAX</span>
+            </div>`;
+          }).join('')}`
+        : '<div class="muted small">No PAX data for this skill.</div>'}
+      </div>
+
+      ${suggestions.length ? `
+      <div class="staff-detail-section">
+        <div class="staff-detail-section-title" style="color:#60a5fa;">💡 Suggestions</div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+          ${suggestions.map(t => `
+            <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;
+                        background:var(--surface);border-radius:8px;border-left:3px solid #3b82f6;">
+              <span style="font-size:1rem;flex-shrink:0;">${t.icon}</span>
+              <span style="font-size:0.8rem;color:var(--text);line-height:1.45;">${t.text}</span>
+            </div>`).join('')}
+        </div>
+      </div>` : ''}
     </div>`;
+
+  overlay.classList.remove('hidden');
 }
 
 function _getIDAlertOverlay() {
@@ -379,50 +490,153 @@ function closeIDAlertDetail() {
 window.showIDAlertDetail = showIDAlertDetail;
 window.closeIDAlertDetail = closeIDAlertDetail;
 
+const _idSkillDetailMap = {};
+
 renderIDAlerts = function(alerts) {
   const panel = document.getElementById('id-alerts-panel');
   if (!alerts || !alerts.length) {
-    panel.innerHTML = '<div class="alert-panel alert-ok"><span>✅</span> All tasks fully covered.</div>';
+    panel.innerHTML = `<div class="alert-panel alert-ok"><span>✅</span> All tasks fully covered — no staffing gaps.</div>`;
     return;
   }
-  const shown = alerts.slice(0, 5);
+
+  const timeToMins = t => {
+    if (!t) return 0;
+    const [h, m] = (t + ':00').split(':').map(Number);
+    return h * 60 + (m || 0);
+  };
+
+  // Use shared ST_TIME_BLOCKS defined in shortterm.js
+  const TIME_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
+    {id:'b00_03',label:'00–03',start:0,   end:180},
+    {id:'b03_06',label:'03–06',start:180, end:360},
+    {id:'b06_09',label:'06–09',start:360, end:540},
+    {id:'b09_12',label:'09–12',start:540, end:720},
+    {id:'b12_15',label:'12–15',start:720, end:900},
+    {id:'b15_18',label:'15–18',start:900, end:1080},
+    {id:'b18_21',label:'18–21',start:1080,end:1260},
+    {id:'b21_24',label:'21–24',start:1260,end:1440},
+  ];
+
+  const blockMap = {};
+  TIME_BLOCKS.forEach(b => { blockMap[b.id] = { block: b, alerts: [] }; });
+  alerts.forEach(a => {
+    const sm = timeToMins(a.start);
+    const hit = TIME_BLOCKS.find(b => sm >= b.start && sm < b.end) || TIME_BLOCKS[TIME_BLOCKS.length - 1];
+    blockMap[hit.id].alerts.push(a);
+  });
+
+  const activeBlocks = TIME_BLOCKS.map(b => blockMap[b.id]).filter(b => b.alerts.length > 0);
+  const totalCrit = alerts.filter(a => a.priority === 'Critical').length;
+  const totalHigh = alerts.filter(a => a.priority !== 'Critical').length;
+
+  const timelineHtml = TIME_BLOCKS.map(b => {
+    const bA = blockMap[b.id].alerts;
+    const hasCrit = bA.some(a => a.priority === 'Critical');
+    const hasHigh = bA.length > 0;
+    const bg = hasCrit ? '#ef4444' : hasHigh ? '#f59e0b' : 'var(--border)';
+    const tip = hasCrit ? `${bA.filter(a=>a.priority==='Critical').length} Critical` : hasHigh ? `${bA.length} High` : 'OK';
+    return `<div title="${b.label} — ${tip}" style="flex:1;height:8px;border-radius:3px;background:${bg};opacity:${hasHigh||hasCrit?1:0.25};"></div>`;
+  }).join('');
+
+  const timelineLabels = TIME_BLOCKS.map((b, i) =>
+    i % 2 === 0 ? `<div style="flex:1;font-size:0.6rem;color:var(--muted);text-align:center">${b.label.split('–')[0]}:00</div>` : '<div style="flex:1"></div>'
+  ).join('');
+
   panel.innerHTML = `
     <div class="alerts-container">
-      <div class="alerts-header">
-        <span class="alerts-title">⚠ Live Alerts</span>
-        <span class="alerts-count">
-          ${alerts.filter(a=>a.priority==='Critical').length
-            ? `<span class="badge badge-crit">${alerts.filter(a=>a.priority==='Critical').length} Critical</span>` : ''}
+      <div class="alerts-header" style="flex-wrap:wrap;gap:8px;">
+        <span class="alerts-title">⚠ Live Staffing Alerts &amp; Recommendations</span>
+        <span style="display:flex;gap:6px;align-items:center;">
+          ${totalCrit ? `<span class="badge badge-crit">${totalCrit} Critical</span>` : ''}
+          ${totalHigh ? `<span class="badge badge-warn">${totalHigh} High</span>` : ''}
+          <span style="font-size:0.72rem;color:var(--muted)">${activeBlocks.length}/8 blocks · ${alerts.length} gaps</span>
         </span>
       </div>
-      <div id="id-alerts-list">
-        ${shown.map((a, idx) => {
-          const flights = a.covered_flights || [];
-          const flightLabel = flights.length
-            ? flights.slice(0, 2).map(f => f.flight_no).join(', ') + (flights.length > 2 ? ` +${flights.length - 2}` : '')
-            : (a.flight_no || 'No linked flight');
-          return `
-            <div class="alert-row alert-${a.priority==='Critical'?'crit':'warn'} alert-row-clickable" data-alert-idx="${idx}">
-              <div class="alert-row-left alert-row-detail">
-                <span class="badge ${a.priority==='Critical'?'badge-crit':'badge-warn'}">${a.priority}</span>
-                <div class="alert-msg">
-                  <div class="alert-msg-title">${flightLabel} · ${a.task}</div>
-                  <div class="alert-msg-sub">${a.start}–${a.end} · ${a.terminal || 'ALL'} / ${a.pier || 'ALL'} · Need ${a.staff_needed}, assigned ${a.assigned_count}, gap ${a.gap}</div>
-                  <div class="alert-msg-body">${a.message}</div>
-                </div>
-              </div>
-              <div class="alert-row-right">
-                ${a.rec_staff && a.rec_staff.length
-                  ? `<span class="alert-rec">Rec: ${a.rec_staff.slice(0,2).join(', ')}</span>` : ''}
-              </div>
-            </div>`;
-        }).join('')}
-        ${alerts.length > 5 ? `<div class="muted small" style="padding:6px 12px">+${alerts.length - 5} more alerts</div>` : ''}
-      </div>
+      <div style="margin:10px 0 4px;display:flex;gap:3px;">${timelineHtml}</div>
+      <div style="display:flex;gap:3px;margin-bottom:12px;">${timelineLabels}</div>
+      <div id="id-alerts-blocks" style="display:flex;flex-direction:row;gap:10px;width:100%;"></div>
     </div>`;
 
-  panel.querySelectorAll('.alert-row[data-alert-idx]').forEach(row =>
-    row.addEventListener('click', () => showIDAlertDetail(shown[Number(row.dataset.alertIdx)])));
+  const blocksEl = document.getElementById('id-alerts-blocks');
+  const date = ID_DATA?.date || '';
+
+  activeBlocks.forEach(({ block, alerts: bAlerts }) => {
+    const bCrit = bAlerts.filter(a => a.priority === 'Critical');
+    const bHigh = bAlerts.filter(a => a.priority !== 'Critical');
+    const hasCrit = bCrit.length > 0;
+    const accent = hasCrit ? '#ef4444' : '#f59e0b';
+
+    const skillMap = {};
+    bAlerts.forEach(a => {
+      const sk = a.skill || a.task || 'Unknown';
+      if (!skillMap[sk]) {
+        skillMap[sk] = { skill: sk, needed: 0, assigned: 0, gap: 0,
+                         slots: 0, priority: 'High', recSet: new Set(),
+                         assignedSet: new Set(), firstAlert: a, allAlerts: [] };
+      }
+      const e = skillMap[sk];
+      e.gap = Math.max(e.gap, a.gap || 0);
+      e.needed = Math.max(e.needed, a.staff_needed || 0);
+      e.assigned = Math.max(e.assigned, a.assigned_count || 0);
+      e.slots++;
+      if (a.priority === 'Critical') e.priority = 'Critical';
+      (a.rec_staff || []).forEach(s => e.recSet.add(s));
+      (a.assigned_staff || []).forEach(s => e.assignedSet.add(s));
+      e.allAlerts.push(a);
+    });
+
+    const skills = Object.values(skillMap).sort((a, b) => b.gap - a.gap);
+
+    const skillRows = skills.map((s, si) => {
+      const c = s.priority === 'Critical' ? '#ef4444' : '#f59e0b';
+      const barPct = s.needed > 0 ? Math.round((s.assigned / s.needed) * 100) : 100;
+      const gapPct = 100 - barPct;
+      const detailKey = `id_${block.id}__${si}`;
+      _idSkillDetailMap[detailKey] = { skill: s, blockLabel: block.label };
+      return `
+        <div class="id-skill-row" data-detail-key="${detailKey}"
+          style="margin-bottom:8px;padding:7px 9px;background:var(--surface);border-radius:6px;
+                 border-left:3px solid ${c};cursor:pointer;transition:opacity .15s;"
+          onmouseenter="this.style.opacity='0.8'" onmouseleave="this.style.opacity='1'">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:4px;">
+            <span style="font-size:0.75rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%">${s.skill}</span>
+            <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">
+              <span style="font-size:0.62rem;color:var(--muted)">${s.slots}s</span>
+              <span style="font-size:0.68rem;font-weight:800;color:${c}">-${s.gap}</span>
+            </div>
+          </div>
+          <div style="height:5px;border-radius:3px;background:var(--border);overflow:hidden;margin-bottom:5px;">
+            <div style="width:${barPct}%;height:100%;background:#10b981;float:left;"></div>
+            <div style="width:${gapPct}%;height:100%;background:${c};float:left;opacity:0.7;"></div>
+          </div>
+          <div style="font-size:0.62rem;color:var(--muted);">
+            ${s.assigned}/${s.needed} · ${s.recSet.size ? s.recSet.size+' rec' : 'no rec'} ▶
+          </div>
+        </div>`;
+    }).join('');
+
+    const card = document.createElement('div');
+    card.style.cssText = `flex:1 1 0;min-width:0;border:1px solid ${accent}35;border-top:3px solid ${accent};border-radius:8px;padding:12px;background:${accent}06;overflow:hidden;`;
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:4px;">
+        <div style="font-weight:800;font-size:0.78rem;color:var(--text);white-space:nowrap;">${block.label}</div>
+        <div style="display:flex;gap:3px;align-items:center;flex-shrink:0;">
+          ${bCrit.length ? `<span class="badge badge-crit" style="font-size:0.58rem;padding:1px 4px">${bCrit.length}C</span>` : ''}
+          ${bHigh.length ? `<span class="badge badge-warn" style="font-size:0.58rem;padding:1px 4px">${bHigh.length}H</span>` : ''}
+        </div>
+      </div>
+      ${skillRows}`;
+
+    blocksEl.appendChild(card);
+  });
+
+  // Wire skill-row clicks → detail modal
+  blocksEl.querySelectorAll('.id-skill-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const entry = _idSkillDetailMap[row.dataset.detailKey];
+      if (entry) showIDSkillBlockDetail(entry.skill, entry.blockLabel, date);
+    });
+  });
 };
 
 function renderIDStaffRoster(staff, absent) {
@@ -634,53 +848,42 @@ function renderIDSubContent() {
   const container = document.getElementById('id-sub-content');
   if (!container || !ID_DATA) return;
 
-  if (ID_ACTIVE_TAB === 'staff') {
+  if (ID_ACTIVE_TAB === 'staff-timeline') {
+    const shiftOptions = [...new Set((ID_DATA.staff || []).map(s => s.shift).filter(Boolean))].sort()
+      .map(sh => {
+        const samp = (ID_DATA.staff || []).find(s => s.shift === sh);
+        const lbl = samp?.shift_label || sh;
+        return `<option value="${sh}">${lbl}</option>`;
+      }).join('');
     container.innerHTML = `
-      <div class="panel mt-20">
+      <div class="panel mt-16">
         <div class="panel-title-row">
-          <span class="panel-title">Staff Roster — ${ID_DATA.date_label}</span>
-          <div class="filter-row">
-            <input class="search-input" id="id-staff-search" placeholder="Search by ID, skill…" />
-            <select id="id-shift-filter" class="select-input">
-              <option value="">All Shifts</option>
-              <option value="00:00">00:00</option>
-              <option value="03:00">03:00</option>
-              <option value="07:00">07:00</option>
-              <option value="12:00">12:00</option>
-            </select>
-          </div>
-        </div>
-        <div class="staff-grid" id="id-staff-grid"></div>
-        <div id="id-absent-staff"></div>
-      </div>`;
-    renderIDStaffRoster(ID_DATA.staff, ID_DATA.absent_staff || []);
-  } else if (ID_ACTIVE_TAB === 'staff-timeline') {
-    container.innerHTML = `
-      <div class="panel mt-20">
-        <div class="panel-title-row">
-          <span class="panel-title">Staff Roster Timeline — ${ID_DATA.date_label}</span>
-          <div class="filter-row">
-            <input class="search-input" id="id-staff-timeline-search" placeholder="Search ID, skill…" />
+          <span class="panel-title">Operational Roster Timeline — ${ID_DATA.date_label}</span>
+          <div class="filter-row" style="flex-wrap:wrap;gap:6px">
+            <input class="search-input" id="id-staff-timeline-search" placeholder="Search staff ID / skill…" style="width:180px" />
             <select id="id-staff-timeline-shift" class="select-input">
               <option value="">All Shifts</option>
-              <option value="00:00">00:00</option>
-              <option value="03:00">03:00</option>
-              <option value="07:00">07:00</option>
-              <option value="12:00">12:00</option>
+              ${shiftOptions}
             </select>
-            <button class="btn-delay" id="id-timeline-reset">Reset Sim</button>
           </div>
         </div>
-        <div class="section-hint">Visualize staff coverage and break density. Syncs with live simulation clock.</div>
-        <div id="id-staff-timeline"></div>
+        <div id="id-staff-timeline" style="margin-top:16px;overflow-x:auto;"></div>
       </div>`;
-    document.getElementById('id-timeline-reset').addEventListener('click', resetIntraday);
-    document.getElementById('id-staff-timeline-search').addEventListener('input', renderIDRosterTimeline);
-    document.getElementById('id-staff-timeline-shift').addEventListener('change', renderIDRosterTimeline);
-    renderIDRosterTimeline();
-    renderGateTimelineNowLine();
+    const doRefresh = () => {
+      const q = document.getElementById('id-staff-timeline-search').value.toLowerCase();
+      const sf = document.getElementById('id-staff-timeline-shift').value;
+      const filtered = (ID_DATA.staff || []).filter(s => {
+        const mq = !q || s.id.toLowerCase().includes(q) || (s.skill1||'').toLowerCase().includes(q);
+        const ms = !sf || (s.shift||'').toLowerCase() === sf.toLowerCase();
+        return mq && ms;
+      });
+      const el = document.getElementById('id-staff-timeline');
+      if (el) renderID3HrBlocksTable(el, filtered);
+    };
+    document.getElementById('id-staff-timeline-search').addEventListener('input', doRefresh);
+    document.getElementById('id-staff-timeline-shift').addEventListener('change', doRefresh);
+    doRefresh();
     renderIDHourlyCoverage();
-    startCoverageAutoRefresh();
   } else if (ID_ACTIVE_TAB === 'opt') {
     renderIDOptimization(container);
 
@@ -689,55 +892,359 @@ function renderIDSubContent() {
   }
 }
 
+const _idReallocLog = [];   // persists across full tab re-renders
+
 function renderIDDemandTab(container) {
   const tasks = ID_DATA.tasks || [];
+
+  // ── Aggregate metrics ──────────────────────────────────────────
+  const totalPax      = tasks.reduce((s, t) => s + (Number(t.passengers) || 0), 0);
+  const coveredCnt    = tasks.filter(t => !t.alert).length;
+  const gapCnt        = tasks.filter(t =>  t.alert).length;
+  const coveragePct   = tasks.length ? Math.round((coveredCnt / tasks.length) * 100) : 100;
+  const peakTask      = tasks.reduce((best, t) => (Number(t.passengers)||0) > (Number(best.passengers)||0) ? t : best, tasks[0] || {});
+  const totalAssigned = tasks.reduce((s, t) => s + (t.assigned||[]).length, 0);
+  const avgPaxPerFte  = totalAssigned > 0 ? Math.round(totalPax / totalAssigned) : 0;
+  const uncoveredPax  = tasks.filter(t => t.alert).reduce((s, t) => s + (Number(t.passengers)||0), 0);
+
+  // Skills present (deduplicated)
+  const allSkills   = [...new Set(tasks.map(t => t.skill || t.role || t.task || 'Unknown').filter(Boolean))].sort();
+
+  // TIME_BLOCKS shared with shortterm.js
+  const TIME_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
+    {id:'b00_03',label:'00–03',start:0,end:180},{id:'b03_06',label:'03–06',start:180,end:360},
+    {id:'b06_09',label:'06–09',start:360,end:540},{id:'b09_12',label:'09–12',start:540,end:720},
+    {id:'b12_15',label:'12–15',start:720,end:900},{id:'b15_18',label:'15–18',start:900,end:1080},
+    {id:'b18_21',label:'18–21',start:1080,end:1260},{id:'b21_24',label:'21–24',start:1260,end:1440},
+  ];
+
+  // ── Shared FTE calculator for a set of tasks in one block ─────────────────
+  // req  = peak PAX-driven concurrent demand at the busiest 15-min slot
+  //        (sum of staff_needed across all skill/terminal combos active that slot)
+  // asgn = unique staff deployed in this block — backend already enforces
+  //        skill-match + shift-overlap before adding any ID to t.assigned
+  function _calcBlockFte(bt) {
+    const slotReq = {};
+    bt.forEach(t => {
+      const k = t.start_mins || 0;
+      slotReq[k] = (slotReq[k] || 0) + (t.staff_needed || 0);
+    });
+    const req  = Object.values(slotReq).length ? Math.max(...Object.values(slotReq)) : 0;
+    const asgn = new Set(bt.flatMap(t => (t.assigned || []).filter(Boolean))).size;
+    return { req, asgn };
+  }
+
+  // Per-block aggregate
+  function blockStats(filteredTasks) {
+    return TIME_BLOCKS.map(b => {
+      const bt  = filteredTasks.filter(t => (t.start_mins||0) >= b.start && (t.start_mins||0) < b.end);
+      const pax = bt.reduce((s,t)=>s+(Number(t.passengers)||0),0);
+      const { req, asgn } = _calcBlockFte(bt);
+      const gaps = bt.filter(t=>t.alert).length;
+      return { block: b, count: bt.length, pax, req, asgn, gaps };
+    }).filter(b => b.count > 0);
+  }
+
+  // Per-skill aggregate
+  const skillStats = allSkills.map(sk => {
+    const st = tasks.filter(t => (t.skill||t.role||t.task) === sk);
+    const pax  = st.reduce((s,t)=>s+(Number(t.passengers)||0),0);
+    const req  = st.reduce((s,t)=>s+(t.staff_needed||0),0);
+    const asgn = st.reduce((s,t)=>s+(t.assigned||[]).length,0);
+    const gaps = st.filter(t=>t.alert).length;
+    const cov  = st.length ? Math.round(((st.length-gaps)/st.length)*100) : 100;
+    return { skill: sk, pax, req, asgn, gaps, cov, count: st.length };
+  });
+
+  const covColor = coveragePct >= 90 ? '#10b981' : coveragePct >= 70 ? '#f59e0b' : '#ef4444';
+
   container.innerHTML = `
-    <div class="panel mt-20">
-      <div class="panel-title-row">
-        <span class="panel-title">Passenger Demand Coverage - ${ID_DATA.date_label}</span>
-        <div class="filter-row">
-          <input class="search-input" id="id-demand-search" placeholder="Search work / terminal..." />
+    <div class="panel mt-16" style="padding:0;">
+
+      <!-- ── Header ── -->
+      <div style="padding:14px 18px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div>
+          <div style="font-weight:800;font-size:1rem;color:var(--text)">PAX Demand Coverage</div>
+          <div style="font-size:0.75rem;color:var(--muted)">${ID_DATA.date_label}</div>
+        </div>
+        <input class="search-input" id="id-demand-search" placeholder="Search skill / terminal…" style="width:200px;font-size:0.8rem"/>
+      </div>
+
+      <!-- ── KPI strip ── -->
+      <div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
+        ${[
+          { label:'Total PAX',      val: totalPax.toLocaleString(),     color:'#3b82f6', icon:'👥' },
+          { label:'Covered',        val: `${coveredCnt}/${tasks.length}`, color:'#10b981', icon:'✅' },
+          { label:'Avg PAX / FTE',  val: avgPaxPerFte > 0 ? avgPaxPerFte.toLocaleString() : '—', color:'#a78bfa', icon:'📈' },
+          { label:'Uncovered PAX',  val: uncoveredPax > 0 ? uncoveredPax.toLocaleString() : '0', color: uncoveredPax>0?'#ef4444':'#10b981', icon:'🚨' },
+          { label:'Peak Demand',    val: peakTask.start || '—',         color:'#f59e0b', icon:'⏰' },
+        ].map(k => `
+          <div style="flex:1;padding:12px 14px;border-right:1px solid var(--border);text-align:center;min-width:80px;">
+            <div style="font-size:1rem;margin-bottom:2px">${k.icon}</div>
+            <div style="font-size:1.1rem;font-weight:800;color:${k.color}">${k.val}</div>
+            <div style="font-size:0.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${k.label}</div>
+          </div>`).join('')}
+      </div>
+
+      <!-- ── Skill summary cards ── -->
+      <div style="padding:12px 16px 8px;border-bottom:1px solid var(--border);">
+        <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Coverage by Skill — click to filter</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="id-demand-skill-cards">
+          <button class="id-skill-filter-btn active" data-skill=""
+            style="padding:6px 12px;border-radius:20px;border:1px solid var(--accent);background:var(--accent)15;
+                   font-size:0.75rem;font-weight:700;color:var(--accent);cursor:pointer;">All Skills</button>
+          ${skillStats.map(ss => {
+            const c = (ID_SKILL_COLOR||{})[ss.skill] || '#888';
+            const barW = Math.round(ss.cov);
+            const bc = ss.cov >= 90 ? '#10b981' : ss.cov >= 70 ? '#f59e0b' : '#ef4444';
+            return `
+              <button class="id-skill-filter-btn" data-skill="${ss.skill}"
+                style="padding:6px 12px 6px 10px;border-radius:20px;border:1px solid ${c}40;
+                       background:${c}12;font-size:0.75rem;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:130px;">
+                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${c};flex-shrink:0"></span>
+                <span style="font-weight:700;color:${c}">${ss.skill}</span>
+                <span style="margin-left:auto;font-size:0.68rem;font-weight:800;color:${bc}">${ss.cov}%</span>
+              </button>`;
+          }).join('')}
         </div>
       </div>
-      <div class="table-scroll">
-        <table class="data-table">
-          <thead>
-            <tr><th>Time</th><th>Terminal</th><th>Work</th><th>PAX</th><th>PAX/FTE/15m</th><th>FTE Req</th><th>Assigned</th><th>Status</th></tr>
-          </thead>
-          <tbody id="id-demand-tbody"></tbody>
-        </table>
+
+      <!-- ── Time-block summary row ── -->
+      <div style="padding:10px 16px 8px;border-bottom:1px solid var(--border);">
+        <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">3-Hour Block Overview</div>
+        <div style="display:flex;gap:6px;width:100%;" id="id-demand-blocks"></div>
       </div>
+
+      <!-- ── Detail table (fixed height, internal scroll) ── -->
+      <div style="padding:10px 16px 14px;">
+        <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">
+          Slot Detail — <span id="id-demand-table-label">All Skills</span>
+        </div>
+        <div style="max-height:320px;overflow-y:auto;border-radius:8px;border:1px solid var(--border);">
+          <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+            <thead style="position:sticky;top:0;background:var(--surface-2,var(--surface));z-index:1;">
+              <tr style="border-bottom:2px solid var(--border);">
+                <th style="padding:8px 10px;text-align:left;font-size:0.7rem;color:var(--muted);font-weight:700;white-space:nowrap">TIME</th>
+                <th style="padding:8px 6px;text-align:left;font-size:0.7rem;color:var(--muted);font-weight:700">TERMINAL</th>
+                <th style="padding:8px 6px;text-align:left;font-size:0.7rem;color:var(--muted);font-weight:700">SKILL</th>
+                <th style="padding:8px 6px;text-align:left;font-size:0.7rem;color:var(--muted);font-weight:700">STAFF</th>
+                <th style="padding:8px 6px;text-align:right;font-size:0.7rem;color:var(--muted);font-weight:700">PAX</th>
+                <th style="padding:8px 6px;text-align:center;font-size:0.7rem;color:var(--muted);font-weight:700">FTE REQ</th>
+                <th style="padding:8px 6px;text-align:center;font-size:0.7rem;color:var(--muted);font-weight:700">ASSIGNED</th>
+                <th style="padding:8px 6px;text-align:center;font-size:0.7rem;color:var(--muted);font-weight:700">COVERAGE</th>
+                <th style="padding:8px 6px;text-align:center;font-size:0.7rem;color:var(--muted);font-weight:700">STATUS</th>
+              </tr>
+            </thead>
+            <tbody id="id-demand-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
     </div>`;
 
-  function renderRows(rows) {
-    const tbody = document.getElementById('id-demand-tbody');
-    if (!tbody) return;
-    tbody.innerHTML = rows.map(t => {
-      const assigned = (t.assigned || []).length;
-      const ok = !t.alert;
-      return `<tr class="${ok ? '' : 'row-warn'}">
-        <td class="time-cell">${t.start}-${t.end}</td>
-        <td><span class="terminal-badge">${t.terminal || 'ALL'}</span></td>
-        <td>${t.skill || t.role || t.task}</td>
-        <td>${Number(t.passengers || 0).toLocaleString()}</td>
-        <td>${t.pax_rate || '-'}</td>
-        <td>${t.staff_needed || 0}</td>
-        <td>${assigned}</td>
-        <td><span class="badge ${ok ? 'badge-ok' : 'badge-warn'}">${ok ? 'Covered' : 'Gap'}</span></td>
-      </tr>`;
+  // ── Render block overview ──────────────────────────────────────
+  function renderBlocks(filteredTasks) {
+    const blocksEl = document.getElementById('id-demand-blocks');
+    if (!blocksEl) return;
+    const stats = blockStats(filteredTasks);
+    if (!stats.length) { blocksEl.innerHTML = '<div class="muted small">No demand in this period.</div>'; return; }
+    blocksEl.innerHTML = stats.map(bs => {
+      const bc = bs.gaps === 0 ? '#10b981' : bs.gaps > 3 ? '#ef4444' : '#f59e0b';
+      const cov = bs.count ? Math.round(((bs.count - bs.gaps)/bs.count)*100) : 100;
+      return `
+        <div style="flex:1 1 0;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid ${bc}40;
+                    border-top:3px solid ${bc};background:${bc}0d;text-align:center;overflow:hidden;">
+          <div style="font-size:0.72rem;font-weight:800;color:var(--text);margin-bottom:4px">${bs.block.label}</div>
+          <div style="font-size:1rem;font-weight:800;color:${bc}">${cov}%</div>
+          <div style="height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin:4px 0;">
+            <div style="width:${cov}%;height:100%;background:${bc};border-radius:2px;"></div>
+          </div>
+          <div style="font-size:0.62rem;color:var(--muted)">${bs.pax.toLocaleString()} PAX</div>
+          ${bs.gaps ? `<div style="font-size:0.6rem;color:#ef4444;font-weight:700;margin-top:2px">${bs.gaps} gaps</div>` : ''}
+        </div>`;
     }).join('');
   }
 
-  renderRows(tasks);
-  document.getElementById('id-demand-search').addEventListener('input', e => {
-    const q = e.target.value.toLowerCase();
-    renderRows(tasks.filter(t =>
-      !q || (t.task || '').toLowerCase().includes(q) ||
-      (t.skill || '').toLowerCase().includes(q) ||
-      (t.terminal || '').toLowerCase().includes(q)
-    ));
+  // ── Render detail table (grouped by 3-hr block, expandable to 15-min slots) ─
+  const expandedBlocks = new Set();
+  function renderTable(filteredTasks) {
+    const tbody = document.getElementById('id-demand-tbody');
+    if (!tbody) return;
+
+    const TBL = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
+      {id:'b00_03',label:'00–03',start:0,end:180},{id:'b03_06',label:'03–06',start:180,end:360},
+      {id:'b06_09',label:'06–09',start:360,end:540},{id:'b09_12',label:'09–12',start:540,end:720},
+      {id:'b12_15',label:'12–15',start:720,end:900},{id:'b15_18',label:'15–18',start:900,end:1080},
+      {id:'b18_21',label:'18–21',start:1080,end:1260},{id:'b21_24',label:'21–24',start:1260,end:1440},
+    ];
+    const groups = TBL.map(b => ({
+      block: b,
+      tasks: filteredTasks.filter(t => (t.start_mins||0) >= b.start && (t.start_mins||0) < b.end)
+    })).filter(g => g.tasks.length > 0);
+
+    if (!groups.length) {
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--muted);font-size:0.82rem;">No demand windows match your filter.</td></tr>`;
+      return;
+    }
+
+    const SCOL = ID_SKILL_COLOR || {};
+
+    function staffNames(assigned) {
+      return (assigned || []).map(s =>
+        typeof s === 'string' ? s : (s.name || s.employee_name || s.EMPLOYEE_NAME || s['EMPLOYEE NAME'] || '')
+      ).filter(Boolean);
+    }
+
+    function buildRows() {
+      return groups.map(g => {
+        const bt        = g.tasks;
+        const totalPaxB = bt.reduce((s,t)=>s+(Number(t.passengers)||0),0);
+        const { req: totalReq, asgn: totalAsgn } = _calcBlockFte(bt);
+        const gaps      = bt.filter(t=>t.alert).length;
+        const cov       = bt.length ? Math.round(((bt.length-gaps)/bt.length)*100) : 100;
+        const bc        = gaps === 0 ? '#10b981' : gaps > 3 ? '#ef4444' : '#f59e0b';
+        const isOpen    = expandedBlocks.has(g.block.id);
+        const arrow     = `<span style="display:inline-block;transition:transform .2s;transform:${isOpen?'rotate(90deg)':'rotate(0)'};margin-right:6px;font-size:0.7rem">▶</span>`;
+
+        const header = `<tr class="id-blk-hdr" data-blk="${g.block.id}"
+            style="cursor:pointer;background:${bc}14;border-bottom:1px solid ${bc}28;">
+          <td style="padding:9px 10px;font-weight:800;color:${bc};white-space:nowrap;font-size:0.8rem">
+            ${arrow}${g.block.label}
+          </td>
+          <td style="padding:9px 6px;font-size:0.72rem;color:var(--muted)">—</td>
+          <td style="padding:9px 6px;font-size:0.72rem;color:var(--muted)">All skills</td>
+          <td style="padding:9px 6px;font-size:0.72rem;color:var(--muted)">—</td>
+          <td style="padding:9px 6px;text-align:right;font-weight:700;color:var(--text);font-size:0.8rem">${totalPaxB.toLocaleString()}</td>
+          <td style="padding:9px 6px;text-align:center;color:var(--muted);font-size:0.75rem">${totalReq}</td>
+          <td style="padding:9px 6px;text-align:center;font-weight:800;color:${bc};font-size:0.8rem">${totalAsgn}</td>
+          <td style="padding:9px 10px;min-width:90px;">
+            <div style="display:flex;align-items:center;gap:5px;">
+              <div style="flex:1;height:5px;border-radius:3px;background:var(--border);overflow:hidden;">
+                <div style="width:${cov}%;height:100%;background:${bc};border-radius:3px"></div>
+              </div>
+              <span style="font-size:0.65rem;font-weight:800;color:${bc};min-width:28px">${cov}%</span>
+            </div>
+          </td>
+          <td style="padding:9px 6px;text-align:center;">
+            <span style="font-size:0.65rem;padding:2px 8px;border-radius:10px;font-weight:700;
+              background:${gaps>0?'#ef444420':'#10b98120'};color:${gaps>0?'#ef4444':'#10b981'}">
+              ${gaps>0?gaps+' gap'+(gaps>1?'s':''):'OK'}
+            </span>
+          </td>
+        </tr>`;
+
+        if (!isOpen) return header;
+
+        const slotRows = [...bt]
+          .sort((a,b)=>(a.start_mins||0)-(b.start_mins||0)||(a.skill||'').localeCompare(b.skill||''))
+          .map(t => {
+            const sk       = t.skill||t.role||t.task||'—';
+            const skColor  = SCOL[sk] || '#888';
+            const names    = staffNames(t.assigned);
+            const asgn     = names.length || (t.assigned||[]).length;
+            const req      = t.staff_needed || 0;
+            const ok       = !t.alert;
+            const covPct   = req > 0 ? Math.min(100,Math.round((asgn/req)*100)) : 100;
+            const cc       = covPct >= 100 ? '#10b981' : covPct >= 70 ? '#f59e0b' : '#ef4444';
+            const pax      = Number(t.passengers||0);
+            const staffHtml = names.length
+              ? names.map(n=>`<span style="font-size:0.6rem;padding:1px 5px;border-radius:6px;background:var(--border);color:var(--text);white-space:nowrap;display:inline-block">${n}</span>`).join(' ')
+              : `<span style="color:var(--muted);font-size:0.68rem">—</span>`;
+            return `<tr style="border-bottom:1px solid var(--border);background:${ok?'transparent':'#ef444406'}">
+              <td style="padding:5px 10px 5px 30px;font-size:0.7rem;white-space:nowrap;color:var(--muted)">↳ ${t.start}–${t.end}</td>
+              <td style="padding:5px 6px"><span style="font-size:0.62rem;padding:1px 5px;border-radius:8px;background:#7c3aed22;color:#7c3aed;font-weight:700">${t.terminal||'ALL'}</span></td>
+              <td style="padding:5px 6px"><span style="font-size:0.72rem;font-weight:700;color:${skColor}">${sk}</span></td>
+              <td style="padding:5px 6px;max-width:200px"><div style="display:flex;flex-wrap:wrap;gap:2px">${staffHtml}</div></td>
+              <td style="padding:5px 6px;text-align:right;font-size:0.72rem;color:var(--text)">${pax>0?pax.toLocaleString():'—'}</td>
+              <td style="padding:5px 6px;text-align:center;font-size:0.72rem;color:var(--muted)">${req}</td>
+              <td style="padding:5px 6px;text-align:center;font-size:0.72rem;font-weight:700;color:${cc}">${asgn}</td>
+              <td style="padding:5px 10px;min-width:90px;">
+                <div style="display:flex;align-items:center;gap:5px;">
+                  <div style="flex:1;height:4px;border-radius:2px;background:var(--border);overflow:hidden;">
+                    <div style="width:${covPct}%;height:100%;background:${cc};border-radius:2px"></div>
+                  </div>
+                  <span style="font-size:0.62rem;font-weight:700;color:${cc};min-width:28px">${covPct}%</span>
+                </div>
+              </td>
+              <td style="padding:5px 6px;text-align:center;">
+                <span style="font-size:0.62rem;padding:2px 6px;border-radius:8px;font-weight:700;
+                  background:${ok?'#10b98120':'#ef444420'};color:${ok?'#10b981':'#ef4444'}">
+                  ${ok?'Covered':'Gap'}
+                </span>
+              </td>
+            </tr>`;
+          }).join('');
+
+        return header + slotRows;
+      }).join('');
+    }
+
+    function paint() {
+      tbody.innerHTML = buildRows();
+      tbody.querySelectorAll('.id-blk-hdr').forEach(row => {
+        row.addEventListener('click', () => {
+          const bid = row.dataset.blk;
+          if (expandedBlocks.has(bid)) expandedBlocks.delete(bid);
+          else expandedBlocks.add(bid);
+          paint();
+        });
+      });
+    }
+
+    paint();
+  }
+
+  // ── Active filter state ────────────────────────────────────────
+  let activeSkill = '';
+  let searchQ = '';
+
+  function applyFilters() {
+    let filtered = tasks;
+    if (activeSkill) filtered = filtered.filter(t => (t.skill||t.role||t.task) === activeSkill);
+    if (searchQ)     filtered = filtered.filter(t =>
+      (t.skill||t.role||t.task||'').toLowerCase().includes(searchQ) ||
+      (t.terminal||'').toLowerCase().includes(searchQ));
+    renderBlocks(filtered);
+    renderTable(filtered);
+    const lbl = document.getElementById('id-demand-table-label');
+    if (lbl) lbl.textContent = activeSkill || 'All Skills';
+  }
+
+  // Skill filter buttons
+  container.querySelectorAll('.id-skill-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      container.querySelectorAll('.id-skill-filter-btn').forEach(b => {
+        b.style.border = `1px solid ${(ID_SKILL_COLOR||{})[b.dataset.skill]||'var(--border)'}40`;
+        b.style.fontWeight = '600';
+        b.style.opacity = '0.7';
+        b.classList.remove('active');
+      });
+      btn.style.border = `2px solid ${(ID_SKILL_COLOR||{})[btn.dataset.skill]||'var(--accent)'}`;
+      btn.style.fontWeight = '800';
+      btn.style.opacity = '1';
+      btn.classList.add('active');
+      activeSkill = btn.dataset.skill;
+      applyFilters();
+    });
   });
+
+  // Search
+  document.getElementById('id-demand-search').addEventListener('input', e => {
+    searchQ = e.target.value.toLowerCase();
+    applyFilters();
+  });
+
+  applyFilters();
 }
+
+// ── Reallocation helpers (shared with renderIDOptimization) ──────────────────
+const _RL_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
+  {id:'b00_03',label:'00–03',start:0,end:180},{id:'b03_06',label:'03–06',start:180,end:360},
+  {id:'b06_09',label:'06–09',start:360,end:540},{id:'b09_12',label:'09–12',start:540,end:720},
+  {id:'b12_15',label:'12–15',start:720,end:900},{id:'b15_18',label:'15–18',start:900,end:1080},
+  {id:'b18_21',label:'18–21',start:1080,end:1260},{id:'b21_24',label:'21–24',start:1260,end:1440},
+];
+
 
 function renderIDGateTimeline() {
   const flights = Array.isArray(ID_DATA.flights) ? ID_DATA.flights : [];
@@ -1416,68 +1923,7 @@ function startCoverageAutoRefresh() {
 }
 
 // ── Expose ──────────────────────────────────────────────────────
-renderIDAlerts = function(alerts) {
-  const panel = document.getElementById('id-alerts-panel');
-  if (!alerts || !alerts.length) {
-    panel.innerHTML = '<div class="alert-panel alert-ok"><span>OK</span> All tasks fully covered.</div>';
-    return;
-  }
-
-  const critCount = alerts.filter(a => a.priority === 'Critical').length;
-  const shown = alerts.slice(0, 10);
-  let expanded = false;
-
-  panel.innerHTML = `
-    <div class="alerts-container">
-      <div class="alerts-header">
-        <span class="alerts-title">Live Alerts</span>
-        <span class="alerts-count">
-          ${critCount ? `<span class="badge badge-crit">${critCount} Critical</span>` : ''}
-        </span>
-        <button class="btn-ghost" id="id-alerts-toggle">Show top 10 v</button>
-      </div>
-      <div id="id-alerts-list"></div>
-    </div>`;
-
-  const list = document.getElementById('id-alerts-list');
-
-  function renderAlertsList(items) {
-    list.innerHTML = `
-      ${items.map((a, idx) => {
-        const flights = a.covered_flights || [];
-        const flightLabel = flights.length
-          ? flights.slice(0, 2).map(f => f.flight_no).join(', ') + (flights.length > 2 ? ` +${flights.length - 2}` : '')
-          : (a.flight_no || 'No linked flight');
-        return `
-          <div class="alert-row alert-${a.priority === 'Critical' ? 'crit' : 'warn'} alert-row-clickable" data-alert-idx="${idx}">
-            <div class="alert-row-left alert-row-detail">
-              <span class="badge ${a.priority === 'Critical' ? 'badge-crit' : 'badge-warn'}">${a.priority}</span>
-              <div class="alert-msg">
-                <div class="alert-msg-title">${flightLabel} - ${a.task} - ${a.start}-${a.end} - ${a.terminal || 'ALL'} / ${a.pier || 'ALL'} - Need ${a.staff_needed}, assigned ${a.assigned_count}, gap ${a.gap} - ${a.message}</div>
-              </div>
-            </div>
-            <div class="alert-row-right">
-              ${a.rec_staff && a.rec_staff.length
-                ? `<span class="alert-rec">Rec: ${a.rec_staff.slice(0, 2).join(', ')}</span>` : ''}
-            </div>
-          </div>`;
-      }).join('')}
-      ${!expanded && alerts.length > 10 ? `<div class="muted small" style="padding:6px 12px">+${alerts.length - 10} more alerts</div>` : ''}`;
-
-    list.querySelectorAll('.alert-row[data-alert-idx]').forEach(row =>
-      row.addEventListener('click', () => showIDAlertDetail(items[Number(row.dataset.alertIdx)])));
-  }
-
-  renderAlertsList(shown);
-
-  document.getElementById('id-alerts-toggle').addEventListener('click', function() {
-    expanded = !expanded;
-    renderAlertsList(expanded ? alerts : shown);
-    this.textContent = expanded ? `Show top 10 ^` : `Show top 10 v`;
-  });
-};
-
-window.initIntraday = initIntraday;
+// renderIDAlerts and window.initIntraday defined below
 window.applyDelay = applyDelay;
 window.applyCustomDelay = applyCustomDelay;
 window.cancelFlight = cancelFlight;
@@ -1488,9 +1934,9 @@ window.toggleStaffAssignment = toggleStaffAssignment;
 window.unassignStaff = unassignStaff;
 
 
-// ── Optimization Tab ────────────────────────────────────────────
+// ── Optimization Tab — Live Staff Reallocation ───────────────────
 async function renderIDOptimization(container) {
-  const SKILL_COLORS = {
+  const SKILL_COLORS = (typeof ID_SKILL_COLOR !== 'undefined' && ID_SKILL_COLOR) ? ID_SKILL_COLOR : {
     'GNIB':'#3498DB','CBP Pre-clearance':'#9B59B6','Bussing':'#E8850A',
     'PBZ':'#2ECC71','Mezz Operation':'#1ABC9C','Litter Picking':'#E74C3C',
     'Gate 335':'#F39C12','Arr Customer Service':'#5DADE2',
@@ -1499,407 +1945,752 @@ async function renderIDOptimization(container) {
     'Departures':'#F1C40F'
   };
 
-  container.innerHTML = `<div class="panel mt-20"><div class="loading-spinner"><div class="spinner"></div><span>Loading optimiser…</span></div></div>`;
-  let constraints = {};
-  try {
-    constraints = await fetch('/api/intraday/constraints').then(r => r.json());
-  } catch (_) {}
-
-  container.innerHTML = `
-    <div class="panel mt-20" style="border-top:4px solid var(--info);">
-      <div class="panel-title-row" style="margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:16px;">
-        <div>
-          <h2 class="panel-title" style="margin:0;font-size:1.4rem;color:var(--text);text-transform:none;">⚙ Unified Optimiser</h2>
-          <p class="section-hint" style="margin:6px 0 0;font-size:0.88rem;">
-            Adjust all constraints then run — results are applied live across all tabs.
-            &nbsp;·&nbsp; <em>Phase 1</em>: tasks via Greedy / CP-SAT &nbsp;·&nbsp; <em>Phase 2</em>: shift patterns via Greedy
-          </p>
-        </div>
-        <button class="btn-update-fluid" id="id-opt-run" style="min-width:180px;">⚡ Run &amp; Apply</button>
-      </div>
-
-      <div class="opt-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;margin-bottom:8px;">
-
-        <!-- Shift & Rest -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--info)">⏱</span> Shift &amp; Rest</div>
-          <div style="display:flex;gap:10px;margin-bottom:12px;">
-            <div style="flex:1"><label class="opt-label">Shift Duration (hrs)</label>
-              <input type="number" id="opt-shift-hrs" class="select-input" value="${constraints.shift_duration_hrs||12}" min="6" max="16" style="width:100%"/></div>
-            <div style="flex:1"><label class="opt-label">Min Rest (hrs)</label>
-              <input type="number" id="opt-rest-hrs" class="select-input" value="11" min="8" max="16" style="width:100%"/></div>
-          </div>
-          <div style="display:flex;gap:10px;">
-            <div style="flex:1"><label class="opt-label">Short Break (min)</label>
-              <input type="number" id="opt-b1-dur" class="select-input" value="${constraints.b1_duration_mins||30}" min="15" max="60" style="width:100%"/></div>
-            <div style="flex:1"><label class="opt-label">Meal Break (min)</label>
-              <input type="number" id="opt-b2-dur" class="select-input" value="${constraints.b2_duration_mins||60}" min="30" max="120" style="width:100%"/></div>
-          </div>
-        </div>
-
-        <!-- Travel Buffers -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--accent)">🚶</span> Travel Buffers (min)</div>
-          <div class="input-group" style="margin-bottom:14px">
-            <label class="opt-label">T1 → T2 Transfer</label>
-            <input type="number" id="opt-tt-t1-t2" class="select-input" value="${constraints.tt_t1_t2||15}" min="0" max="60" style="width:100%"/>
-          </div>
-          <div class="input-group">
-            <label class="opt-label">Skill-Switch Transfer</label>
-            <input type="number" id="opt-tt-sk" class="select-input" value="${constraints.tt_skill_switch||10}" min="0" max="60" style="width:100%"/>
-          </div>
-        </div>
-
-        <!-- Solver -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--ok)">🧮</span> Solver</div>
-          <p class="opt-hint">
-            <strong>Phase 1 — Task Assignment:</strong> Greedy (fast) or CP-SAT (optimal, requires OR-Tools).<br/>
-            <strong>Phase 2 — Shift Patterns:</strong> Greedy (always).
-          </p>
-          <div style="display:flex;align-items:center;gap:12px;margin:12px 0;">
-            <input type="checkbox" id="opt-cpsat"
-              style="width:20px;height:20px;accent-color:var(--purple);cursor:pointer"
-              ${constraints.cpsat_available ? (constraints.use_cpsat ? 'checked' : '') : 'disabled'}/>
-            <label for="opt-cpsat" class="opt-label" style="margin:0;cursor:pointer">
-              Use CP-SAT for Task Assignment
-              ${constraints.cpsat_available
-                ? '<span style="font-size:0.68rem;color:var(--ok);margin-left:6px;font-weight:600">● Available</span>'
-                : '<span style="font-size:0.68rem;color:var(--muted);margin-left:6px">(OR-Tools not installed)</span>'}
-            </label>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px;">
-            <div style="display:flex;align-items:center;gap:12px;">
-              <input type="checkbox" id="opt-prim-first" style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${constraints.use_primary_first!==false?'checked':''}/>
-              <label for="opt-prim-first" class="opt-label" style="margin:0;cursor:pointer">Primary Skills First</label>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px;">
-              <input type="checkbox" id="opt-allow-overlap" style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${(constraints.allow_overlaps||constraints.allow_overlap)?'checked':''}/>
-              <label for="opt-allow-overlap" class="opt-label" style="margin:0;cursor:pointer">Allow Schedule Overlaps</label>
-            </div>
-          </div>
-        </div>
-
-        <!-- Absence exclusions -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--crit)">🚫</span> Exclude Leave Types</div>
-          <p class="opt-hint">Staff on these leave types are removed before optimisation.</p>
-          <div id="opt-leave-toggles" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
-            ${["Annual Leave","Paternity Leave","Jury Duty","Sick Leave","Training"].map(lt => `
-              <div style="display:flex;align-items:center;gap:12px;">
-                <input type="checkbox" id="opt-lt-${lt.replace(/\s+/g,'-')}" value="${lt}"
-                  style="width:18px;height:18px;accent-color:var(--info);cursor:pointer"
-                  ${(constraints.leave_types_excluded||[]).includes(lt)?'checked':''}/>
-                <label for="opt-lt-${lt.replace(/\s+/g,'-')}" class="opt-label" style="margin:0;cursor:pointer">${lt}</label>
-              </div>`).join('')}
-          </div>
-        </div>
-
-        <!-- Permitted shifts -->
-        <div class="opt-card">
-          <div class="opt-card-title"><span style="color:var(--ok)">📅</span> Permitted Shift Windows</div>
-          <div id="opt-shift-toggles" style="display:flex;flex-direction:column;gap:10px;margin-top:8px;">
-            ${[
-              {label:'00:00', display:'Day (00:00 – 12:00)', s:0,   e:720},
-              {label:'03:00', display:'Morning (03:00 – 15:00)', s:180, e:900},
-              {label:'07:00', display:'Early (07:00 – 19:00)', s:420, e:1140},
-              {label:'12:00', display:'Night (12:00 – 00:00)', s:720, e:1440},
-            ].map((sh,i) => {
-              const chk = (constraints.permitted_shifts||[]).some(p=>p[0]===sh.s&&p[1]===sh.e)||(!constraints.permitted_shifts&&i<2);
-              return `<div style="display:flex;align-items:center;gap:12px;">
-                <input type="checkbox" class="opt-sh-chk" id="opt-sh-${i}"
-                  data-label="${sh.label}" data-start="${sh.s}" data-end="${sh.e}"
-                  style="width:18px;height:18px;accent-color:var(--info);cursor:pointer" ${chk?'checked':''}/>
-                <label for="opt-sh-${i}" class="opt-label" style="margin:0;cursor:pointer">${sh.display}</label>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>
-
-      </div><!-- /opt-grid -->
-
-      <!-- Results -->
-      <div id="id-opt-results"></div>
-    </div>`;
-  // Auto-render results if already available in global state
-  if (ID_DATA && ID_DATA.roster && ID_DATA.roster.roster_available) {
-    const resEl = document.getElementById('id-opt-results');
-    if (resEl) _renderIDOptResults(resEl, ID_DATA);
+  if (!ID_DATA) {
+    container.innerHTML = `<div class="panel mt-20"><div class="loading-spinner"><div class="spinner"></div><span>Loading data…</span></div></div>`;
+    return;
   }
 
-  // ── Run & Apply handler ───────────────────────────────────────────
-  document.getElementById('id-opt-run').addEventListener('click', async () => {
-    const btn     = document.getElementById('id-opt-run');
-    const results = document.getElementById('id-opt-results');
-    btn.disabled  = true;
-    btn.innerHTML = '<span class="spinner" style="width:12px;height:12px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></span>Optimising…';
-    results.innerHTML = '<div class="loading-spinner"><div class="spinner"></div><span>Running two-phase optimisation and applying to all tabs…</span></div>';
-
-    const leaves = Array.from(document.querySelectorAll('#opt-leave-toggles input:checked')).map(cb => cb.value);
-    const shifts  = Array.from(document.querySelectorAll('#opt-shift-toggles input:checked')).map(cb => [
-      parseInt(cb.dataset.start,10), parseInt(cb.dataset.end,10), cb.dataset.label
-    ]);
-
-    const payload = {
-      use_cpsat:            document.getElementById('opt-cpsat') ? document.getElementById('opt-cpsat').checked : false,
-      min_rest_hrs:         parseFloat(document.getElementById('opt-rest-hrs').value),
-      shift_duration_hrs:   parseInt(document.getElementById('opt-shift-hrs').value, 10),
-      b1_duration_mins:     parseInt(document.getElementById('opt-b1-dur').value, 10),
-      b2_duration_mins:     parseInt(document.getElementById('opt-b2-dur').value, 10),
-      tt_t1_t2:             parseInt(document.getElementById('opt-tt-t1-t2').value, 10),
-      tt_skill_switch:      parseInt(document.getElementById('opt-tt-sk').value, 10),
-      use_primary_first:    document.getElementById('opt-prim-first').checked,
-      allow_overlaps:       document.getElementById('opt-allow-overlap').checked,
-      leave_types_excluded: leaves,
-      permitted_shifts:     shifts,
-    };
-
-    try {
-      const res  = await fetch('/api/intraday/optimise', {
-        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Optimiser failed');
-
-      // Update global state so all other tabs reflect new data when navigated to
-      ID_DATA = data;
-      // Refresh KPIs and alerts at the top without destroying the current sub-content
-      try { renderIDKPIs(data.kpis); } catch (_) {}
-      try { renderIDAlerts(data.alerts); } catch (_) {}
-
-      // Show results inline (results div still exists in DOM)
-      _renderIDOptResults(results, data);
-
-    } catch (err) {
-      results.innerHTML = `<div class="panel mt-8" style="padding:16px;border-left:4px solid var(--crit);">
-        <strong style="color:var(--crit)">✕ Optimiser error</strong><br/><span style="font-size:0.85rem">${err.message}</span></div>`;
-    } finally {
-      btn.disabled  = false;
-      btn.innerHTML = '⚡ Run &amp; Apply';
-    }
+  const tasks    = ID_DATA.tasks  || [];
+  const allStaff = ID_DATA.staff  || [];
+  const staffById = {};
+  allStaff.forEach(s => {
+    const sid = String(s.id || s['EMPLOYEE NUMBER'] || '');
+    if (sid) staffById[sid] = s;
   });
 
-  // ── Render optimiser results ──────────────────────────────────────
-  function _renderIDOptResults(resultsEl, data) {
-    const r = data.roster || {};
-    
-    // Always show the status banner
-    const statusBanner = `
-      <div class="panel mt-16" style="padding:16px;border-left:4px solid var(--ok);">
-        <strong style="color:var(--ok)">✓ Schedule updated</strong>
-        <span style="margin-left:12px;font-size:0.85rem;color:var(--muted)">
-          ${r.roster_available ? 'Roster optimized and tactical constraints applied. All tabs refreshed.' : 'Roster optimiser unavailable — tactical constraints applied. All tabs refreshed.'}
-        </span>
-        ${r.error ? `<div style="font-size:0.8rem;color:var(--warn);margin-top:6px;">Reason: ${r.error}</div>` : ''}
-      </div>`;
+  // ── Data helpers ─────────────────────────────────────────────────
+  function _skillColor(sk) {
+    return SKILL_COLORS[sk] || '#6c757d';
+  }
 
-    if (!r.roster_available) {
-      resultsEl.innerHTML = statusBanner;
+  function _staffName(id) {
+    const s = staffById[String(id)] || {};
+    return s.name || s['STAFF NAME'] || String(id);
+  }
+
+  function buildMatrixData() {
+    // matrix[skill][blockId] = {req, asgn, gap, pct, terms:Set, tasks:[]}
+    const matrix = {};
+    tasks.forEach(t => {
+      const sk  = t.skill || t.skill1 || 'Unknown';
+      const bId = _blockForMins(t.start_mins || 0);
+      if (!matrix[sk]) matrix[sk] = {};
+      if (!matrix[sk][bId]) matrix[sk][bId] = { req:0, _slotReq:{}, _staffSet:new Set(), terms:new Set(), tasks:[] };
+      const cell = matrix[sk][bId];
+      cell.tasks.push(t);
+      const sm = t.start_mins || 0;
+      cell._slotReq[sm] = (cell._slotReq[sm] || 0) + (t.staff_needed || 0);
+      (t.assigned || []).filter(Boolean).forEach(id => cell._staffSet.add(String(id)));
+      if (t.terminal) cell.terms.add(t.terminal);
+    });
+    // Finalise req/asgn/gap/pct
+    Object.values(matrix).forEach(byBlock => {
+      Object.values(byBlock).forEach(cell => {
+        const vals = Object.values(cell._slotReq);
+        cell.req  = vals.length ? Math.max(...vals) : 0;
+        cell.asgn = cell._staffSet.size;
+        cell.gap  = Math.max(0, cell.req - cell.asgn);
+        cell.pct  = cell.req > 0 ? Math.round((cell.asgn / cell.req) * 100) : 100;
+      });
+    });
+    return matrix;
+  }
+
+  function _blockForMins(m) {
+    for (const b of _RL_BLOCKS) { if (m >= b.start && m < b.end) return b.id; }
+    return _RL_BLOCKS[_RL_BLOCKS.length - 1].id;
+  }
+
+  function _cellColor(pct, gap) {
+    if (gap === 0 && pct >= 100) return { bg:'#1a3a1a', border:'#2ecc71', text:'#2ecc71' };
+    if (pct >= 100)              return { bg:'#1a3a1a', border:'#2ecc71', text:'#2ecc71' };
+    if (pct >= 70)               return { bg:'#3a2a00', border:'#f39c12', text:'#f39c12' };
+    return                              { bg:'#3a1a1a', border:'#e74c3c', text:'#e74c3c' };
+  }
+
+  function buildGapList(matrix) {
+    const list = [];
+    Object.entries(matrix).forEach(([sk, byBlock]) => {
+      Object.entries(byBlock).forEach(([bId, cell]) => {
+        if (cell.gap > 0) {
+          list.push({ skill:sk, blockId:bId, ...cell });
+        }
+      });
+    });
+    list.sort((a,b) => a.pct - b.pct || b.gap - a.gap);
+    return list;
+  }
+
+  // ── Summary stats ─────────────────────────────────────────────────
+  const matrix  = buildMatrixData();
+  const gapList = buildGapList(matrix);
+  const totalOnDuty = new Set(tasks.flatMap(t => (t.assigned||[]).filter(Boolean))).size;
+  const allCells = Object.values(matrix).flatMap(b => Object.values(b));
+  const covPct   = allCells.length
+    ? Math.round(allCells.reduce((a,c) => a + Math.min(c.pct, 100), 0) / allCells.length)
+    : 100;
+  const totalGaps = allCells.reduce((a,c) => a + c.gap, 0);
+  const skills    = Object.keys(matrix).sort();
+  const allBlocks = _RL_BLOCKS;
+
+  // ── State ─────────────────────────────────────────────────────────
+  let _selSkill = null, _selBlock = null;
+
+  // ── Render shell ──────────────────────────────────────────────────
+  container.innerHTML = `
+  <div style="display:flex;flex-direction:column;height:100%;gap:0;padding:0 0 12px;">
+
+    <!-- Header bar -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 12px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div>
+        <div style="font-size:1.25rem;font-weight:700;color:var(--text);">Live Staff Reallocation</div>
+        <div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Click a cell to select a skill × block gap — then assign or remove staff from the right panel</div>
+      </div>
+      <button id="rl-refresh" style="display:flex;align-items:center;gap:6px;padding:7px 14px;background:var(--info);color:#fff;border:none;border-radius:6px;font-size:0.82rem;font-weight:600;cursor:pointer;flex-shrink:0;">
+        ↻ Refresh
+      </button>
+    </div>
+
+    <!-- KPI strip -->
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div class="rl-kpi-tile" style="border-right:1px solid var(--border);">
+        <div class="rl-kpi-val" style="color:var(--info);">${totalOnDuty}</div>
+        <div class="rl-kpi-lbl">On Duty</div>
+      </div>
+      <div class="rl-kpi-tile" style="border-right:1px solid var(--border);">
+        <div class="rl-kpi-val" style="color:${covPct>=90?'var(--ok)':covPct>=70?'var(--warn)':'var(--crit)'};">${covPct}%</div>
+        <div class="rl-kpi-lbl">Avg Coverage</div>
+      </div>
+      <div class="rl-kpi-tile" style="border-right:1px solid var(--border);">
+        <div class="rl-kpi-val" style="color:${totalGaps===0?'var(--ok)':'var(--crit)'};">${totalGaps}</div>
+        <div class="rl-kpi-lbl">Total Gaps</div>
+      </div>
+      <div class="rl-kpi-tile" style="border-right:1px solid var(--border);">
+        <div class="rl-kpi-val" style="color:var(--warn);">${gapList.length}</div>
+        <div class="rl-kpi-lbl">Blocks w/ Gap</div>
+      </div>
+      <div class="rl-kpi-tile" style="flex:1;">
+        <div style="display:flex;gap:14px;align-items:center;font-size:0.75rem;">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#2ecc71;margin-right:4px;vertical-align:middle;"></span>≥100% covered</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f39c12;margin-right:4px;vertical-align:middle;"></span>70–99% covered</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#e74c3c;margin-right:4px;vertical-align:middle;"></span>&lt;70% covered</span>
+          <span style="margin-left:6px;color:var(--muted);">Cell format: <strong style="color:var(--text);">REQ / ASGN</strong></span>
+        </div>
+        <div class="rl-kpi-lbl" style="margin-top:4px;">Legend</div>
+      </div>
+    </div>
+
+    <!-- Main body -->
+    <div style="display:flex;flex:1;min-height:0;gap:0;overflow:hidden;">
+
+      <!-- Left: heatmap + gap list -->
+      <div style="width:460px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden;">
+
+        <!-- Heatmap -->
+        <div style="flex:1;overflow:auto;padding:0;" id="rl-matrix-wrap">
+          <table style="border-collapse:collapse;width:100%;font-size:0.72rem;" id="rl-matrix-table">
+            <thead>
+              <tr style="background:var(--surface-2,#1e1e1e);position:sticky;top:0;z-index:2;">
+                <th style="padding:8px 10px;text-align:left;font-size:0.7rem;color:var(--muted);font-weight:600;white-space:nowrap;border-bottom:1px solid var(--border);min-width:120px;">Skill / Touchpoint</th>
+                ${allBlocks.map(b => `<th style="padding:6px 4px;text-align:center;font-size:0.65rem;color:var(--muted);border-bottom:1px solid var(--border);min-width:50px;">${b.label}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody id="rl-matrix-body"></tbody>
+          </table>
+        </div>
+
+        <!-- Gap priority list -->
+        <div style="flex-shrink:0;border-top:1px solid var(--border);max-height:220px;overflow-y:auto;">
+          <div style="padding:8px 12px 4px;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;position:sticky;top:0;background:var(--surface-2,#1e1e1e);z-index:1;">
+            Gap Priority — worst first
+          </div>
+          <div id="rl-gap-list" style="padding:0 8px 8px;"></div>
+        </div>
+      </div>
+
+      <!-- Right: staff panel + log -->
+      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+
+        <!-- Staff panel -->
+        <div style="flex:1;overflow-y:auto;padding:16px;" id="rl-staff-panel">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--muted);text-align:center;gap:8px;">
+            <div style="font-size:2rem;opacity:0.3;">←</div>
+            <div style="font-size:0.85rem;">Select a cell in the heatmap to manage staff for that block</div>
+          </div>
+        </div>
+
+        <!-- Move log -->
+        <div style="flex-shrink:0;border-top:1px solid var(--border);max-height:180px;overflow-y:auto;background:var(--surface-2,#141414);">
+          <div style="padding:8px 14px 4px;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--surface-2,#141414);z-index:1;">
+            <span>Move History</span>
+            <span id="rl-log-count" style="font-size:0.7rem;color:var(--info);">${_idReallocLog.length} moves</span>
+          </div>
+          <div id="rl-log-body" style="padding:0 14px 8px;font-size:0.75rem;"></div>
+        </div>
+      </div>
+
+    </div><!-- /main body -->
+  </div>`;
+
+  // ── Sub-renders ───────────────────────────────────────────────────
+  function renderMatrix(mx) {
+    const tbody = document.getElementById('rl-matrix-body');
+    if (!tbody) return;
+    tbody.innerHTML = skills.map(sk => {
+      const byBlock = mx[sk] || {};
+      const skColor = _skillColor(sk);
+      const cells = allBlocks.map(b => {
+        const cell = byBlock[b.id];
+        if (!cell) return `<td style="padding:4px 2px;text-align:center;"><span style="font-size:0.65rem;color:var(--muted);opacity:.4;">—</span></td>`;
+        const c = _cellColor(cell.pct, cell.gap);
+        const isSel = (_selSkill === sk && _selBlock === b.id);
+        return `<td style="padding:3px 2px;text-align:center;">
+          <div class="rl-cell${isSel?' rl-cell-sel':''}"
+            data-skill="${sk.replace(/"/g,'&quot;')}" data-block="${b.id}"
+            style="display:inline-block;min-width:44px;padding:4px 5px;border-radius:5px;
+              background:${c.bg};border:1px solid ${isSel?'#fff':c.border};
+              color:${c.text};font-size:0.7rem;font-weight:700;cursor:pointer;
+              transition:transform .1s;${isSel?'transform:scale(1.08);box-shadow:0 0 0 2px #fff4;':''}">
+            ${cell.req}/${cell.asgn}
+          </div>
+        </td>`;
+      }).join('');
+      return `<tr style="border-bottom:1px solid var(--border)05;">
+        <td style="padding:6px 10px;font-size:0.72rem;font-weight:600;color:${skColor};white-space:nowrap;border-right:1px solid var(--border);max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${sk}">${sk}</td>
+        ${cells}
+      </tr>`;
+    }).join('');
+
+    // Click handlers
+    tbody.querySelectorAll('.rl-cell').forEach(el => {
+      el.addEventListener('click', () => {
+        _selSkill = el.dataset.skill;
+        _selBlock = el.dataset.block;
+        renderMatrix(mx);
+        renderStaffPanel(mx);
+      });
+    });
+  }
+
+  function renderGapList(gl) {
+    const el = document.getElementById('rl-gap-list');
+    if (!el) return;
+    if (!gl.length) { el.innerHTML = `<div style="padding:10px 4px;font-size:0.78rem;color:var(--ok);">✓ No gaps — all blocks covered</div>`; return; }
+    el.innerHTML = gl.slice(0, 12).map(g => {
+      const b = allBlocks.find(x => x.id === g.blockId) || {};
+      const c = _cellColor(g.pct, g.gap);
+      const isSel = (_selSkill === g.skill && _selBlock === g.blockId);
+      return `<div class="rl-gap-item${isSel?' rl-gap-sel':''}"
+        data-skill="${g.skill.replace(/"/g,'&quot;')}" data-block="${g.blockId}"
+        style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:3px;cursor:pointer;
+          background:${isSel?'var(--surface-3,#2a2a2a)':'transparent'};border:1px solid ${isSel?'var(--border)':'transparent'};">
+        <div style="width:7px;height:7px;border-radius:50%;background:${c.border};flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.72rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.skill}</div>
+          <div style="font-size:0.65rem;color:var(--muted);">${b.label||g.blockId}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-size:0.72rem;font-weight:700;color:${c.text};">${g.req}/${g.asgn}</div>
+          <div style="font-size:0.65rem;color:var(--crit);">-${g.gap} staff</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    el.querySelectorAll('.rl-gap-item').forEach(el2 => {
+      el2.addEventListener('click', () => {
+        _selSkill = el2.dataset.skill;
+        _selBlock = el2.dataset.block;
+        renderMatrix(mx);
+        renderStaffPanel(mx);
+        renderGapList(gl);
+      });
+    });
+  }
+
+  function renderStaffPanel(mx) {
+    const panel = document.getElementById('rl-staff-panel');
+    if (!panel || !_selSkill || !_selBlock) return;
+
+    const cell = (mx[_selSkill] || {})[_selBlock];
+    const blk  = allBlocks.find(b => b.id === _selBlock) || {};
+
+    if (!cell) {
+      panel.innerHTML = `<div style="color:var(--muted);font-size:0.85rem;padding:20px;">No tasks in this block.</div>`;
       return;
     }
 
-    const fairness  = r.fairness || {};
-    const gini      = fairness.gini_coefficient ?? '—';
-    const giniLabel = fairness.interpretation  || '—';
-    const giniColor = giniLabel==='excellent'?'var(--ok)':giniLabel==='good'?'var(--info)':giniLabel==='moderate'?'var(--warn)':'var(--crit)';
-    const taskSolver  = r.task_solver || 'Greedy';
-    const solverBadge = taskSolver === 'CP-SAT'
-      ? `<span class="badge-solver badge-cpsat">CP-SAT</span><span class="badge-solver badge-greedy" style="margin-left:4px">Greedy</span>`
-      : `<span class="badge-solver badge-greedy">Greedy</span>`;
+    const c = _cellColor(cell.pct, cell.gap);
+    const assignedIds = new Set(cell._staffSet);
 
-    const staffCount = (data.staff||[]).length;
-    const kpiHtml = `
-      <div class="ro-kpi-row" style="margin-top:20px;">
-        <div class="ro-kpi"><div class="ro-kpi-val" style="color:var(--ok)">✓ Applied</div><div class="ro-kpi-lbl">All Tabs Updated</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${r.pattern_count||0}</div><div class="ro-kpi-lbl">Shift Patterns</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${staffCount}</div><div class="ro-kpi-lbl">Staff On Duty</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val" style="color:${giniColor}">${typeof gini==='number'?gini.toFixed(3):gini}</div><div class="ro-kpi-lbl">Gini (${giniLabel})</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${fairness.mean_utilisation_pct??'—'}%</div><div class="ro-kpi-lbl">Mean Util</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${solverBadge}</div><div class="ro-kpi-lbl">Task Solver</div></div>
-        <div class="ro-kpi"><div class="ro-kpi-val">${(r.flags||[]).length}</div><div class="ro-kpi-lbl">Flags</div></div>
-      </div>`;
+    // Eligible: on duty this block, has this skill, not already assigned
+    const eligible = allStaff.filter(s => {
+      const sid   = String(s.id || s['EMPLOYEE NUMBER'] || '');
+      if (assignedIds.has(sid)) return false;
+      const sk1   = (s.skill1 || '').toLowerCase();
+      const sk2   = (s.skill2 || '').toLowerCase();
+      const selSk = _selSkill.toLowerCase();
+      const hasSkill = sk1 === selSk || sk2 === selSk;
+      // Check if staff is on duty during this block
+      const shStart = s.shift_start_mins ?? 0;
+      const shEnd   = s.shift_end_mins   ?? 1440;
+      const blkMid  = (blk.start + blk.end) / 2;
+      const onDuty  = shStart <= blkMid && shEnd >= blkMid;
+      return hasSkill && onDuty;
+    });
 
-    const patternHtml = (r.patterns||[]).map(p => {
-      const chips = Object.entries(p.demand_profile||{}).map(([sk,v]) =>
-        `<span class="ro-skill-chip" style="background:${SKILL_COLORS[sk]||'#666'}20;color:${SKILL_COLORS[sk]||'#666'}">${sk}: ${v.toFixed(1)}</span>`
-      ).join('') || '<span class="ro-no-demand">No demand data</span>';
-      const pct = Math.round(((p.net_mins||630)/720)*100);
-      return `
-        <div class="ro-pattern-card">
-          <div class="ro-pattern-label">${p.label}</div>
-          <div class="ro-pattern-meta" style="display:flex;gap:10px;font-size:0.78rem;">
-            <span>Score: ${p.coverage_score.toFixed(1)}</span>
-            <span>👤 ${p.staff_count}</span>
-            <span>${pct}% net</span>
+    const assignedList = allStaff.filter(s => assignedIds.has(String(s.id || s['EMPLOYEE NUMBER'] || '')));
+
+    const terms = [...cell.terms].join(', ') || '—';
+    const coverBar = Math.min(cell.pct, 100);
+
+    panel.innerHTML = `
+      <!-- Selected cell header -->
+      <div style="background:var(--surface-2,#1e1e1e);border-radius:10px;padding:14px 16px;margin-bottom:16px;border:1px solid ${c.border}40;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+          <div>
+            <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Selected Block</div>
+            <div style="font-size:1rem;font-weight:700;color:${_skillColor(_selSkill)};">${_selSkill}</div>
+            <div style="font-size:0.78rem;color:var(--muted);margin-top:2px;">${blk.label || _selBlock} &nbsp;·&nbsp; Terminal: ${terms}</div>
           </div>
-          <div style="height:4px;border-radius:2px;background:var(--border);overflow:hidden;margin:4px 0;">
-            <div style="width:${pct}%;height:100%;background:var(--info);border-radius:2px;"></div>
+          <div style="text-align:right;">
+            <div style="font-size:1.6rem;font-weight:800;color:${c.text};line-height:1;">${cell.req}/${cell.asgn}</div>
+            <div style="font-size:0.68rem;color:var(--muted);">REQ / ASGN</div>
           </div>
-          <div class="ro-skills-wrap">${chips}</div>
-        </div>`;
-    }).join('');
-
-    const coverageHtml = Object.entries(r.coverage||{}).map(([sk,cv]) => {
-      const pct = cv.coverage_pct||0;
-      const col = pct>=90?'var(--ok)':pct>=70?'var(--warn)':'var(--crit)';
-      return `<div style="margin-bottom:8px;">
-        <div style="display:flex;justify-content:space-between;font-size:0.8rem;margin-bottom:2px;">
-          <span style="font-weight:600">${sk}</span>
-          <span style="color:${col};font-weight:700">${pct}%</span>
         </div>
-        <div style="height:8px;border-radius:4px;background:var(--surface);overflow:hidden;">
-          <div style="width:${Math.min(pct,100)}%;height:100%;background:${col};border-radius:4px;transition:width 0.4s;"></div>
+        <!-- Coverage bar -->
+        <div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden;">
+          <div style="width:${coverBar}%;height:100%;background:${c.border};border-radius:3px;transition:width .3s;"></div>
         </div>
-      </div>`;
-    }).join('');
-
-    const flagsHtml = (r.flags||[]).length
-      ? (r.flags||[]).map(f=>`<div class="ro-flag"><strong>${f.flag_id}</strong> — ${f.detail}</div>`).join('')
-      : '<div class="ro-no-flags">✓ No roster flags</div>';
-
-    const fairHtml = `
-      <div class="ro-fairness-grid">
-        <div class="ro-fair-stat"><span class="ro-fair-val" style="color:${giniColor}">${typeof gini==='number'?gini.toFixed(3):gini}</span><span class="ro-fair-lbl">Gini</span></div>
-        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.mean_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Mean</span></div>
-        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.std_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Std Dev</span></div>
-        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.min_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Min</span></div>
-        <div class="ro-fair-stat"><span class="ro-fair-val">${fairness.max_utilisation_pct??'—'}%</span><span class="ro-fair-lbl">Max</span></div>
-      </div>`;
-
-    const matchIcon  = m => m==='primary'?'✓':m==='secondary'?'~':'✗';
-    const matchColor = m => m==='primary'?'var(--ok)':m==='secondary'?'var(--warn)':'var(--crit)';
-    const staffRows = (data.staff||[]).map(s => `
-      <tr>
-        <td style="font-weight:600">${s.id||s.name}</td>
-        <td><span class="ro-skill-chip" style="background:${SKILL_COLORS[s.skill1]||'#666'}20;color:${SKILL_COLORS[s.skill1]||'#666'}">${s.skill1||'—'}</span></td>
-        <td style="font-size:0.8rem">${s.shift_label||s.shift||'—'}</td>
-        <td style="color:${matchColor(s.skill_match)};font-weight:700">${matchIcon(s.skill_match||'primary')}</td>
-        <td>
-          <div style="display:flex;align-items:center;gap:6px;">
-            <div style="flex:1;background:var(--surface);border-radius:4px;height:6px;overflow:hidden;">
-              <div style="width:${s.utilisation_pct||0}%;height:100%;background:${(s.utilisation_pct||0)>85?'var(--ok)':'var(--info)'};border-radius:4px;"></div>
-            </div>
-            <span style="font-size:0.75rem;font-weight:600;min-width:34px">${s.utilisation_pct||0}%</span>
-          </div>
-        </td>
-        <td style="font-size:0.78rem;color:var(--muted)">${(s.breaks||[]).map(b=>`${(b.type||'').split(' ')[0]} ${b.start_str||''}`).join(', ')||'—'}</td>
-      </tr>`).join('');
-
-    resultsEl.innerHTML = `
-      ${statusBanner}
-      ${kpiHtml}
-      <div class="row-2col mt-20" style="gap:20px;align-items:start;">
-        <div>
-          <div class="section-subhead">Shift Patterns</div>
-          <div class="ro-patterns-grid">${patternHtml||'<div class="ro-no-demand">No patterns generated.</div>'}</div>
-        </div>
-        <div>
-          <div class="section-subhead">Skill Coverage</div>
-          ${coverageHtml||'<div class="ro-no-demand">No coverage data.</div>'}
-          <div class="section-subhead" style="margin-top:16px;">Workload Fairness</div>
-          ${fairHtml}
-          <div class="section-subhead" style="margin-top:16px;">Flags</div>
-          ${flagsHtml}
+        <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:var(--muted);margin-top:3px;">
+          <span>${cell.pct}% coverage</span>
+          <span>${cell.gap > 0 ? `<span style="color:var(--crit);">-${cell.gap} gap</span>` : '<span style="color:var(--ok);">✓ met</span>'}</span>
         </div>
       </div>
-      <div class="section-subhead mt-16">Staff Assignment (Updated)</div>
-      <div class="table-scroll">
-        <table class="data-table" style="font-size:0.82rem;">
-          <thead><tr><th>ID</th><th>Skill</th><th>Shift</th><th>Match</th><th>Utilisation</th><th>Breaks</th></tr></thead>
-          <tbody>${staffRows||'<tr><td colspan="6" class="empty-state small">No staff data.</td></tr>'}</tbody>
-        </table>
+
+      <!-- Currently assigned -->
+      <div style="margin-bottom:14px;">
+        <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">
+          Currently Assigned (${assignedList.length})
+        </div>
+        ${assignedList.length === 0
+          ? `<div style="font-size:0.78rem;color:var(--muted);padding:8px 0;">No staff assigned to this block yet.</div>`
+          : assignedList.map(s => {
+              const sid = String(s.id || s['EMPLOYEE NUMBER'] || '');
+              const nm  = s.name || s['STAFF NAME'] || sid;
+              const sk1 = s.skill1 || '—';
+              return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-2,#1e1e1e);border-radius:7px;margin-bottom:5px;border:1px solid var(--border);">
+                <div style="width:28px;height:28px;border-radius:50%;background:${_skillColor(sk1)}20;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:${_skillColor(sk1)};flex-shrink:0;">${(nm[0]||'?').toUpperCase()}</div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:0.78rem;font-weight:600;color:var(--text);">${nm}</div>
+                  <div style="font-size:0.65rem;color:var(--muted);">${sk1} · ID ${sid}</div>
+                </div>
+                <button class="rl-remove-btn" data-sid="${sid}" data-sname="${nm.replace(/"/g,'&quot;')}"
+                  style="padding:4px 10px;background:transparent;border:1px solid var(--crit);color:var(--crit);border-radius:5px;font-size:0.7rem;font-weight:600;cursor:pointer;">
+                  ✕ Remove
+                </button>
+              </div>`;
+            }).join('')}
+      </div>
+
+      <!-- Eligible to assign -->
+      <div>
+        <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">
+          Available to Assign (${eligible.length})
+        </div>
+        ${eligible.length === 0
+          ? `<div style="font-size:0.78rem;color:var(--muted);padding:8px 0;">No eligible staff free for this block.</div>`
+          : eligible.map(s => {
+              const sid = String(s.id || s['EMPLOYEE NUMBER'] || '');
+              const nm  = s.name || s['STAFF NAME'] || sid;
+              const sk1 = s.skill1 || '—';
+              const util = s.utilisation_pct || 0;
+              const uColor = util >= 85 ? 'var(--ok)' : util >= 50 ? 'var(--info)' : 'var(--muted)';
+              return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-2,#1e1e1e);border-radius:7px;margin-bottom:5px;border:1px solid var(--border);">
+                <div style="width:28px;height:28px;border-radius:50%;background:${_skillColor(sk1)}20;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:${_skillColor(sk1)};flex-shrink:0;">${(nm[0]||'?').toUpperCase()}</div>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:0.78rem;font-weight:600;color:var(--text);">${nm}</div>
+                  <div style="font-size:0.65rem;color:var(--muted);">${sk1} · ID ${sid}</div>
+                </div>
+                <div style="font-size:0.65rem;color:${uColor};font-weight:600;margin-right:6px;">${util}% util</div>
+                <button class="rl-assign-btn" data-sid="${sid}" data-sname="${nm.replace(/"/g,'&quot;')}"
+                  style="padding:4px 10px;background:var(--info);color:#fff;border:none;border-radius:5px;font-size:0.7rem;font-weight:600;cursor:pointer;">
+                  + Assign
+                </button>
+              </div>`;
+            }).join('')}
       </div>`;
+
+    // Wire buttons
+    panel.querySelectorAll('.rl-assign-btn').forEach(btn => {
+      btn.addEventListener('click', () => _doMove('assign', btn.dataset.sid, btn.dataset.sname));
+    });
+    panel.querySelectorAll('.rl-remove-btn').forEach(btn => {
+      btn.addEventListener('click', () => _doMove('remove', btn.dataset.sid, btn.dataset.sname));
+    });
   }
+
+  function renderLog() {
+    const el = document.getElementById('rl-log-body');
+    const cnt = document.getElementById('rl-log-count');
+    if (!el) return;
+    if (cnt) cnt.textContent = `${_idReallocLog.length} moves`;
+    if (!_idReallocLog.length) {
+      el.innerHTML = `<div style="color:var(--muted);padding:6px 0;font-size:0.75rem;">No moves yet.</div>`;
+      return;
+    }
+    el.innerHTML = [..._idReallocLog].reverse().map((lg, i) => {
+      const icon = lg.action === 'assign' ? '+ ' : '✕ ';
+      const col  = lg.action === 'assign' ? 'var(--ok)' : 'var(--crit)';
+      return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)05;">
+        <span style="color:${col};font-weight:700;flex-shrink:0;">${icon}</span>
+        <span style="flex:1;">${lg.staffName} → <strong>${lg.skill}</strong> ${lg.blockLabel}</span>
+        <span style="color:var(--muted);flex-shrink:0;font-size:0.65rem;">${lg.time}</span>
+      </div>`;
+    }).join('');
+  }
+
+  async function _doMove(action, staffId, staffName) {
+    const blk = allBlocks.find(b => b.id === _selBlock) || {};
+    const payload = {
+      staff_id:    staffId,
+      skill:       _selSkill,
+      block_start: blk.start,
+      block_end:   blk.end,
+      action:      action,
+    };
+
+    // Disable all action buttons while in-flight
+    document.querySelectorAll('.rl-assign-btn,.rl-remove-btn').forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
+
+    try {
+      const res  = await fetch('/api/intraday/assign-block', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Request failed');
+
+      // Persist log entry
+      _idReallocLog.push({
+        action, staffId, staffName,
+        skill: _selSkill, blockLabel: blk.label || _selBlock,
+        time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+      });
+
+      // Update global data
+      ID_DATA = data;
+      try { renderIDKPIs(data.kpis); } catch (_) {}
+      try { renderIDAlerts(data.alerts); } catch (_) {}
+
+      // Full re-render of this tab, then restore selection
+      const savedSkill = _selSkill;
+      const savedBlock = _selBlock;
+      renderIDOptimization(container);
+      // After re-render, restore selection by clicking the saved cell
+      setTimeout(() => {
+        const sel = container.querySelector(`.rl-cell[data-skill="${CSS.escape(savedSkill)}"][data-block="${savedBlock}"]`);
+        if (sel) sel.click();
+      }, 60);
+
+    } catch (err) {
+      const panel = document.getElementById('rl-staff-panel');
+      if (panel) {
+        const errDiv = document.createElement('div');
+        errDiv.style.cssText = 'padding:8px 12px;background:#3a1a1a;border:1px solid var(--crit);border-radius:6px;font-size:0.78rem;color:var(--crit);margin-bottom:10px;';
+        errDiv.textContent = '✕ ' + err.message;
+        panel.prepend(errDiv);
+      }
+    } finally {
+      document.querySelectorAll('.rl-assign-btn,.rl-remove-btn').forEach(b => { b.disabled = false; b.style.opacity = '1'; });
+    }
+  }
+
+  // ── Initial paint ─────────────────────────────────────────────────
+  renderMatrix(matrix);
+  renderGapList(gapList);
+  renderLog();
+
+  // Refresh button
+  document.getElementById('rl-refresh')?.addEventListener('click', async () => {
+    const btn = document.getElementById('rl-refresh');
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+      const data = await fetch('/api/intraday').then(r => r.json());
+      ID_DATA = data;
+      try { renderIDKPIs(data.kpis); } catch (_) {}
+      try { renderIDAlerts(data.alerts); } catch (_) {}
+    } catch (_) {}
+    renderIDOptimization(container);
+  });
 }
 
 function renderIDRosterTimeline() {
-  const container = document.getElementById('id-staff-timeline');
-  if (!container || !ID_DATA) return;
-
-  function stringToColor(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    const h = Math.abs(hash) % 360;
-    return `hsl(${h}, 65%, 40%)`;
-  }
-
-  const q = document.getElementById('id-staff-timeline-search')?.value.toLowerCase() || '';
-  const shiftFilter = document.getElementById('id-staff-timeline-shift')?.value || '';
-
-  const filteredStaff = (ID_DATA.staff || []).filter(s => {
-    const skillsMatch = [s.skill1, s.skill2, s.skill3, s.skill4].some(sk => (sk || '').toLowerCase().includes(q));
-    const mq = !q || s.id.toLowerCase().includes(q) || skillsMatch;
-    const ms = !shiftFilter || s.shift.toLowerCase() === shiftFilter.toLowerCase();
+  // kept for compatibility — delegates to the block table
+  const el = document.getElementById('id-staff-timeline');
+  if (!el || !ID_DATA) return;
+  const q  = document.getElementById('id-staff-timeline-search')?.value.toLowerCase() || '';
+  const sf = document.getElementById('id-staff-timeline-shift')?.value || '';
+  const filtered = (ID_DATA.staff || []).filter(s => {
+    const mq = !q || s.id.toLowerCase().includes(q) || (s.skill1||'').toLowerCase().includes(q);
+    const ms = !sf || (s.shift||'').toLowerCase() === sf.toLowerCase();
     return mq && ms;
   });
+  renderID3HrBlocksTable(el, filtered);
+}
 
-  const axisTicks = [];
-  for (let h = 0; h <= 24; h++) {
-    const left = (h * 60) / 1440 * 100;
-    axisTicks.push(`
-      <div class="rt-hour-tick" style="left:${left.toFixed(2)}%">
-        <span class="rt-hour-label">${String(h % 24).padStart(2, '0')}</span>
-        <div class="rt-hour-line"></div>
-      </div>`);
+function renderID3HrBlocksTable(el, staffList) {
+  if (!staffList || !staffList.length) {
+    el.innerHTML = '<div class="muted small" style="padding:16px">No staff match your filter.</div>';
+    return;
   }
 
-  const rows = filteredStaff.map(s => {
-    const shiftStart = s.shift_start;
-    const shiftEnd = s.shift_end || shiftStart + 720; // fallback if missing
-    const shiftWidth = (shiftEnd - shiftStart) / 1440 * 100;
-    const shiftLeft = shiftStart / 1440 * 100;
+  const TIME_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
+    {id:'b00_03',label:'00–03',start:0,   end:180},
+    {id:'b03_06',label:'03–06',start:180, end:360},
+    {id:'b06_09',label:'06–09',start:360, end:540},
+    {id:'b09_12',label:'09–12',start:540, end:720},
+    {id:'b12_15',label:'12–15',start:720, end:900},
+    {id:'b15_18',label:'15–18',start:900, end:1080},
+    {id:'b18_21',label:'18–21',start:1080,end:1260},
+    {id:'b21_24',label:'21–24',start:1260,end:1440},
+  ];
 
-    const shiftBg = `<div class="rt-shift-bg" style="left:${shiftLeft}%; width:${shiftWidth}%" title="${s.shift_label}"></div>`;
+  const SKILL_COLOR = (typeof ID_SKILL_COLOR !== 'undefined') ? ID_SKILL_COLOR : {};
 
-    const tasks = (s.assignments || []).map(a => {
-      const left = a.start_mins / 1440 * 100;
-      const width = (a.end_mins - a.start_mins) / 1440 * 100;
-      const color = stringToColor(a.task);
-      const label = width > 2 ? a.task.split(' ')[0] : '';
-      const term = a.terminal ? `[${a.terminal}] ` : '';
-      return `<div class="rt-block" style="left:${left}%; width:${width}%; background:${color}" 
-              title="${a.task} ${term}(${a.start}-${a.end})">${label}</div>`;
+  function fmtSk(sk) {
+    if (!sk) return '';
+    const found = Object.keys(SKILL_COLOR).find(k => k.toLowerCase() === sk.toLowerCase());
+    return found || sk.charAt(0).toUpperCase() + sk.slice(1);
+  }
+
+  function getBlockInfo(s, block) {
+    const S = s.shift_start || 0;
+    const E = s.shift_end   || (S + 720);
+    if (!(S < block.end && E > block.start)) return null;
+    const inBlock = (s.assignments || []).filter(a =>
+      a.start_mins < block.end && a.end_mins > block.start);
+    const blockBreaks = (s.breaks || []).filter(b =>
+      b.start_mins < block.end && b.end_mins > block.start);
+    if (!inBlock.length) return { skill: null, terminal: null, color: '#94a3b8', blockBreaks };
+    const skillTime = {};
+    inBlock.forEach(a => {
+      const ov = Math.min(a.end_mins, block.end) - Math.max(a.start_mins, block.start);
+      skillTime[a.skill] = (skillTime[a.skill] || 0) + ov;
+    });
+    const topSk = Object.entries(skillTime).sort((a,b) => b[1]-a[1])[0][0];
+    const domAsgn = inBlock.filter(a => a.skill === topSk)
+      .sort((a,b) => (Math.min(b.end_mins,block.end)-Math.max(b.start_mins,block.start)) -
+                     (Math.min(a.end_mins,block.end)-Math.max(a.start_mins,block.start)))[0];
+    return { skill: topSk, terminal: domAsgn?.terminal || null,
+             color: SKILL_COLOR[topSk] || '#888', blockBreaks };
+  }
+
+  const rows = staffList.map(s => {
+    const utilColor = (s.utilisation_pct||0) > 90 ? '#E74C3C' : (s.utilisation_pct||0) > 70 ? '#F39C12' : '#2ECC71';
+    const sk1 = fmtSk(s.skill1);
+    const grp = s.break_group || '';
+    const grpColor = grp === 'A' ? '#2563EB' : '#059669';
+
+    const cells = TIME_BLOCKS.map(b => {
+      const info = getBlockInfo(s, b);
+      if (!info) return `<td class="st3-cell st3-off">–</td>`;
+
+      const brkRows = info.blockBreaks.map(br => {
+        const isShort = (br.type || '').toLowerCase().includes('short');
+        const icon  = isShort ? '☕' : '🍽';
+        const color = isShort ? '#f97316' : '#dc2626';
+        return `<div style="margin-top:3px;padding:2px 4px;border-radius:3px;
+                            background:${color}22;border:1px solid ${color}66;
+                            font-size:0.52rem;font-weight:800;color:${color};
+                            white-space:nowrap;line-height:1.3">
+                  ${icon} ${br.start}–${br.end}
+                </div>`;
+      }).join('');
+
+      if (!info.skill) {
+        return `<td class="st3-cell" style="background:#94a3b814;color:#94a3b8;
+            border:1px solid #94a3b830;text-align:center;vertical-align:middle;padding:4px 3px"
+            title="${b.label}: On shift">
+          <div style="font-size:0.6rem;opacity:0.6">On shift</div>
+          ${brkRows}
+        </td>`;
+      }
+
+      const termBadge = info.terminal
+        ? `<div style="font-size:0.58rem;font-weight:800;opacity:0.9;line-height:1.1">${info.terminal}</div>`
+        : '';
+      const brkAccent = info.blockBreaks.length
+        ? `border-left:3px solid ${grpColor};`
+        : `border-left:3px solid transparent;`;
+
+      return `<td class="st3-cell" style="background:${info.color}20;color:${info.color};
+          border:1px solid ${info.color}50;${brkAccent}
+          text-align:center;vertical-align:middle;padding:3px 3px;min-width:68px"
+          title="${b.label}: ${info.skill}${info.terminal?' @ '+info.terminal:''}">
+        ${termBadge}
+        <div style="font-size:0.62rem;font-weight:700;line-height:1.2">${info.skill}</div>
+        ${brkRows}
+      </td>`;
     }).join('');
 
-    const bks = (s.breaks || []).map(b => {
-      const left = b.start_mins / 1440 * 100;
-      const width = (b.end_mins - b.start_mins) / 1440 * 100;
-      const label = width > 3 ? 'Bk' : '';
-      return `<div class="rt-block break" style="left:${left}%; width:${width}%" 
-              title="${b.type} (${b.start}-${b.end})">${label}</div>`;
-    }).join('');
-
-    return `
-      <div class="rt-row">
-        <div class="rt-staff-label">
-          <div style="text-align:right">
-            <div style="font-weight:700; color:var(--text); line-height:1.1; font-size:0.75rem">${s.id}</div>
-            <div style="font-size:0.55rem; color:var(--muted); font-weight:700; text-transform:uppercase; letter-spacing:0.02em">${s.skill1}</div>
-          </div>
-        </div>
-        <div class="rt-track">
-          ${shiftBg}
-          ${tasks}
-          ${bks}
-        </div>
-      </div>`;
+    return `<tr>
+      <td style="padding:6px 10px;font-weight:700;font-size:0.82rem;white-space:nowrap">${s.id}</td>
+      <td style="padding:6px 10px;font-size:0.78rem"><span style="color:${SKILL_COLOR[sk1]||'#888'};font-weight:600">${sk1}</span></td>
+      <td style="padding:6px 10px;font-size:0.75rem;white-space:nowrap">${s.shift_label || s.shift || '–'}</td>
+      <td style="padding:6px 10px;font-size:0.75rem;font-weight:700;color:${utilColor}">${Math.round(s.utilisation_pct||0)}%</td>
+      ${cells}
+    </tr>`;
   }).join('');
 
-  container.innerHTML = `
-    <div class="rt-container">
-      <div class="rt-chart">
-        <div class="rt-axis-row">
-          <div class="rt-staff-label-header"></div>
-          <div class="rt-axis-track">${axisTicks.join('')}</div>
-        </div>
-        <div class="rt-now-line" id="id-rt-now-line">
-          <div class="rt-now-label" id="id-rt-now-label"></div>
-        </div>
-        ${rows}
+  el.innerHTML = `<div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border)">
+          <th style="padding:8px 10px;text-align:left">Staff</th>
+          <th style="padding:8px 10px;text-align:left">Skill</th>
+          <th style="padding:8px 10px;text-align:left">Shift</th>
+          <th style="padding:8px 10px;text-align:left">Util</th>
+          ${TIME_BLOCKS.map(b=>`<th style="padding:6px 4px;text-align:center;font-size:0.72rem;white-space:nowrap">${b.label}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;padding:10px 0 2px;font-size:0.72rem;color:var(--muted);align-items:center">
+      <span><span style="display:inline-block;width:10px;height:6px;border-radius:2px;background:#f97316;margin-right:4px;vertical-align:middle"></span>☕ Short Break (30 min)</span>
+      <span><span style="display:inline-block;width:10px;height:6px;border-radius:2px;background:#dc2626;margin-right:4px;vertical-align:middle"></span>🍽 Meal Break (60 min)</span>
+      <span style="color:#2563EB;font-weight:700">| Grp A</span>
+      <span style="color:#059669;font-weight:700">| Grp B</span>
+      <span style="opacity:0.5">Colored left border = break in that block</span>
+    </div>
+  </div>`;
+}
+
+// ── Workforce Coverage Heatmap (Intraday) ────────────────────────
+function buildIDCoverageData(tasks) {
+  const hours = [];
+  for (let h = 4; h <= 23; h++) hours.push(h);
+
+  const paxSkills = Array.isArray(ID_DATA?.pax_coverage_skills) ? ID_DATA.pax_coverage_skills : [];
+  const fallback  = ['Baggage','Boarding','CBP','Checkin','Immigration','Lounge','Security'];
+  const skills    = paxSkills.length ? paxSkills.slice() : fallback;
+
+  const slotData = {};
+  skills.forEach(sk => {
+    slotData[sk] = Array.from({length: 96}, () => ({ req: 0, assigned: new Set() }));
+  });
+
+  (tasks || []).forEach(task => {
+    let sk = task.skill || task.role || task.task || '';
+    if (!slotData[sk]) {
+      const base = sk.split(' -- ')[0];
+      if (slotData[base]) sk = base; else return;
+    }
+    const startSlot = Math.floor((task.start_mins || 0) / 15);
+    const endSlot   = Math.ceil((task.end_mins   || 0) / 15) - 1;
+    const staffIds  = task.assigned || [];
+    for (let slot = startSlot; slot <= endSlot; slot++) {
+      if (slot < 0 || slot >= 96) continue;
+      slotData[sk][slot].req += (task.staff_needed || 0);
+      staffIds.forEach(sid => slotData[sk][slot].assigned.add(sid));
+    }
+  });
+
+  const data = {};
+  skills.forEach(sk => {
+    data[sk] = {};
+    hours.forEach(h => {
+      let reqSum = 0, asgnSum = 0, filled = 0;
+      for (let m = 0; m < 4; m++) {
+        const slot = h * 4 + m;
+        if (slot < 96) { reqSum += slotData[sk][slot].req; asgnSum += slotData[sk][slot].assigned.size; filled++; }
+      }
+      data[sk][h] = {
+        req:      filled ? Math.round(reqSum  / filled) : 0,
+        assigned: filled ? Math.round(asgnSum / filled) : 0,
+      };
+    });
+  });
+
+  return { data, hours, skills };
+}
+
+function buildIDCoverageTableHTML(tasks) {
+  const { data, hours, skills } = buildIDCoverageData(tasks);
+
+  function cellClass(req, assigned) {
+    if (req === 0) return '';
+    const gap = assigned - req;
+    if (gap < -2) return 'cell-gap';
+    if (gap < 0)  return 'cell-warning';
+    if (gap > 1)  return 'cell-surplus';
+    return 'cell-adequate';
+  }
+
+  const headCols = hours.map(h => `<th>${String(h).padStart(2,'0')}:00</th>`).join('');
+
+  const bodyRows = skills.map(sk =>
+    `<tr><td class="skill-label">${sk}</td>${hours.map(h => {
+      const { req, assigned } = data[sk][h];
+      if (req === 0) return `<td style="opacity:0.3;">0/0</td>`;
+      const tip = `Role: ${sk}\nHour: ${String(h).padStart(2,'0')}:00\nRequired: ${req}\nAssigned: ${assigned}`;
+      return `<td class="${cellClass(req, assigned)}" title="${tip}">${assigned}/${req}</td>`;
+    }).join('')}</tr>`
+  ).join('');
+
+  const totalsReq      = hours.map(h => skills.reduce((s, sk) => s + data[sk][h].req,      0));
+  const totalsAssigned = hours.map(h => skills.reduce((s, sk) => s + data[sk][h].assigned, 0));
+
+  const fReq  = hours.map((_, i) => `<td style="font-weight:700;">${totalsReq[i] || '—'}</td>`).join('');
+  const fAsgn = hours.map((_, i) => `<td style="font-weight:700;color:#3b82f6;">${totalsAssigned[i] || '—'}</td>`).join('');
+  const fGap  = hours.map((_, i) => {
+    if (!totalsReq[i]) return `<td>—</td>`;
+    const g = totalsAssigned[i] - totalsReq[i];
+    const color = g < 0 ? 'var(--crit)' : g > 1 ? 'var(--ok)' : 'var(--warn)';
+    return `<td style="font-weight:700;color:${color};">${g > 0 ? '+' : ''}${g}</td>`;
+  }).join('');
+
+  return `
+    <thead>
+      <tr class="hm-header-row">
+        <th class="skill-col">PAX Work</th>${headCols}
+      </tr>
+    </thead>
+    <tbody>
+      ${bodyRows}
+      <tr class="total-row with-border"><td class="skill-label">Total Required</td>${fReq}</tr>
+      <tr class="total-row"><td class="skill-label">Total Assigned</td>${fAsgn}</tr>
+      <tr class="total-row"><td class="skill-label">Staff Gap</td>${fGap}</tr>
+    </tbody>`;
+}
+
+function renderIDHourlyCoverage() {
+  const wrapper = document.getElementById('id-sub-content');
+  if (!wrapper) return;
+
+  let section = document.getElementById('id-hourly-coverage-section');
+  if (!section) {
+    section = document.createElement('div');
+    section.id = 'id-hourly-coverage-section';
+    section.className = 'mt-24';
+    section.innerHTML = `
+      <div class="section-header" style="margin-bottom:8px;">
+        <h2 style="font-size:1rem;font-weight:700;color:var(--text);">Workforce Coverage — Intraday</h2>
+        <span class="section-hint">Assigned / Required per skill per hour. PAX touchpoints only.</span>
       </div>
-    </div>`;
+      <div class="legend-row mb-12">
+        <span class="leg surplus"></span><span>Surplus</span>
+        <span class="leg adequate"></span><span>Adequate</span>
+        <span class="leg warning"></span><span>Warning</span>
+        <span class="leg gap"></span><span>Gap</span>
+      </div>
+      <div class="heatmap-wrapper" id="id-hourly-heatmap-wrapper" style="overflow-x:auto;">
+        <table class="heatmap-table heatmap-table--fluid" id="id-hourly-heatmap"></table>
+      </div>`;
+    const panel = wrapper.querySelector('.panel');
+    if (panel) panel.appendChild(section);
+  }
+
+  const table = document.getElementById('id-hourly-heatmap');
+  if (table) table.innerHTML = buildIDCoverageTableHTML(ID_DATA?.tasks || []);
 }
 
 window.initIntraday = initIntraday;
