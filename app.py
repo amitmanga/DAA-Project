@@ -2320,8 +2320,62 @@ def _append_staff_assignment(staff, task):
     })
 
 
+def _enforce_single_terminal_per_staff_hour(result):
+    """Prevent one staff member from covering multiple terminals in one hour."""
+    staff = result.get('staff', []) if isinstance(result, dict) else []
+    tasks = result.get('tasks', []) if isinstance(result, dict) else []
+    if not staff or not tasks:
+        return
+
+    task_lookup = {t.get('id'): t for t in tasks}
+    period_terminal_by_staff = {}
+
+    for task in sorted(tasks, key=lambda t: (
+        t.get('start_mins', 0),
+        0 if t.get('terminal', 'ALL') != 'ALL' else 1,
+        t.get('priority', ''),
+        t.get('skill', ''),
+        t.get('terminal', 'ALL'),
+    )):
+        terminal = task.get('terminal', 'ALL')
+        if terminal == 'ALL':
+            continue
+
+        start = int(task.get('start_mins') or 0)
+        end = int(task.get('end_mins') or start)
+        period_key = (start // 60) * 60
+        kept = []
+        for sid in task.get('assigned') or []:
+            sid = str(sid)
+            key = (sid, period_key)
+            chosen_terminal = period_terminal_by_staff.get(key)
+            if chosen_terminal is None:
+                period_terminal_by_staff[key] = terminal
+                kept.append(sid)
+            elif chosen_terminal == terminal:
+                kept.append(sid)
+
+        max_staff = int(task.get('staff_needed') or len(kept) or 0)
+        task['assigned'] = kept[:max_staff]
+        _set_task_status(task)
+
+    valid_task_ids_by_staff = defaultdict(set)
+    for task in tasks:
+        for sid in task.get('assigned') or []:
+            valid_task_ids_by_staff[str(sid)].add(task.get('id'))
+
+    for s in staff:
+        sid = str(s.get('id', ''))
+        s['assignments'] = [
+            a for a in (s.get('assignments') or [])
+            if a.get('task_id') in valid_task_ids_by_staff.get(sid, set())
+        ]
+
+    _sync_flight_tasks_from_task_lookup(result, task_lookup)
+
+
 def _normalize_reallocation_blocks(result, date_key):
-    """Make each skill x hourly reallocation block use one capped crew."""
+    """Make each terminal x skill x hourly block use one capped crew."""
     staff = result.get('staff', []) if isinstance(result, dict) else []
     tasks = result.get('tasks', []) if isinstance(result, dict) else []
     if not staff or not tasks:
@@ -2335,7 +2389,8 @@ def _normalize_reallocation_blocks(result, date_key):
         if not skill:
             continue
         block_start = ((task.get('start_mins') or 0) // 60) * 60
-        blocks[(block_start, block_start + 60, skill)].append(task)
+        terminal = task.get('terminal', 'ALL')
+        blocks[(block_start, block_start + 60, skill, terminal)].append(task)
 
     task_ids_in_blocks = {t.get('id') for group in blocks.values() for t in group}
     for s in staff:
@@ -2349,14 +2404,14 @@ def _normalize_reallocation_blocks(result, date_key):
 
     used_by_period = defaultdict(set)
     ordered_groups = []
-    for (block_start, block_end, skill), group_tasks in blocks.items():
+    for (block_start, block_end, skill, terminal), group_tasks in blocks.items():
         required = _block_required_fte(group_tasks)
         current = len(_block_assigned_staff(group_tasks))
         gap = required - current
-        ordered_groups.append((block_start, block_end, skill, group_tasks, required, gap))
-    ordered_groups.sort(key=lambda item: (item[0], -item[5], item[2]))
+        ordered_groups.append((block_start, block_end, skill, terminal, group_tasks, required, gap))
+    ordered_groups.sort(key=lambda item: (item[0], -item[6], item[2], item[3]))
 
-    for block_start, block_end, skill, group_tasks, required, _gap in ordered_groups:
+    for block_start, block_end, skill, terminal, group_tasks, required, _gap in ordered_groups:
         if required <= 0:
             for task in group_tasks:
                 task['assigned'] = []
@@ -2379,6 +2434,8 @@ def _normalize_reallocation_blocks(result, date_key):
         manual_preferred = []
         for block in manual_blocks.values():
             if block.get('skill') != skill:
+                continue
+            if block.get('terminal', 'ALL') != terminal:
                 continue
             if int(block.get('block_start', -1)) != block_start or int(block.get('block_end', -1)) != block_end:
                 continue
@@ -2437,6 +2494,7 @@ def _normalize_reallocation_blocks(result, date_key):
         s['utilisation_pct'] = round(min(total_busy / shift_len * 100, 100), 1) if shift_len > 0 else 0
 
     _sync_flight_tasks_from_task_lookup(result, task_lookup)
+    _enforce_single_terminal_per_staff_hour(result)
 _intraday_custom_constraints = {
     'permitted_shifts': [
         (0, 720, 'Day'),
@@ -6084,6 +6142,7 @@ def st_optimise():
     enforce_break_conflicts(result)
     refill_unassigned_tasks(result)
     enforce_break_conflicts(result)
+    _normalize_reallocation_blocks(result, date)
 
     # ── 4. Soft-constraint post-processing flags ──────────────────
     if roster_info.get('roster_available'):
