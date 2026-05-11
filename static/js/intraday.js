@@ -640,7 +640,6 @@ renderIDAlerts = function(alerts) {
     {id:'b18_21',label:'18–21',start:1080,end:1260},
     {id:'b21_24',label:'21–24',start:1260,end:1440},
   ];
-
   const blockMap = {};
   TIME_BLOCKS.forEach(b => { blockMap[b.id] = { block: b, alerts: [] }; });
   alerts.forEach(a => {
@@ -1007,7 +1006,6 @@ function renderIDSubContent() {
     document.getElementById('id-staff-timeline-search').addEventListener('input', doRefresh);
     document.getElementById('id-staff-timeline-shift').addEventListener('change', doRefresh);
     doRefresh();
-    renderIDHourlyCoverage();
   } else if (ID_ACTIVE_TAB === 'opt') {
     renderIDOptimization(container);
 
@@ -1036,7 +1034,7 @@ function renderIDDemandTab(container) {
   const allSkills   = [...new Set(tasks.map(t => t.skill || t.role || t.task || 'Unknown').filter(Boolean))].sort();
 
   // TIME_BLOCKS shared with shortterm.js
-  const TIME_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
+  let TIME_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
     {id:'b00_03',label:'00–03',start:0,end:180},{id:'b03_06',label:'03–06',start:180,end:360},
     {id:'b06_09',label:'06–09',start:360,end:540},{id:'b09_12',label:'09–12',start:540,end:720},
     {id:'b12_15',label:'12–15',start:720,end:900},{id:'b15_18',label:'15–18',start:900,end:1080},
@@ -2647,7 +2645,7 @@ function renderID3HrBlocksTable(el, staffList) {
     return;
   }
 
-  const TIME_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
+  let TIME_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
     {id:'b00_03',label:'00–03',start:0,   end:180},
     {id:'b03_06',label:'03–06',start:180, end:360},
     {id:'b06_09',label:'06–09',start:360, end:540},
@@ -2657,6 +2655,8 @@ function renderID3HrBlocksTable(el, staffList) {
     {id:'b18_21',label:'18–21',start:1080,end:1260},
     {id:'b21_24',label:'21–24',start:1260,end:1440},
   ];
+
+  TIME_BLOCKS = _RL_HOUR_BLOCKS;
 
   const SKILL_COLOR = (typeof ID_SKILL_COLOR !== 'undefined') ? ID_SKILL_COLOR : {};
 
@@ -2746,7 +2746,7 @@ function renderID3HrBlocksTable(el, staffList) {
   }).join('');
 
   el.innerHTML = `<div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+    <table style="width:100%;min-width:${360 + TIME_BLOCKS.length * 68}px;border-collapse:collapse;font-size:0.82rem">
       <thead>
         <tr style="border-bottom:2px solid var(--border)">
           <th style="padding:8px 10px;text-align:left">Staff</th>
@@ -2874,7 +2874,6 @@ function renderIDHourlyCoverage() {
     section.className = 'mt-24';
     section.innerHTML = `
       <div class="section-header" style="margin-bottom:8px;">
-        <h2 style="font-size:1rem;font-weight:700;color:var(--text);">Workforce Coverage — Intraday</h2>
         <span class="section-hint">Assigned / Required per skill per hour. PAX touchpoints only.</span>
       </div>
       <div class="legend-row mb-12">

@@ -3955,6 +3955,167 @@ canvas { display: block; }
 }
 
 /* ── Roster Timeline 3-Hour block view ── */
+.rt-scroll-wrap {
+  overflow-x: auto;
+  position: relative;
+}
+.rt-table {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.rt-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  background: var(--surface-2, #1e293b);
+  border-bottom: 2px solid var(--border);
+}
+.rt-sticky {
+  position: sticky;
+  z-index: 5;
+  background: var(--surface, #172234);
+  box-shadow: 1px 0 0 var(--border);
+}
+.rt-table thead .rt-sticky {
+  z-index: 8;
+  background: var(--surface-2, #1e293b);
+}
+.rt-col-staff { left: 0; min-width: 86px; width: 86px; max-width: 86px; }
+.rt-col-skill { left: 86px; min-width: 98px; width: 98px; max-width: 98px; }
+.rt-col-shift { left: 184px; min-width: 128px; width: 128px; max-width: 128px; }
+.rt-col-util  { left: 312px; min-width: 48px; width: 48px; max-width: 48px; }
+.rt-cell-staff {
+  padding: 6px 10px;
+  font-weight: 700;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+.rt-cell-skill {
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rt-cell-shift {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rt-cell-util {
+  padding: 6px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.rt-hour-head {
+  padding: 6px 4px;
+  text-align: center;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+#id-staff-timeline,
+#st-staff-timeline,
+#st-staff-grid {
+  overflow-x: auto;
+  overflow-y: visible;
+  position: relative;
+}
+
+#id-staff-timeline > div,
+#st-staff-timeline > div,
+#st-staff-grid > div {
+  max-height: calc(100vh - 92px);
+  overflow: auto !important;
+  position: relative;
+}
+
+#id-staff-timeline table,
+#st-staff-timeline table,
+#st-staff-grid table {
+  border-collapse: separate !important;
+  border-spacing: 0;
+}
+
+#id-staff-timeline thead th,
+#st-staff-timeline thead th,
+#st-staff-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  background: var(--surface-2, #1e293b) !important;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+#id-staff-timeline th:nth-child(-n + 4),
+#id-staff-timeline td:nth-child(-n + 4),
+#st-staff-timeline th:nth-child(-n + 4),
+#st-staff-timeline td:nth-child(-n + 4),
+#st-staff-grid th:nth-child(-n + 4),
+#st-staff-grid td:nth-child(-n + 4) {
+  position: sticky;
+  z-index: 18;
+  background: var(--surface, #172234) !important;
+  box-shadow: 1px 0 0 var(--border);
+}
+
+#id-staff-timeline thead th:nth-child(-n + 4),
+#st-staff-timeline thead th:nth-child(-n + 4),
+#st-staff-grid thead th:nth-child(-n + 4) {
+  z-index: 70;
+  background: var(--surface-2, #1e293b) !important;
+}
+
+#id-staff-timeline th:nth-child(1),
+#id-staff-timeline td:nth-child(1),
+#st-staff-timeline th:nth-child(1),
+#st-staff-timeline td:nth-child(1),
+#st-staff-grid th:nth-child(1),
+#st-staff-grid td:nth-child(1) {
+  left: 0;
+  min-width: 86px;
+  width: 86px;
+  max-width: 86px;
+}
+
+#id-staff-timeline th:nth-child(2),
+#id-staff-timeline td:nth-child(2),
+#st-staff-timeline th:nth-child(2),
+#st-staff-timeline td:nth-child(2),
+#st-staff-grid th:nth-child(2),
+#st-staff-grid td:nth-child(2) {
+  left: 86px;
+  min-width: 98px;
+  width: 98px;
+  max-width: 98px;
+}
+
+#id-staff-timeline th:nth-child(3),
+#id-staff-timeline td:nth-child(3),
+#st-staff-timeline th:nth-child(3),
+#st-staff-timeline td:nth-child(3),
+#st-staff-grid th:nth-child(3),
+#st-staff-grid td:nth-child(3) {
+  left: 184px;
+  min-width: 128px;
+  width: 128px;
+  max-width: 128px;
+}
+
+#id-staff-timeline th:nth-child(4),
+#id-staff-timeline td:nth-child(4),
+#st-staff-timeline th:nth-child(4),
+#st-staff-timeline td:nth-child(4),
+#st-staff-grid th:nth-child(4),
+#st-staff-grid td:nth-child(4) {
+  left: 312px;
+  min-width: 48px;
+  width: 48px;
+  max-width: 48px;
+}
 .rt3-container { display: flex; flex-direction: column; }
 .rt3-axis-row  { display: flex; border-bottom: 1px solid var(--border); }
 .rt3-blocks-header {

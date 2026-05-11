@@ -1055,9 +1055,40 @@ def tasks_to_demand_windows(tasks: list[dict]) -> list[DemandWindow]:
     Only tasks that are not past (no 'is_past' flag) are included.
     """
     windows = []
+    pax_hourly: dict[tuple[int, str], dict] = {}
+
     for t in tasks:
         if t.get("is_past"):
             continue
+        is_pax = (
+            str(t.get("sharing_mode", "")).startswith("pax")
+            or t.get("flight_no") == "PAX"
+            or float(t.get("passengers") or 0) > 0
+        )
+        if is_pax:
+            start = int(t.get("start_mins", 0))
+            hour_start = (start // 60) * 60
+            skill = t.get("skill", "GNIB")
+            key = (hour_start, skill)
+            bucket = pax_hourly.setdefault(key, {
+                "pax": 0.0,
+                "fte_float": 0.0,
+                "max_needed": 0,
+                "priority": t.get("priority", "Medium"),
+                "task_id": f"PAX_{skill}_{hour_start}",
+            })
+            pax = float(t.get("passengers") or 0)
+            rate = float(t.get("pax_rate") or 0)
+            duration = max(0, int(t.get("end_mins", 0)) - start)
+            if rate > 0:
+                hourly_rate = rate if int(t.get("slot_mins") or duration or 0) >= 60 else rate * 4
+                bucket["fte_float"] += pax / hourly_rate
+            bucket["pax"] += pax
+            bucket["max_needed"] = max(bucket["max_needed"], int(t.get("staff_needed", 1)))
+            if t.get("priority") == "Critical":
+                bucket["priority"] = "Critical"
+            continue
+
         dw = DemandWindow(
             start    = int(t.get("start_mins", 0)),
             end      = int(t.get("end_mins",   0)),
@@ -1068,4 +1099,17 @@ def tasks_to_demand_windows(tasks: list[dict]) -> list[DemandWindow]:
         )
         if dw.end > dw.start:   # skip zero-length tasks
             windows.append(dw)
+
+    import math
+    for (hour_start, skill), bucket in sorted(pax_hourly.items()):
+        needed = math.ceil(bucket["fte_float"]) if bucket["fte_float"] > 0 else bucket["max_needed"]
+        needed = max(1, int(needed))
+        windows.append(DemandWindow(
+            start=hour_start,
+            end=min(1440, hour_start + 60),
+            skill=skill,
+            needed=needed,
+            priority=bucket["priority"],
+            task_id=bucket["task_id"],
+        ))
     return windows

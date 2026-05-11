@@ -58,6 +58,13 @@ const ST_TIME_BLOCKS = [
   {id:'b21_24',label:'21–24',start:1260,end:1440},
 ];
 
+const ST_HOUR_BLOCKS = Array.from({ length: 24 }, (_, h) => ({
+  id: `h${String(h).padStart(2, '0')}`,
+  label: `${String(h).padStart(2, '0')}:00`,
+  start: h * 60,
+  end: (h + 1) * 60,
+}));
+
 // View-mode state (persists across date switches)
 let _stStaffBlockView  = false;
 let _stTimelineView    = '15min';
@@ -973,7 +980,7 @@ function renderST3HrBlocksTable(el, staffList) {
     const grp = s.break_group || '';
     const grpColor = grp === 'A' ? '#2563EB' : '#059669';
 
-    const cells = ST_TIME_BLOCKS.map(b => {
+    const cells = ST_HOUR_BLOCKS.map(b => {
       const info = getBlockInfo(s, b);
       if (!info) return `<td class="st3-cell st3-off">–</td>`;
 
@@ -1028,14 +1035,14 @@ function renderST3HrBlocksTable(el, staffList) {
   }).join('');
 
   el.innerHTML = `<div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+    <table style="width:100%;min-width:${360 + ST_HOUR_BLOCKS.length * 68}px;border-collapse:collapse;font-size:0.82rem">
       <thead>
         <tr style="border-bottom:2px solid var(--border)">
           <th style="padding:8px 10px;text-align:left">Staff</th>
           <th style="padding:8px 10px;text-align:left">Skill</th>
           <th style="padding:8px 10px;text-align:left">Shift</th>
           <th style="padding:8px 10px;text-align:left">Util</th>
-          ${ST_TIME_BLOCKS.map(b=>`<th style="padding:6px 4px;text-align:center;font-size:0.72rem;white-space:nowrap">${b.label}</th>`).join('')}
+          ${ST_HOUR_BLOCKS.map(b=>`<th style="padding:6px 4px;text-align:center;font-size:0.72rem;white-space:nowrap">${b.label}</th>`).join('')}
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -2176,7 +2183,7 @@ function renderSTStaff3HourBlocks(staffList) {
   const rows = staffList.map(s => {
     const utilColor = s.utilisation_pct > 90 ? ST.crit : s.utilisation_pct > 70 ? ST.warn : ST.ok;
     const sk1 = fmtSkill(s.skill1);
-    const cells = ST_TIME_BLOCKS.map(b => {
+    const cells = ST_HOUR_BLOCKS.map(b => {
       const info = getBlockInfo(s, b);
       if (!info) return `<td class="st3-cell st3-off">–</td>`;
       if (!info.skill) return `<td class="st3-cell" style="background:#94a3b820;color:#94a3b8;border:1px solid #94a3b840;text-align:center;padding:4px 2px" title="${b.label}: On shift"><div style="font-size:0.6rem;opacity:0.7">On</div></td>`;
@@ -2195,14 +2202,14 @@ function renderSTStaff3HourBlocks(staffList) {
   }).join('');
 
   grid.innerHTML = `<div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse;font-size:0.82rem">
+    <table style="width:100%;min-width:${360 + ST_HOUR_BLOCKS.length * 68}px;border-collapse:collapse;font-size:0.82rem">
       <thead>
         <tr style="border-bottom:2px solid var(--border)">
           <th style="padding:8px 10px;text-align:left">Staff</th>
           <th style="padding:8px 10px;text-align:left">Skill</th>
           <th style="padding:8px 10px;text-align:left">Shift</th>
           <th style="padding:8px 10px;text-align:left">Util</th>
-          ${ST_TIME_BLOCKS.map(b=>`<th style="padding:6px 4px;text-align:center;font-size:0.72rem;white-space:nowrap">${b.label}</th>`).join('')}
+          ${ST_HOUR_BLOCKS.map(b=>`<th style="padding:6px 4px;text-align:center;font-size:0.72rem;white-space:nowrap">${b.label}</th>`).join('')}
         </tr>
       </thead>
       <tbody>${rows}</tbody>
