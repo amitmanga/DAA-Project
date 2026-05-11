@@ -64,11 +64,25 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TASK_SLOT_MINS = 30
 PAX_SLOT_MINS = 15
 
+
+@app.after_request
+def add_api_no_cache_headers(response):
+    if request.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
+
 def read_csv(filename):
     path = os.path.join(BASE_DIR, 'data', filename)
     with open(path, encoding='utf-8-sig') as f:
         rows = list(csv.DictReader(f))
     return [r for r in rows if any(v.strip() for v in r.values())]
+
+
+def clean_employee_id(value):
+    """Normalise employee ids that may contain hidden control/NUL characters."""
+    return re.sub(r'[\x00-\x1f\x7f]', '', str(value or '')).strip()
 
 def parse_date(s, fmt='%d-%m-%y'):
     s = s.strip()
@@ -550,15 +564,25 @@ def load_staff():
     # deduplicate: one record per employee (use first date seen)
     seen = {}
     for r in rows:
-        emp = r.get('EMPLOYEE NUMBER', '').strip()
+        emp = clean_employee_id(r.get('EMPLOYEE NUMBER', ''))
         if emp and emp not in seen:
+            r = dict(r)
+            r['EMPLOYEE NUMBER'] = emp
             seen[emp] = r
     return list(seen.values())
 
 
 def load_absences():
     rows = read_csv('Staff_absence_schedule.csv')
-    return [r for r in rows if r.get('EMPLOYEE NUMBER', '').strip()]
+    cleaned = []
+    for r in rows:
+        emp = clean_employee_id(r.get('EMPLOYEE NUMBER', ''))
+        if not emp:
+            continue
+        r = dict(r)
+        r['EMPLOYEE NUMBER'] = emp
+        cleaned.append(r)
+    return cleaned
 
 
 def weekly_demand_2026():
