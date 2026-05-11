@@ -929,11 +929,11 @@ async function renderSTRosterBoard(container) {
 
   // Shift template colours (must match _ROSTER_SHIFTS in app.py)
   const TMPL = {
-    Early:   { color:'#f97316', range:'00–12' },
-    Mid:     { color:'#3b82f6', range:'06–18' },
-    Late:    { color:'#8b5cf6', range:'12–24' },
-    Evening: { color:'#10b981', range:'16–04' },
-    Night:   { color:'#ec4899', range:'22–10' },
+    Early:   { color:'#f97316', range:'00:00-12:00' },
+    Mid:     { color:'#3b82f6', range:'06:00-18:00' },
+    Late:    { color:'#8b5cf6', range:'12:00-00:00' },
+    Evening: { color:'#10b981', range:'16:00-04:00' },
+    Night:   { color:'#ec4899', range:'22:00-10:00' },
     LEAVE:   { color:'#6b7280', range:''      },
     OFF:     { color:'#374151', range:''      },
     OTHER:   { color:'#6b7280', range:''      },

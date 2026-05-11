@@ -4722,29 +4722,29 @@ def st_roster_board():
                     'shifts': {}
                 }
 
-            start = s.get('shift_start', 0)
-            # Match against named _ROSTER_SHIFTS templates
-            tmpl_id = 'OTHER'
-            tmpl_color = '#6b7280'
-            for tmpl in _ROSTER_SHIFTS:
-                tmpl_start = min(tmpl['hours']) * 60
-                if abs(start - tmpl_start) <= 90:
-                    tmpl_id = tmpl['id']
-                    tmpl_color = tmpl['color']
-                    break
-
-            # Fallback E/L/N coding
-            if 240 <= start < 600:
-                stype, code = 'EARLY', 'E'
-            elif 600 <= start < 1080:
-                stype, code = 'LATE', 'L'
-            elif start >= 1080 or start < 240:
-                stype, code = 'NIGHT', 'N'
+            start = int(s.get('shift_start', 0) or 0) % 1440
+            end = int(s.get('shift_end', 720) or 720)
+            roster_templates = {
+                0:    {'id': 'Early',   'color': '#f97316', 'code': 'E', 'end': 720},
+                360:  {'id': 'Mid',     'color': '#3b82f6', 'code': 'M', 'end': 1080},
+                720:  {'id': 'Late',    'color': '#8b5cf6', 'code': 'L', 'end': 1440},
+                960:  {'id': 'Evening', 'color': '#10b981', 'code': 'V', 'end': 1680},
+                1320: {'id': 'Night',   'color': '#ec4899', 'code': 'N', 'end': 2040},
+            }
+            tmpl = roster_templates.get(start)
+            if tmpl:
+                tmpl_id = tmpl['id']
+                tmpl_color = tmpl['color']
+                stype = tmpl_id.upper()
+                code = tmpl['code']
+                end = tmpl['end']
             else:
+                tmpl_id = 'OTHER'
+                tmpl_color = '#6b7280'
                 stype, code = 'OTHER', 'O'
 
-            timings = f"{mins_to_time(s['shift_start'])}-{mins_to_time(s['shift_end'])}"
-            shift_lbl = s.get('shift_label', f"{tmpl_id} {timings}")
+            timings = f"{mins_to_time(start)}-{mins_to_time(end)}"
+            shift_lbl = f"{tmpl_id} {timings}" if tmpl_id != 'OTHER' else s.get('shift_label', f"{tmpl_id} {timings}")
             emp_map[eid]['shifts'][date_key] = {
                 'label':          f"{code} {timings}",
                 'shift_label':    shift_lbl,
@@ -4752,8 +4752,8 @@ def st_roster_board():
                 'template_color': tmpl_color,
                 'type':           stype,
                 'timings':        timings,
-                'shift_start':    s.get('shift_start', 0),
-                'shift_end':      s.get('shift_end', 720),
+                'shift_start':    start,
+                'shift_end':      end,
                 'is_absent':      False,
             }
 
