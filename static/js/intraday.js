@@ -38,6 +38,129 @@ function formatMins(mins) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
+function normalizePaxDemandToHourly(data) {
+  if (!data || !Array.isArray(data.tasks)) return data;
+
+  const isPaxRow = row =>
+    String(row?.sharing_mode || '').startsWith('pax') ||
+    row?.flight_no === 'PAX' ||
+    Number(row?.passengers || 0) > 0;
+
+  const paxTasks = data.tasks.filter(isPaxRow);
+  if (!paxTasks.length) return data;
+
+  const parseTime = value => {
+    const [h, m] = String(value || '00:00').split(':').map(Number);
+    return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+  };
+  const getStart = row => Number.isFinite(Number(row.start_mins)) ? Number(row.start_mins) : parseTime(row.start);
+  const getEnd = row => Number.isFinite(Number(row.end_mins)) ? Number(row.end_mins) : parseTime(row.end);
+  const staffKey = s => typeof s === 'string' ? s : (s?.id || s?.name || JSON.stringify(s));
+
+  function groupRows(rows, asAlert) {
+    const groups = new Map();
+    rows.forEach(row => {
+      const start = getStart(row);
+      const hourStart = Math.floor(start / 60) * 60;
+      const hourEnd = Math.min(1440, hourStart + 60);
+      const skill = row.skill || row.role || row.task || 'Unknown';
+      const terminal = row.terminal || 'ALL';
+      const key = `${hourStart}|${terminal}|${skill}`;
+      if (!groups.has(key)) {
+        const base = { ...row };
+        base.id = row.id || row.task_id || `PAX_${terminal}_${skill}_${hourStart}`;
+        base.task_id = row.task_id || row.id || base.id;
+        base.start_mins = hourStart;
+        base.end_mins = hourEnd;
+        base.start = formatMins(hourStart);
+        base.end = formatMins(hourEnd);
+        base.time_mins = hourStart;
+        base.time_window = `${base.start}-${base.end}`;
+        base.sharing_mode = 'pax_hourly';
+        base.slot_mins = 60;
+        base.assigned = [];
+        base.assigned_staff = [];
+        groups.set(key, {
+          row: base,
+          pax: 0,
+          rate: 0,
+          maxNeeded: 0,
+          maxAssigned: 0,
+          assigned: new Map(),
+          rec: new Set(),
+          sourceSlots: 0,
+          priority: row.priority || 'High',
+        });
+      }
+
+      const group = groups.get(key);
+      group.pax += Number(row.passengers || 0);
+      group.maxNeeded = Math.max(group.maxNeeded, Number(row.staff_needed || 0));
+      group.maxAssigned = Math.max(group.maxAssigned, Number(row.assigned_count || 0));
+      if (row.priority === 'Critical') group.priority = 'Critical';
+
+      const duration = Math.max(0, getEnd(row) - getStart(row));
+      const rawRate = Number(row.pax_rate || 0);
+      if (rawRate > 0) {
+        const hourlyRate = (Number(row.slot_mins) === 60 || duration >= 60) ? rawRate : rawRate * 4;
+        group.rate = Math.max(group.rate, hourlyRate);
+      }
+
+      const assigned = asAlert ? (row.assigned_staff || []) : (row.assigned || []);
+      assigned.forEach(s => group.assigned.set(staffKey(s), s));
+      (row.rec_staff || []).forEach(s => group.rec.add(s));
+      group.sourceSlots += Number(row.source_slots || 1);
+    });
+
+    return [...groups.values()].map(group => {
+      const row = group.row;
+      const assignedList = [...group.assigned.values()];
+      const assignedCount = assignedList.length || group.maxAssigned;
+      const needed = group.rate > 0 ? Math.max(1, Math.ceil(group.pax / group.rate)) : group.maxNeeded;
+      const gap = Math.max(0, needed - assignedCount);
+
+      row.passengers = Math.round(group.pax);
+      row.pax_rate = group.rate || row.pax_rate || 0;
+      row.pax_rate_15m = group.rate ? group.rate / 4 : row.pax_rate_15m;
+      row.staff_needed = needed;
+      row.staff_capacity = Math.max(needed, Number(row.staff_capacity || 0), Math.ceil(needed * 1.5));
+      row.priority = group.priority;
+      row.source_slots = group.sourceSlots;
+      row.assigned = assignedList;
+      row.assigned_staff = assignedList;
+      row.assigned_count = assignedCount;
+      row.gap = gap;
+      row.alert = gap > 0 ? (row.message || `Under-staffed: need ${needed}, assigned ${assignedCount} (gap ${gap})`) : null;
+      row.message = row.alert || row.message || '';
+      return row;
+    });
+  }
+
+  const normalized = { ...data };
+  const nonPaxTasks = data.tasks.filter(t => !isPaxRow(t));
+  normalized.tasks = [...nonPaxTasks, ...groupRows(paxTasks, false)]
+    .sort((a, b) => (a.start_mins || 0) - (b.start_mins || 0) || String(a.skill || '').localeCompare(String(b.skill || '')));
+
+  if (Array.isArray(data.alerts)) {
+    const paxAlerts = data.alerts.filter(isPaxRow);
+    const nonPaxAlerts = data.alerts.filter(a => !isPaxRow(a));
+    normalized.alerts = [...nonPaxAlerts, ...groupRows(paxAlerts, true).filter(a => (a.gap || 0) > 0)]
+      .sort((a, b) => (a.start_mins || parseTime(a.start)) - (b.start_mins || parseTime(b.start)));
+  }
+
+  const kpis = { ...(data.kpis || {}) };
+  const total = normalized.tasks.length;
+  const covered = normalized.tasks.filter(t => !t.alert).length;
+  kpis.tasks_total = total;
+  kpis.tasks_covered = covered;
+  kpis.demand_windows_total = total;
+  kpis.demand_windows_covered = covered;
+  kpis.passengers_total = normalized.tasks.reduce((s, t) => s + Number(t.passengers || 0), 0);
+  kpis.coverage_pct = total ? Math.round((covered / total) * 1000) / 10 : 100.0;
+  normalized.kpis = kpis;
+  return normalized;
+}
+
 function getCurrentTimeMins() {
   const now = new Date();
   return now.getHours() * 60 + now.getMinutes();
@@ -119,6 +242,7 @@ async function loadIntradayData() {
 
 // ── Main Render ─────────────────────────────────────────────────
 function renderIntradayPage() {
+  ID_DATA = normalizePaxDemandToHourly(ID_DATA);
   const d = ID_DATA;
   document.getElementById('id-content').innerHTML = `
     <div class="page-header" style="margin-bottom:16px">
@@ -371,7 +495,7 @@ function showIDSkillBlockDetail(s, blockLabel, date) {
             </div>
             <div style="flex:1;min-width:100px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
               <div style="font-size:1.2rem;font-weight:800;color:var(--text)">${avgPaxRate}</div>
-              <div style="font-size:0.7rem;color:var(--muted)">Avg PAX/FTE/slot</div>
+              <div style="font-size:0.7rem;color:var(--muted)">Avg PAX/FTE/hour</div>
             </div>
             ${peakSlot.passengers ? `
             <div style="flex:1;min-width:100px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
@@ -920,8 +1044,8 @@ function renderIDDemandTab(container) {
   ];
 
   // ── Shared FTE calculator for a set of tasks in one block ─────────────────
-  // req  = peak PAX-driven concurrent demand at the busiest 15-min slot
-  //        (sum of staff_needed across all skill/terminal combos active that slot)
+  // req  = peak PAX-driven concurrent demand at the busiest hourly slot
+  //        (sum of staff_needed across all skill/terminal combos active that hour)
   // asgn = unique staff deployed in this block — backend already enforces
   //        skill-match + shift-overlap before adding any ID to t.assigned
   function _calcBlockFte(bt) {
@@ -1066,7 +1190,7 @@ function renderIDDemandTab(container) {
     }).join('');
   }
 
-  // ── Render detail table (grouped by 3-hr block, expandable to 15-min slots) ─
+  // ── Render detail table (grouped by 3-hr block, expandable to hourly slots) ─
   const expandedBlocks = new Set();
   function renderTable(filteredTasks) {
     const tbody = document.getElementById('id-demand-tbody');
@@ -1245,6 +1369,12 @@ const _RL_BLOCKS = (typeof ST_TIME_BLOCKS !== 'undefined') ? ST_TIME_BLOCKS : [
   {id:'b12_15',label:'12–15',start:720,end:900},{id:'b15_18',label:'15–18',start:900,end:1080},
   {id:'b18_21',label:'18–21',start:1080,end:1260},{id:'b21_24',label:'21–24',start:1260,end:1440},
 ];
+const _RL_HOUR_BLOCKS = Array.from({ length: 24 }, (_, h) => ({
+  id: `h${String(h).padStart(2, '0')}`,
+  label: `${String(h).padStart(2, '0')}:00`,
+  start: h * 60,
+  end: (h + 1) * 60,
+}));
 
 
 function renderIDGateTimeline() {
@@ -1937,6 +2067,7 @@ window.unassignStaff = unassignStaff;
 
 // ── Optimization Tab — Live Staff Reallocation ───────────────────
 async function renderIDOptimization(container) {
+  ID_DATA = normalizePaxDemandToHourly(ID_DATA);
   const SKILL_COLORS = (typeof ID_SKILL_COLOR !== 'undefined' && ID_SKILL_COLOR) ? ID_SKILL_COLOR : {
     'GNIB':'#3498DB','CBP Pre-clearance':'#9B59B6','Bussing':'#E8850A',
     'PBZ':'#2ECC71','Mezz Operation':'#1ABC9C','Litter Picking':'#E74C3C',
@@ -1998,8 +2129,8 @@ async function renderIDOptimization(container) {
   }
 
   function _blockForMins(m) {
-    for (const b of _RL_BLOCKS) { if (m >= b.start && m < b.end) return b.id; }
-    return _RL_BLOCKS[_RL_BLOCKS.length - 1].id;
+    for (const b of _RL_HOUR_BLOCKS) { if (m >= b.start && m < b.end) return b.id; }
+    return _RL_HOUR_BLOCKS[_RL_HOUR_BLOCKS.length - 1].id;
   }
 
   function _cellColor(pct, gap) {
@@ -2084,7 +2215,7 @@ async function renderIDOptimization(container) {
     : 100;
   const totalGaps = allCells.reduce((a,c) => a + c.gap, 0);
   const skills    = Object.keys(matrix).sort();
-  const allBlocks = _RL_BLOCKS;
+  const allBlocks = _RL_HOUR_BLOCKS;
 
   // ── State ─────────────────────────────────────────────────────────
   let _selSkill = _idReallocSelection.skill;
@@ -2099,7 +2230,7 @@ async function renderIDOptimization(container) {
     <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 12px;border-bottom:1px solid var(--border);flex-shrink:0;">
       <div>
         <div style="font-size:1.25rem;font-weight:700;color:var(--text);">Live Staff Reallocation</div>
-        <div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Click a cell to select a skill × block gap — then assign or remove staff from the right panel</div>
+        <div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Click a cell to select a skill x hour gap, then assign or remove staff from the right panel</div>
       </div>
       <button id="rl-refresh" style="display:flex;align-items:center;gap:6px;padding:7px 14px;background:var(--info);color:#fff;border:none;border-radius:6px;font-size:0.82rem;font-weight:600;cursor:pointer;flex-shrink:0;">
         ↻ Refresh
@@ -2143,7 +2274,7 @@ async function renderIDOptimization(container) {
 
         <!-- Heatmap -->
         <div class="rl-matrix-wrap" id="rl-matrix-wrap">
-          <table style="border-collapse:collapse;width:100%;font-size:0.72rem;" id="rl-matrix-table">
+          <table style="border-collapse:collapse;width:100%;min-width:${132 + allBlocks.length * 48}px;font-size:0.72rem;" id="rl-matrix-table">
             <thead>
               <tr style="background:var(--surface-2,#1e1e1e);position:sticky;top:0;z-index:2;">
                 <th class="rl-skill-head">Skill / Touchpoint</th>
@@ -2211,7 +2342,7 @@ async function renderIDOptimization(container) {
         </td>`;
       }).join('');
       return `<tr style="border-bottom:1px solid var(--border)05;">
-        <td style="padding:6px 10px;font-size:0.72rem;font-weight:600;color:${skColor};white-space:nowrap;border-right:1px solid var(--border);max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${sk}">${sk}</td>
+        <td class="rl-skill-cell" style="color:${skColor};" title="${sk}">${sk}</td>
         ${cells}
       </tr>`;
     }).join('');
@@ -2298,8 +2429,6 @@ async function renderIDOptimization(container) {
       const onDuty  = shStart <= blockStart && shEnd >= blockEnd;
       return hasSkill && onDuty;
     });
-    if (cell.gap <= 0) eligible = [];
-
     const assignedList = allStaff.filter(s => assignedIds.has(String(s.id || s['EMPLOYEE NUMBER'] || '')));
 
     const terms = [...cell.terms].join(', ') || '—';
@@ -2310,7 +2439,7 @@ async function renderIDOptimization(container) {
       <div style="background:var(--surface-2,#1e1e1e);border-radius:10px;padding:14px 16px;margin-bottom:16px;border:1px solid ${c.border}40;">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
           <div>
-            <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Selected Block</div>
+            <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Selected Hour</div>
             <div style="font-size:1rem;font-weight:700;color:${_skillColor(_selSkill)};">${_selSkill}</div>
             <div style="font-size:0.78rem;color:var(--muted);margin-top:2px;">${blk.label || _selBlock} &nbsp;·&nbsp; Terminal: ${terms}</div>
           </div>
@@ -2361,7 +2490,7 @@ async function renderIDOptimization(container) {
           Available to Assign (${eligible.length})
         </div>
         ${eligible.length === 0
-          ? `<div style="font-size:0.78rem;color:var(--muted);padding:8px 0;">${cell.gap <= 0 ? 'This block already has required FTE. Use available staff on another gap block.' : 'No eligible staff free for this block.'}</div>`
+          ? `<div style="font-size:0.78rem;color:var(--muted);padding:8px 0;">No eligible staff free for this hour.</div>`
           : eligible.map(s => {
               const sid = String(s.id || s['EMPLOYEE NUMBER'] || '');
               const nm  = s.name || s['STAFF NAME'] || sid;
@@ -2438,7 +2567,7 @@ async function renderIDOptimization(container) {
       if (!res.ok) throw new Error(data.error || 'Request failed');
       const moveStatus = data.move_status || {};
       if (moveStatus.applied === false) {
-        throw new Error(moveStatus.error || 'Move was not applied to the selected block.');
+        throw new Error(moveStatus.error || 'Move was not applied to the selected hour.');
       }
 
       // Persist log entry
@@ -2648,24 +2777,25 @@ function buildIDCoverageData(tasks) {
   const fallback  = ['Baggage','Boarding','CBP','Checkin','Immigration','Lounge','Security'];
   const skills    = paxSkills.length ? paxSkills.slice() : fallback;
 
-  const slotData = {};
+  const hourData = {};
   skills.forEach(sk => {
-    slotData[sk] = Array.from({length: 96}, () => ({ req: 0, assigned: new Set() }));
+    hourData[sk] = {};
+    hours.forEach(h => { hourData[sk][h] = { req: 0, assigned: new Set() }; });
   });
 
   (tasks || []).forEach(task => {
     let sk = task.skill || task.role || task.task || '';
-    if (!slotData[sk]) {
+    if (!hourData[sk]) {
       const base = sk.split(' -- ')[0];
-      if (slotData[base]) sk = base; else return;
+      if (hourData[base]) sk = base; else return;
     }
-    const startSlot = Math.floor((task.start_mins || 0) / 15);
-    const endSlot   = Math.ceil((task.end_mins   || 0) / 15) - 1;
+    const startHour = Math.floor((task.start_mins || 0) / 60);
+    const endHour   = Math.ceil((task.end_mins || 0) / 60) - 1;
     const staffIds  = task.assigned || [];
-    for (let slot = startSlot; slot <= endSlot; slot++) {
-      if (slot < 0 || slot >= 96) continue;
-      slotData[sk][slot].req += (task.staff_needed || 0);
-      staffIds.forEach(sid => slotData[sk][slot].assigned.add(sid));
+    for (let h = startHour; h <= endHour; h++) {
+      if (!hourData[sk][h]) continue;
+      hourData[sk][h].req += (task.staff_needed || 0);
+      staffIds.forEach(sid => hourData[sk][h].assigned.add(sid));
     }
   });
 
@@ -2673,14 +2803,10 @@ function buildIDCoverageData(tasks) {
   skills.forEach(sk => {
     data[sk] = {};
     hours.forEach(h => {
-      let reqSum = 0, asgnSum = 0, filled = 0;
-      for (let m = 0; m < 4; m++) {
-        const slot = h * 4 + m;
-        if (slot < 96) { reqSum += slotData[sk][slot].req; asgnSum += slotData[sk][slot].assigned.size; filled++; }
-      }
+      const cell = hourData[sk][h];
       data[sk][h] = {
-        req:      filled ? Math.round(reqSum  / filled) : 0,
-        assigned: filled ? Math.round(asgnSum / filled) : 0,
+        req:      cell ? cell.req : 0,
+        assigned: cell ? cell.assigned.size : 0,
       };
     });
   });

@@ -3246,7 +3246,7 @@ canvas { display: block; }
 }
 .rl-matrix-wrap {
   flex: 0 0 auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: visible;
   padding: 0;
 }
@@ -3261,6 +3261,10 @@ canvas { display: block; }
   padding: 16px;
 }
 .rl-skill-head {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  background: var(--surface-2,#1e1e1e);
   padding: 8px 10px;
   text-align: left;
   font-size: 0.7rem;
@@ -3269,6 +3273,8 @@ canvas { display: block; }
   white-space: nowrap;
   border-bottom: 1px solid var(--border);
   width: 132px;
+  min-width: 132px;
+  box-shadow: 1px 0 0 var(--border);
 }
 .rl-block-head {
   padding: 6px 3px;
@@ -3277,6 +3283,23 @@ canvas { display: block; }
   color: var(--muted);
   border-bottom: 1px solid var(--border);
   width: 48px;
+}
+.rl-skill-cell {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--surface,#111827);
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+  width: 132px;
+  min-width: 132px;
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 1px 0 0 var(--border);
 }
 .rl-task-chip-row {
   display: flex;

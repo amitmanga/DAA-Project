@@ -63,6 +63,7 @@ app = Flask(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TASK_SLOT_MINS = 30
 PAX_SLOT_MINS = 15
+PAX_DEMAND_SLOT_MINS = 60
 
 
 @app.after_request
@@ -434,7 +435,7 @@ def _pax_source_date_for(requested_dt):
 
 
 def build_pax_demand_tasks(date_str, current_time_mins=None):
-    """Build 15-minute passenger-handling demand windows from the PAX workbooks."""
+    """Build hourly passenger-handling demand windows from the PAX workbooks."""
     requested_dt = _parse_any_date(date_str)
     if requested_dt is None:
         return []
@@ -449,13 +450,13 @@ def build_pax_demand_tasks(date_str, current_time_mins=None):
     if not cfg or not rows:
         return []
 
-    tasks = []
+    hourly = defaultdict(lambda: {'passengers': 0.0, 'rate': 0.0, 'col': '', 'source_count': 0})
     for row in sorted(rows, key=lambda r: r.get('Timestamp')):
         ts = row.get('Timestamp')
         if not isinstance(ts, datetime):
             continue
-        start_mins = ts.hour * 60 + ts.minute
-        end_mins = min(1440, start_mins + PAX_SLOT_MINS)
+        start_mins = ts.hour * 60
+        end_mins = min(1440, start_mins + PAX_DEMAND_SLOT_MINS)
 
         for col, rate in cfg.items():
             try:
@@ -465,39 +466,59 @@ def build_pax_demand_tasks(date_str, current_time_mins=None):
             if pax <= 0 or rate <= 0:
                 continue
 
-            work = _pax_work_from_col(col)
-            skill = PAX_WORK_SKILL_MAP.get(work, work)
-            terminal = col.split('_', 1)[0] if '_' in col else 'ALL'
-            needed = max(1, int(math.ceil(pax / rate)))
-            cap = max(needed, int(math.ceil(needed * 1.5)))
-            task = {
-                'id':              f"PAX_{col}_{start_mins}",
-                'flight_no':       'PAX',
-                'task':            f"{terminal} {work.title()} PAX",
-                'role':            skill,
-                'skill':           skill,
-                'priority':        'Critical' if work in ('security', 'immigration', 'cbp') else 'High',
-                'start_mins':      start_mins,
-                'end_mins':        end_mins,
-                'start':           mins_to_time(start_mins),
-                'end':             mins_to_time(end_mins),
-                'staff_needed':    needed,
-                'staff_capacity':  cap,
-                'assigned':        [],
-                'alert':           None,
-                'time_mins':       start_mins,
-                'flights_covered': [],
-                'terminal':        terminal,
-                'pier':            'ALL',
-                'sharing_mode':    'pax_15min',
-                'passengers':      int(round(pax)),
-                'pax_rate':        rate,
-                'time_window':     f"{mins_to_time(start_mins)}-{mins_to_time(end_mins)}",
-                'source_date':     source_date.isoformat(),
-            }
-            if current_time_mins is not None and end_mins <= current_time_mins:
-                task['is_past'] = True
-            tasks.append(task)
+            bucket = hourly[(start_mins, col)]
+            bucket['passengers'] += pax
+            bucket['rate'] = float(rate)
+            bucket['col'] = col
+            bucket['source_count'] += 1
+
+    tasks = []
+    rate_multiplier = PAX_DEMAND_SLOT_MINS / PAX_SLOT_MINS
+    for (start_mins, col), bucket in sorted(hourly.items()):
+        pax = bucket['passengers']
+        rate = bucket['rate']
+        if pax <= 0 or rate <= 0:
+            continue
+
+        end_mins = min(1440, start_mins + PAX_DEMAND_SLOT_MINS)
+        hourly_rate = rate * rate_multiplier
+        work = _pax_work_from_col(col)
+        skill = PAX_WORK_SKILL_MAP.get(work, work)
+        terminal = col.split('_', 1)[0] if '_' in col else 'ALL'
+        needed = max(1, int(math.ceil(pax / hourly_rate)))
+        cap = max(needed, int(math.ceil(needed * 1.5)))
+        task = {
+            'id':              f"PAX_{col}_{start_mins}",
+            'flight_no':       'PAX',
+            'task':            f"{terminal} {work.title()} PAX",
+            'role':            skill,
+            'skill':           skill,
+            'priority':        'Critical' if work in ('security', 'immigration', 'cbp') else 'High',
+            'start_mins':      start_mins,
+            'end_mins':        end_mins,
+            'start':           mins_to_time(start_mins),
+            'end':             mins_to_time(end_mins),
+            'staff_needed':    needed,
+            'staff_capacity':  cap,
+            'assigned':        [],
+            'alert':           None,
+            'time_mins':       start_mins,
+            'flights_covered': [],
+            'terminal':        terminal,
+            'pier':            'ALL',
+            'sharing_mode':    'pax_hourly',
+            'passengers':      int(round(pax)),
+            'pax_rate':        hourly_rate,
+            'pax_rate_15m':    rate,
+            'slot_mins':       PAX_DEMAND_SLOT_MINS,
+            'source_slot_mins': PAX_SLOT_MINS,
+            'source_slots':    bucket['source_count'],
+            'time_window':     f"{mins_to_time(start_mins)}-{mins_to_time(end_mins)}",
+            'source_date':     source_date.isoformat(),
+        }
+        if current_time_mins is not None and end_mins <= current_time_mins:
+            task['is_past'] = True
+        tasks.append(task)
 
     return tasks
 
@@ -2300,7 +2321,7 @@ def _append_staff_assignment(staff, task):
 
 
 def _normalize_reallocation_blocks(result, date_key):
-    """Make each skill x 3-hour reallocation block use one capped crew."""
+    """Make each skill x hourly reallocation block use one capped crew."""
     staff = result.get('staff', []) if isinstance(result, dict) else []
     tasks = result.get('tasks', []) if isinstance(result, dict) else []
     if not staff or not tasks:
@@ -2313,8 +2334,8 @@ def _normalize_reallocation_blocks(result, date_key):
         skill = task.get('skill')
         if not skill:
             continue
-        block_start = ((task.get('start_mins') or 0) // 180) * 180
-        blocks[(block_start, block_start + 180, skill)].append(task)
+        block_start = ((task.get('start_mins') or 0) // 60) * 60
+        blocks[(block_start, block_start + 60, skill)].append(task)
 
     task_ids_in_blocks = {t.get('id') for group in blocks.values() for t in group}
     for s in staff:
@@ -3994,9 +4015,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                     busy_map[emp_id].append((task['start_mins'], task['end_mins'], task.get('terminal', 'ALL'), task.get('skill', 'GNIB')))
 
     # ── Block-level PAX pre-assignment ───────────────────────────────────────
-    # Group PAX 15-min tasks into 3-hour blocks (same skill + terminal).
+    # Group PAX hourly tasks into 3-hour blocks (same skill + terminal).
     # Assign staff for the FULL block window so nobody switches skill/terminal
-    # every 15 minutes. The full block is recorded in busy_map, preventing the
+    # inside the block. The full block is recorded in busy_map, preventing the
     # greedy loop from scattering staff across different positions intra-block.
     # Continuity is tracked across consecutive blocks to minimise skill/terminal
     # changes over the full day.
@@ -4007,7 +4028,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
     _pax_blk_groups: dict = defaultdict(list)
     for _t in all_tasks:
-        if _t.get('sharing_mode') != 'pax_15min' or _t.get('is_past'):
+        if _t.get('sharing_mode') not in ('pax_15min', 'pax_hourly') or _t.get('is_past'):
             continue
         _sm = _t['start_mins']
         for _bi, (_bs, _be) in enumerate(_PAX_TIME_BLOCKS):
@@ -4067,7 +4088,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
                     if _needed <= 0:
                         break
                     _sid = str(_s['id'])
-                    # Assign this staff to every 15-min task in the block where still needed
+                    # Assign this staff to every hourly task in the block where still needed.
                     for _t in _group:
                         if _sid not in _t['assigned'] and len(_t['assigned']) < _t['staff_needed']:
                             _t['assigned'].append(_sid)
@@ -4984,13 +5005,13 @@ def intraday_assign():
 
 @app.route('/api/intraday/assign-block', methods=['POST'])
 def intraday_assign_block():
-    """Assign or unassign a staff member across all tasks in a 3-hour block."""
+    """Assign or unassign a staff member for the selected hourly allocation block."""
     body       = request.get_json(force=True) or {}
     staff_id   = body.get('staff_id', '').strip()
     skill      = body.get('skill', '').strip()
     terminal   = body.get('terminal', 'ALL').strip()
     blk_start  = int(body.get('block_start', 0))
-    blk_end    = int(body.get('block_end', 180))
+    blk_end    = int(body.get('block_end', blk_start + 60))
     action     = body.get('action', 'assign')   # 'assign' | 'unassign' | legacy 'remove'
     if action == 'remove':
         action = 'unassign'
@@ -5024,6 +5045,10 @@ def intraday_assign_block():
     matched_ids = [t.get('id') for t in matching_tasks if t.get('id')]
     if not matched_ids:
         return jsonify({'error': 'No matching tasks found for this block.'}), 404
+    hour_tasks = [
+        t for t in _tmp.get('tasks', [])
+        if (t.get('start_mins') or 0) < blk_end and (t.get('end_mins') or 0) > blk_start
+    ]
 
     if action == 'assign':
         block_required = _block_required_fte(matching_tasks)
@@ -5048,7 +5073,8 @@ def intraday_assign_block():
     elif action == 'unassign':
         block_entry['staff_ids'] = [sid for sid in block_entry.get('staff_ids', []) if sid != staff_id]
 
-    for _t in matching_tasks:
+    tasks_to_update = matching_tasks if action == 'assign' else hour_tasks
+    for _t in tasks_to_update:
             tid = _t['id']
             existing = list(_manual_assigns[today_str].get(tid, []))
             blocked = list(_manual_unassigns[today_str].get(tid, []))

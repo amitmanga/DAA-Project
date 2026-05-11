@@ -62,6 +62,135 @@ const ST_TIME_BLOCKS = [
 let _stStaffBlockView  = false;
 let _stTimelineView    = '15min';
 
+function normalizePaxDemandToHourly(data) {
+  if (!data || !Array.isArray(data.tasks)) return data;
+
+  const isPaxRow = row =>
+    String(row?.sharing_mode || '').startsWith('pax') ||
+    row?.flight_no === 'PAX' ||
+    Number(row?.passengers || 0) > 0;
+
+  const paxTasks = data.tasks.filter(isPaxRow);
+  if (!paxTasks.length) return data;
+
+  const fmtMins = mins => {
+    mins = Math.round(mins || 0);
+    const hh = Math.floor(mins / 60) % 24;
+    const mm = mins % 60;
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  };
+  const parseTime = value => {
+    const [h, m] = String(value || '00:00').split(':').map(Number);
+    return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+  };
+  const getStart = row => Number.isFinite(Number(row.start_mins)) ? Number(row.start_mins) : parseTime(row.start);
+  const getEnd = row => Number.isFinite(Number(row.end_mins)) ? Number(row.end_mins) : parseTime(row.end);
+  const staffKey = s => typeof s === 'string' ? s : (s?.id || s?.name || JSON.stringify(s));
+
+  function groupRows(rows, asAlert) {
+    const groups = new Map();
+    rows.forEach(row => {
+      const start = getStart(row);
+      const hourStart = Math.floor(start / 60) * 60;
+      const hourEnd = Math.min(1440, hourStart + 60);
+      const skill = row.skill || row.role || row.task || 'Unknown';
+      const terminal = row.terminal || 'ALL';
+      const key = `${hourStart}|${terminal}|${skill}`;
+      if (!groups.has(key)) {
+        const base = { ...row };
+        base.id = row.id || row.task_id || `PAX_${terminal}_${skill}_${hourStart}`;
+        base.task_id = row.task_id || row.id || base.id;
+        base.start_mins = hourStart;
+        base.end_mins = hourEnd;
+        base.start = fmtMins(hourStart);
+        base.end = fmtMins(hourEnd);
+        base.time_mins = hourStart;
+        base.time_window = `${base.start}-${base.end}`;
+        base.sharing_mode = 'pax_hourly';
+        base.slot_mins = 60;
+        base.assigned = [];
+        base.assigned_staff = [];
+        groups.set(key, {
+          row: base,
+          pax: 0,
+          rate: 0,
+          maxNeeded: 0,
+          maxAssigned: 0,
+          assigned: new Map(),
+          rec: new Set(),
+          sourceSlots: 0,
+          priority: row.priority || 'High',
+        });
+      }
+
+      const group = groups.get(key);
+      group.pax += Number(row.passengers || 0);
+      group.maxNeeded = Math.max(group.maxNeeded, Number(row.staff_needed || 0));
+      group.maxAssigned = Math.max(group.maxAssigned, Number(row.assigned_count || 0));
+      if (row.priority === 'Critical') group.priority = 'Critical';
+
+      const duration = Math.max(0, getEnd(row) - getStart(row));
+      const rawRate = Number(row.pax_rate || 0);
+      if (rawRate > 0) {
+        const hourlyRate = (Number(row.slot_mins) === 60 || duration >= 60) ? rawRate : rawRate * 4;
+        group.rate = Math.max(group.rate, hourlyRate);
+      }
+
+      const assigned = asAlert ? (row.assigned_staff || []) : (row.assigned || []);
+      assigned.forEach(s => group.assigned.set(staffKey(s), s));
+      (row.rec_staff || []).forEach(s => group.rec.add(s));
+      group.sourceSlots += Number(row.source_slots || 1);
+    });
+
+    return [...groups.values()].map(group => {
+      const row = group.row;
+      const assignedList = [...group.assigned.values()];
+      const assignedCount = assignedList.length || group.maxAssigned;
+      const needed = group.rate > 0 ? Math.max(1, Math.ceil(group.pax / group.rate)) : group.maxNeeded;
+      const gap = Math.max(0, needed - assignedCount);
+
+      row.passengers = Math.round(group.pax);
+      row.pax_rate = group.rate || row.pax_rate || 0;
+      row.pax_rate_15m = group.rate ? group.rate / 4 : row.pax_rate_15m;
+      row.staff_needed = needed;
+      row.staff_capacity = Math.max(needed, Number(row.staff_capacity || 0), Math.ceil(needed * 1.5));
+      row.priority = group.priority;
+      row.source_slots = group.sourceSlots;
+      row.assigned = assignedList;
+      row.assigned_staff = assignedList;
+      row.assigned_count = assignedCount;
+      row.gap = gap;
+      row.alert = gap > 0 ? (row.message || `Under-staffed: need ${needed}, assigned ${assignedCount} (gap ${gap})`) : null;
+      row.message = row.alert || row.message || '';
+      return row;
+    });
+  }
+
+  const normalized = { ...data };
+  const nonPaxTasks = data.tasks.filter(t => !isPaxRow(t));
+  normalized.tasks = [...nonPaxTasks, ...groupRows(paxTasks, false)]
+    .sort((a, b) => (a.start_mins || 0) - (b.start_mins || 0) || String(a.skill || '').localeCompare(String(b.skill || '')));
+
+  if (Array.isArray(data.alerts)) {
+    const paxAlerts = data.alerts.filter(isPaxRow);
+    const nonPaxAlerts = data.alerts.filter(a => !isPaxRow(a));
+    normalized.alerts = [...nonPaxAlerts, ...groupRows(paxAlerts, true).filter(a => (a.gap || 0) > 0)]
+      .sort((a, b) => (a.start_mins || parseTime(a.start)) - (b.start_mins || parseTime(b.start)));
+  }
+
+  const kpis = { ...(data.kpis || {}) };
+  const total = normalized.tasks.length;
+  const covered = normalized.tasks.filter(t => !t.alert).length;
+  kpis.tasks_total = total;
+  kpis.tasks_covered = covered;
+  kpis.demand_windows_total = total;
+  kpis.demand_windows_covered = covered;
+  kpis.passengers_total = normalized.tasks.reduce((s, t) => s + Number(t.passengers || 0), 0);
+  kpis.coverage_pct = total ? Math.round((covered / total) * 1000) / 10 : 100.0;
+  normalized.kpis = kpis;
+  return normalized;
+}
+
 
 // ── Boot ───────────────────────────────────────────────────────
 async function initShortTerm() {
@@ -119,6 +248,7 @@ async function stSelectDate(dateStr) {
 
 // ── Main Render ────────────────────────────────────────────────
 function renderShortTermDay() {
+  ST_DATA = normalizePaxDemandToHourly(ST_DATA);
   const d = ST_DATA;
   const el = document.getElementById('st-content');
   const carriedBanner = d.staff_data_carried_forward
@@ -518,7 +648,7 @@ function showSTSkillBlockDetail(s, blockLabel, date) {
             </div>
             <div style="flex:1;min-width:120px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
               <div style="font-size:1.3rem;font-weight:800;color:var(--text)">${avgPaxRate}</div>
-              <div style="font-size:0.7rem;color:var(--muted)">Avg PAX / staff / slot</div>
+              <div style="font-size:0.7rem;color:var(--muted)">Avg PAX / staff / hour</div>
             </div>
             ${peakSlot.passengers ? `
             <div style="flex:1;min-width:120px;padding:10px;background:var(--surface);border-radius:6px;text-align:center;">
@@ -1112,45 +1242,37 @@ function buildSTCoverageData(tasks) {
   const skills = paxSkills.length ? paxSkills.slice()
     : Array.isArray(ST_COVERAGE_SKILLS) ? ST_COVERAGE_SKILLS.slice() : [];
 
-  // Accumulate per-15-min slot (96 slots in a day)
-  const slotData = {};
+  // Accumulate directly per hour. PAX demand rows are hourly at the API layer.
+  const hourData = {};
   skills.forEach(sk => {
-    slotData[sk] = Array.from({length: 96}, () => ({ req: 0, assigned: new Set() }));
+    hourData[sk] = {};
+    hours.forEach(h => { hourData[sk][h] = { req: 0, assigned: new Set() }; });
   });
 
   (tasks || []).forEach(task => {
     let sk = task.skill || task.role || task.task || '';
-    if (!slotData[sk]) {
+    if (!hourData[sk]) {
       const base = sk.split(' -- ')[0];
-      if (slotData[base]) sk = base; else return;
+      if (hourData[base]) sk = base; else return;
     }
-    const startSlot = Math.floor(task.start_mins / 15);
-    const endSlot   = Math.ceil(task.end_mins / 15) - 1;
+    const startHour = Math.floor((task.start_mins || 0) / 60);
+    const endHour   = Math.ceil((task.end_mins || 0) / 60) - 1;
     const staffIds  = task.assigned || [];
-    for (let slot = startSlot; slot <= endSlot; slot++) {
-      if (slot < 0 || slot >= 96) continue;
-      slotData[sk][slot].req += (task.staff_needed || 0);
-      staffIds.forEach(sid => slotData[sk][slot].assigned.add(sid));
+    for (let h = startHour; h <= endHour; h++) {
+      if (!hourData[sk][h]) continue;
+      hourData[sk][h].req += (task.staff_needed || 0);
+      staffIds.forEach(sid => hourData[sk][h].assigned.add(sid));
     }
   });
 
-  // Aggregate to hourly: average the 4 slots within each hour
   const data = {};
   skills.forEach(sk => {
     data[sk] = {};
     hours.forEach(h => {
-      let reqSum = 0, asgnSum = 0, filled = 0;
-      for (let m = 0; m < 4; m++) {
-        const slot = h * 4 + m;
-        if (slot < 96) {
-          reqSum  += slotData[sk][slot].req;
-          asgnSum += slotData[sk][slot].assigned.size;
-          filled++;
-        }
-      }
+      const cell = hourData[sk][h];
       data[sk][h] = {
-        req:      filled ? Math.round(reqSum  / filled) : 0,
-        assigned: filled ? Math.round(asgnSum / filled) : 0,
+        req:      cell ? cell.req : 0,
+        assigned: cell ? cell.assigned.size : 0,
       };
     });
   });
@@ -1803,7 +1925,7 @@ function renderSTDemandTab(container) {
       <div class="table-scroll">
         <table class="data-table">
           <thead>
-            <tr><th>Time</th><th>Terminal</th><th>Work</th><th>PAX</th><th>PAX/FTE/15m</th><th>FTE Req</th><th>Assigned</th><th>Status</th></tr>
+            <tr><th>Time</th><th>Terminal</th><th>Work</th><th>PAX</th><th>PAX/FTE/hour</th><th>FTE Req</th><th>Assigned</th><th>Status</th></tr>
           </thead>
           <tbody id="st-demand-tbody"></tbody>
         </table>
