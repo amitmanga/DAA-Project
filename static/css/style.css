@@ -3217,6 +3217,95 @@ canvas { display: block; }
 ══════════════════════════════════════════════════════════════════ */
 
 /* KPI tile strip */
+.rl-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0 0 12px;
+  width: 100%;
+}
+.rl-main {
+  display: grid;
+  grid-template-columns: minmax(560px, 0.95fr) minmax(520px, 1.35fr);
+  align-items: start;
+  gap: 0;
+  overflow: visible;
+  width: 100%;
+}
+.rl-left-pane {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: visible;
+  min-width: 0;
+}
+.rl-right-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rl-matrix-wrap {
+  flex: 0 0 auto;
+  overflow-x: hidden;
+  overflow-y: visible;
+  padding: 0;
+}
+.rl-gap-pane {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.rl-staff-panel {
+  min-height: 360px;
+  padding: 16px;
+}
+.rl-skill-head {
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+  width: 132px;
+}
+.rl-block-head {
+  padding: 6px 3px;
+  text-align: center;
+  font-size: 0.65rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  width: 48px;
+}
+.rl-task-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.rl-task-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 5px;
+  padding: 4px 7px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.rl-task-chip.active {
+  color: var(--text);
+  background: rgba(255,255,255,0.06);
+}
+.rl-task-chip strong {
+  color: var(--text);
+  font-size: 0.66rem;
+}
+
 .rl-kpi-tile {
   display: flex;
   flex-direction: column;
@@ -3271,6 +3360,16 @@ canvas { display: block; }
 /* Action buttons */
 .rl-assign-btn:hover { filter: brightness(1.15); }
 .rl-remove-btn:hover { background: var(--crit) !important; color: #fff !important; }
+
+@media (max-width: 1180px) {
+  .rl-main {
+    grid-template-columns: 1fr;
+  }
+  .rl-left-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
 
 /* ══════════════════════════════════════════════════════════════════
    MONTE CARLO / SIMULATION UI

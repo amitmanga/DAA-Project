@@ -893,6 +893,7 @@ function renderIDSubContent() {
 }
 
 const _idReallocLog = [];   // persists across full tab re-renders
+let _idReallocSelection = { skill: null, block: null, taskId: null };
 
 function renderIDDemandTab(container) {
   const tasks = ID_DATA.tasks || [];
@@ -2021,6 +2022,58 @@ async function renderIDOptimization(container) {
     return list;
   }
 
+  function _escAttr(value) {
+    return String(value ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function _taskAssignedCount(task) {
+    return (task?.assigned || []).filter(Boolean).length;
+  }
+
+  function _taskGap(task) {
+    return Math.max(0, (task?.staff_needed || 0) - _taskAssignedCount(task));
+  }
+
+  function _taskPct(task) {
+    const req = task?.staff_needed || 0;
+    return req ? Math.round((_taskAssignedCount(task) / req) * 100) : 100;
+  }
+
+  function _taskLabel(task) {
+    if (!task) return 'Task';
+    return task.task || task.skill || task.id || 'Task';
+  }
+
+  function _pickTaskForCell(cell, preferredTaskId) {
+    const cellTasks = (cell?.tasks || []).slice();
+    if (!cellTasks.length) return null;
+    const preferred = cellTasks.find(t => String(t.id) === String(preferredTaskId || ''));
+    if (preferred) return preferred;
+    return cellTasks.sort((a, b) =>
+      _taskGap(b) - _taskGap(a) ||
+      _taskPct(a) - _taskPct(b) ||
+      (a.start_mins || 0) - (b.start_mins || 0)
+    )[0];
+  }
+
+  function _setSelection(skill, block, taskId) {
+    _selSkill = skill;
+    _selBlock = block;
+    _selTaskId = taskId || null;
+    _idReallocSelection = { skill: _selSkill, block: _selBlock, taskId: _selTaskId };
+  }
+
+  function _staffSkills(s) {
+    return ['skill1', 'skill2', 'skill3', 'skill4']
+      .map(k => (s?.[k] || '').trim())
+      .filter(Boolean);
+  }
+
+  function _staffHasSkill(s, skill) {
+    const selected = String(skill || '').trim().toLowerCase();
+    return _staffSkills(s).some(sk => sk.toLowerCase() === selected);
+  }
+
   // ── Summary stats ─────────────────────────────────────────────────
   const matrix  = buildMatrixData();
   const gapList = buildGapList(matrix);
@@ -2034,11 +2087,13 @@ async function renderIDOptimization(container) {
   const allBlocks = _RL_BLOCKS;
 
   // ── State ─────────────────────────────────────────────────────────
-  let _selSkill = null, _selBlock = null;
+  let _selSkill = _idReallocSelection.skill;
+  let _selBlock = _idReallocSelection.block;
+  let _selTaskId = _idReallocSelection.taskId;
 
   // ── Render shell ──────────────────────────────────────────────────
   container.innerHTML = `
-  <div style="display:flex;flex-direction:column;height:100%;gap:0;padding:0 0 12px;">
+  <div class="rl-shell">
 
     <!-- Header bar -->
     <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 12px;border-bottom:1px solid var(--border);flex-shrink:0;">
@@ -2081,18 +2136,18 @@ async function renderIDOptimization(container) {
     </div>
 
     <!-- Main body -->
-    <div style="display:flex;flex:1;min-height:0;gap:0;overflow:hidden;">
+    <div class="rl-main">
 
       <!-- Left: heatmap + gap list -->
-      <div style="width:460px;flex-shrink:0;display:flex;flex-direction:column;border-right:1px solid var(--border);overflow:hidden;">
+      <div class="rl-left-pane">
 
         <!-- Heatmap -->
-        <div style="flex:1;overflow:auto;padding:0;" id="rl-matrix-wrap">
+        <div class="rl-matrix-wrap" id="rl-matrix-wrap">
           <table style="border-collapse:collapse;width:100%;font-size:0.72rem;" id="rl-matrix-table">
             <thead>
               <tr style="background:var(--surface-2,#1e1e1e);position:sticky;top:0;z-index:2;">
-                <th style="padding:8px 10px;text-align:left;font-size:0.7rem;color:var(--muted);font-weight:600;white-space:nowrap;border-bottom:1px solid var(--border);min-width:120px;">Skill / Touchpoint</th>
-                ${allBlocks.map(b => `<th style="padding:6px 4px;text-align:center;font-size:0.65rem;color:var(--muted);border-bottom:1px solid var(--border);min-width:50px;">${b.label}</th>`).join('')}
+                <th class="rl-skill-head">Skill / Touchpoint</th>
+                ${allBlocks.map(b => `<th class="rl-block-head">${b.label}</th>`).join('')}
               </tr>
             </thead>
             <tbody id="rl-matrix-body"></tbody>
@@ -2100,7 +2155,7 @@ async function renderIDOptimization(container) {
         </div>
 
         <!-- Gap priority list -->
-        <div style="flex-shrink:0;border-top:1px solid var(--border);max-height:220px;overflow-y:auto;">
+        <div class="rl-gap-pane">
           <div style="padding:8px 12px 4px;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;position:sticky;top:0;background:var(--surface-2,#1e1e1e);z-index:1;">
             Gap Priority — worst first
           </div>
@@ -2109,10 +2164,10 @@ async function renderIDOptimization(container) {
       </div>
 
       <!-- Right: staff panel + log -->
-      <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="rl-right-pane">
 
         <!-- Staff panel -->
-        <div style="flex:1;overflow-y:auto;padding:16px;" id="rl-staff-panel">
+        <div class="rl-staff-panel" id="rl-staff-panel">
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--muted);text-align:center;gap:8px;">
             <div style="font-size:2rem;opacity:0.3;">←</div>
             <div style="font-size:0.85rem;">Select a cell in the heatmap to manage staff for that block</div>
@@ -2146,8 +2201,8 @@ async function renderIDOptimization(container) {
         const isSel = (_selSkill === sk && _selBlock === b.id);
         return `<td style="padding:3px 2px;text-align:center;">
           <div class="rl-cell${isSel?' rl-cell-sel':''}"
-            data-skill="${sk.replace(/"/g,'&quot;')}" data-block="${b.id}"
-            style="display:inline-block;min-width:44px;padding:4px 5px;border-radius:5px;
+            data-skill="${_escAttr(sk)}" data-block="${b.id}"
+            style="display:inline-block;min-width:40px;padding:4px 4px;border-radius:5px;
               background:${c.bg};border:1px solid ${isSel?'#fff':c.border};
               color:${c.text};font-size:0.7rem;font-weight:700;cursor:pointer;
               transition:transform .1s;${isSel?'transform:scale(1.08);box-shadow:0 0 0 2px #fff4;':''}">
@@ -2164,10 +2219,10 @@ async function renderIDOptimization(container) {
     // Click handlers
     tbody.querySelectorAll('.rl-cell').forEach(el => {
       el.addEventListener('click', () => {
-        _selSkill = el.dataset.skill;
-        _selBlock = el.dataset.block;
+        _setSelection(el.dataset.skill, el.dataset.block, null);
         renderMatrix(mx);
         renderStaffPanel(mx);
+        renderGapList(gapList);
       });
     });
   }
@@ -2181,7 +2236,7 @@ async function renderIDOptimization(container) {
       const c = _cellColor(g.pct, g.gap);
       const isSel = (_selSkill === g.skill && _selBlock === g.blockId);
       return `<div class="rl-gap-item${isSel?' rl-gap-sel':''}"
-        data-skill="${g.skill.replace(/"/g,'&quot;')}" data-block="${g.blockId}"
+        data-skill="${_escAttr(g.skill)}" data-block="${g.blockId}"
         style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:3px;cursor:pointer;
           background:${isSel?'var(--surface-3,#2a2a2a)':'transparent'};border:1px solid ${isSel?'var(--border)':'transparent'};">
         <div style="width:7px;height:7px;border-radius:50%;background:${c.border};flex-shrink:0;"></div>
@@ -2198,8 +2253,7 @@ async function renderIDOptimization(container) {
 
     el.querySelectorAll('.rl-gap-item').forEach(el2 => {
       el2.addEventListener('click', () => {
-        _selSkill = el2.dataset.skill;
-        _selBlock = el2.dataset.block;
+        _setSelection(el2.dataset.skill, el2.dataset.block, null);
         renderMatrix(mx);
         renderStaffPanel(mx);
         renderGapList(gl);
@@ -2219,24 +2273,32 @@ async function renderIDOptimization(container) {
       return;
     }
 
+    _setSelection(_selSkill, _selBlock, null);
+
     const c = _cellColor(cell.pct, cell.gap);
     const assignedIds = new Set(cell._staffSet);
+    const blockStart = blk.start ?? 0;
+    const blockEnd = blk.end ?? 1440;
 
-    // Eligible: on duty this block, has this skill, not already assigned
-    const eligible = allStaff.filter(s => {
+    function isAssignedElsewhereInBlock(sid) {
+      return tasks.some(t => {
+        if (!(t.start_mins < blockEnd && t.end_mins > blockStart)) return false;
+        return (t.assigned || []).map(String).includes(String(sid));
+      });
+    }
+
+    // Eligible: on duty for this block, has this skill, and free in this period.
+    let eligible = allStaff.filter(s => {
       const sid   = String(s.id || s['EMPLOYEE NUMBER'] || '');
       if (assignedIds.has(sid)) return false;
-      const sk1   = (s.skill1 || '').toLowerCase();
-      const sk2   = (s.skill2 || '').toLowerCase();
-      const selSk = _selSkill.toLowerCase();
-      const hasSkill = sk1 === selSk || sk2 === selSk;
-      // Check if staff is on duty during this block
-      const shStart = s.shift_start_mins ?? 0;
-      const shEnd   = s.shift_end_mins   ?? 1440;
-      const blkMid  = (blk.start + blk.end) / 2;
-      const onDuty  = shStart <= blkMid && shEnd >= blkMid;
+      if (isAssignedElsewhereInBlock(sid)) return false;
+      const hasSkill = _staffHasSkill(s, _selSkill);
+      const shStart = s.shift_start_mins ?? s.shift_start ?? 0;
+      const shEnd   = s.shift_end_mins ?? s.shift_end ?? 1440;
+      const onDuty  = shStart <= blockStart && shEnd >= blockEnd;
       return hasSkill && onDuty;
     });
+    if (cell.gap <= 0) eligible = [];
 
     const assignedList = allStaff.filter(s => assignedIds.has(String(s.id || s['EMPLOYEE NUMBER'] || '')));
 
@@ -2278,13 +2340,14 @@ async function renderIDOptimization(container) {
               const sid = String(s.id || s['EMPLOYEE NUMBER'] || '');
               const nm  = s.name || s['STAFF NAME'] || sid;
               const sk1 = s.skill1 || '—';
+              const skillsLabel = _staffSkills(s).join(' / ') || sk1;
               return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-2,#1e1e1e);border-radius:7px;margin-bottom:5px;border:1px solid var(--border);">
                 <div style="width:28px;height:28px;border-radius:50%;background:${_skillColor(sk1)}20;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:${_skillColor(sk1)};flex-shrink:0;">${(nm[0]||'?').toUpperCase()}</div>
                 <div style="flex:1;min-width:0;">
                   <div style="font-size:0.78rem;font-weight:600;color:var(--text);">${nm}</div>
-                  <div style="font-size:0.65rem;color:var(--muted);">${sk1} · ID ${sid}</div>
+                  <div style="font-size:0.65rem;color:var(--muted);">${skillsLabel} · ID ${sid}</div>
                 </div>
-                <button class="rl-remove-btn" data-sid="${sid}" data-sname="${nm.replace(/"/g,'&quot;')}"
+                <button class="rl-remove-btn" data-sid="${_escAttr(sid)}" data-sname="${_escAttr(nm)}"
                   style="padding:4px 10px;background:transparent;border:1px solid var(--crit);color:var(--crit);border-radius:5px;font-size:0.7rem;font-weight:600;cursor:pointer;">
                   ✕ Remove
                 </button>
@@ -2298,21 +2361,22 @@ async function renderIDOptimization(container) {
           Available to Assign (${eligible.length})
         </div>
         ${eligible.length === 0
-          ? `<div style="font-size:0.78rem;color:var(--muted);padding:8px 0;">No eligible staff free for this block.</div>`
+          ? `<div style="font-size:0.78rem;color:var(--muted);padding:8px 0;">${cell.gap <= 0 ? 'This block already has required FTE. Use available staff on another gap block.' : 'No eligible staff free for this block.'}</div>`
           : eligible.map(s => {
               const sid = String(s.id || s['EMPLOYEE NUMBER'] || '');
               const nm  = s.name || s['STAFF NAME'] || sid;
               const sk1 = s.skill1 || '—';
+              const skillsLabel = _staffSkills(s).join(' / ') || sk1;
               const util = s.utilisation_pct || 0;
               const uColor = util >= 85 ? 'var(--ok)' : util >= 50 ? 'var(--info)' : 'var(--muted)';
               return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-2,#1e1e1e);border-radius:7px;margin-bottom:5px;border:1px solid var(--border);">
                 <div style="width:28px;height:28px;border-radius:50%;background:${_skillColor(sk1)}20;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:${_skillColor(sk1)};flex-shrink:0;">${(nm[0]||'?').toUpperCase()}</div>
                 <div style="flex:1;min-width:0;">
                   <div style="font-size:0.78rem;font-weight:600;color:var(--text);">${nm}</div>
-                  <div style="font-size:0.65rem;color:var(--muted);">${sk1} · ID ${sid}</div>
+                  <div style="font-size:0.65rem;color:var(--muted);">${skillsLabel} · ID ${sid}</div>
                 </div>
                 <div style="font-size:0.65rem;color:${uColor};font-weight:600;margin-right:6px;">${util}% util</div>
-                <button class="rl-assign-btn" data-sid="${sid}" data-sname="${nm.replace(/"/g,'&quot;')}"
+                <button class="rl-assign-btn" data-sid="${_escAttr(sid)}" data-sname="${_escAttr(nm)}"
                   style="padding:4px 10px;background:var(--info);color:#fff;border:none;border-radius:5px;font-size:0.7rem;font-weight:600;cursor:pointer;">
                   + Assign
                 </button>
@@ -2325,7 +2389,7 @@ async function renderIDOptimization(container) {
       btn.addEventListener('click', () => _doMove('assign', btn.dataset.sid, btn.dataset.sname));
     });
     panel.querySelectorAll('.rl-remove-btn').forEach(btn => {
-      btn.addEventListener('click', () => _doMove('remove', btn.dataset.sid, btn.dataset.sname));
+      btn.addEventListener('click', () => _doMove('unassign', btn.dataset.sid, btn.dataset.sname));
     });
   }
 
@@ -2351,9 +2415,13 @@ async function renderIDOptimization(container) {
 
   async function _doMove(action, staffId, staffName) {
     const blk = allBlocks.find(b => b.id === _selBlock) || {};
+    const cell = (matrix[_selSkill] || {})[_selBlock];
+    if (!cell) return;
+    const terms = [...cell.terms];
     const payload = {
       staff_id:    staffId,
       skill:       _selSkill,
+      terminal:    terms.length === 1 ? terms[0] : 'ALL',
       block_start: blk.start,
       block_end:   blk.end,
       action:      action,
@@ -2368,11 +2436,16 @@ async function renderIDOptimization(container) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Request failed');
+      const moveStatus = data.move_status || {};
+      if (moveStatus.applied === false) {
+        throw new Error(moveStatus.error || 'Move was not applied to the selected block.');
+      }
 
       // Persist log entry
       _idReallocLog.push({
         action, staffId, staffName,
-        skill: _selSkill, blockLabel: blk.label || _selBlock,
+        skill: _selSkill,
+        blockLabel: `${blk.label || _selBlock} ${payload.terminal !== 'ALL' ? payload.terminal : ''}`.trim(),
         time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
       });
 
@@ -2382,13 +2455,12 @@ async function renderIDOptimization(container) {
       try { renderIDAlerts(data.alerts); } catch (_) {}
 
       // Full re-render of this tab, then restore selection
-      const savedSkill = _selSkill;
-      const savedBlock = _selBlock;
+      const savedSelection = { skill: _selSkill, block: _selBlock, taskId: null };
+      _idReallocSelection = savedSelection;
       renderIDOptimization(container);
-      // After re-render, restore selection by clicking the saved cell
       setTimeout(() => {
-        const sel = container.querySelector(`.rl-cell[data-skill="${CSS.escape(savedSkill)}"][data-block="${savedBlock}"]`);
-        if (sel) sel.click();
+        const cell = container.querySelector(`.rl-cell[data-skill="${CSS.escape(savedSelection.skill)}"][data-block="${savedSelection.block}"]`);
+        if (cell) cell.click();
       }, 60);
 
     } catch (err) {
@@ -2408,6 +2480,9 @@ async function renderIDOptimization(container) {
   renderMatrix(matrix);
   renderGapList(gapList);
   renderLog();
+  if (_selSkill && _selBlock) {
+    renderStaffPanel(matrix);
+  }
 
   // Refresh button
   document.getElementById('rl-refresh')?.addEventListener('click', async () => {
