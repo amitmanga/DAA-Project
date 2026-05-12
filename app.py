@@ -6,6 +6,9 @@ import os
 import re
 from datetime import datetime, timedelta
 from collections import defaultdict
+from long_term_pax_demand import build_long_term_pax_forecast
+from intraday_pax_demand import build_intraday_pax_pulse
+from short_term_pax_demand import build_short_term_pax_outlook
 
 # CP-SAT optimiser (optional — falls back to greedy if OR-Tools is absent)
 try:
@@ -1310,6 +1313,21 @@ def lt_flight_trend():
         'actual_2025': int(round(monthly[m]['actual_2025'])),
         'forecast_2026': int(round(monthly[m]['forecast_2026'])),
     } for m in months])
+
+
+@app.route('/api/long-term/pax-demand/strategic-forecast')
+def lt_pax_demand_strategic_forecast():
+    return jsonify(build_long_term_pax_forecast(BASE_DIR))
+
+
+@app.route('/api/short-term/pax-demand/strategic-outlook')
+def st_pax_demand_strategic_outlook():
+    return jsonify(build_short_term_pax_outlook(BASE_DIR))
+
+
+@app.route('/api/intraday/pax-demand/tactical-pulse')
+def id_pax_demand_tactical_pulse():
+    return jsonify(build_intraday_pax_pulse(BASE_DIR))
 
 
 @app.route('/api/long-term/gap-skill-data')

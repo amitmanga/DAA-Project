@@ -1,0 +1,10 @@
+{
+  "load_factor": 84.3,
+  "accuracies": {
+    "lstm": 94.4,
+    "monte_carlo": 95.3,
+    "sarima": 93.8,
+    "prophet": 98.1,
+    "ensemble": 96.6
+  }
+}

@@ -84,6 +84,11 @@ window.addEventListener('themeChanged', () => {
 });
 
 function refreshAllCharts() {
+  if (document.getElementById('view-long-term-pax')?.classList.contains('active') &&
+      typeof initLongTermPaxDemand === 'function') {
+    initLongTermPaxDemand({ force: true });
+  }
+
   // 1. Re-render global long-term charts
   loadFlightTrendChart();
   loadStaffReqAvailChart();
@@ -170,6 +175,9 @@ function switchView(view) {
   if (view === 'intraday'   && typeof initIntraday   === 'function') initIntraday();
   if (view === 'config'     && typeof initConfig     === 'function') initConfig();
   if (view === 'long-term') refreshAllCharts();
+  if (view === 'long-term-pax' && typeof initLongTermPaxDemand === 'function') initLongTermPaxDemand();
+  if (view === 'short-term-pax' && typeof initShortTermPaxDemand === 'function') initShortTermPaxDemand();
+  if (view === 'intraday-pax' && typeof initIntradayPaxDemand === 'function') initIntradayPaxDemand();
 }
 
 document.querySelectorAll('[data-view]').forEach(btn => {

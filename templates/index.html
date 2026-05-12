@@ -390,10 +390,64 @@
       <div class="page-header">
         <h1 class="page-title">Long Term &middot; PAX Demand</h1>
         <span class="sep">â€”</span>
-        <p class="page-sub">Passenger demand workspace</p>
+        <p class="page-sub">Strategic passenger forecast &amp; model confidence</p>
       </div>
-      <div class="blank-workspace">
-        <div class="empty-state">PAX Demand page is ready for future long-term demand views.</div>
+      <div class="ltpax-module">
+        <section class="ltpax-forecast-panel">
+          <div class="ltpax-eyebrow">Ensemble ML Engine &middot; SARIMA &middot; Monte Carlo &middot; LSTM &middot; Prophet</div>
+          <div class="ltpax-title-row">
+            <div>
+              <h2>2026 Long-Term Strategic Forecast</h2>
+              <p>Automated forecast derived from 3-year historical regression (2023-2025). Confidence band represents Monte Carlo P10/P50/P90 over 1,000 simulated paths.</p>
+            </div>
+          </div>
+
+          <div class="ltpax-kpi-grid">
+            <article class="ltpax-kpi ltpax-kpi-info">
+              <div class="ltpax-kpi-value" id="ltpax-kpi-p50">--</div>
+              <div class="ltpax-kpi-label">P50 Central Estimate (Total Pax)</div>
+              <div class="ltpax-kpi-note" id="ltpax-kpi-p50-delta">--</div>
+            </article>
+            <article class="ltpax-kpi ltpax-kpi-teal">
+              <div class="ltpax-kpi-value" id="ltpax-kpi-p10">--</div>
+              <div class="ltpax-kpi-label">P10 Conservative Estimate</div>
+              <div class="ltpax-kpi-note" id="ltpax-kpi-p10-delta">--</div>
+            </article>
+            <article class="ltpax-kpi ltpax-kpi-ok">
+              <div class="ltpax-kpi-value" id="ltpax-kpi-p90">--</div>
+              <div class="ltpax-kpi-label">P90 Optimistic Estimate</div>
+              <div class="ltpax-kpi-note" id="ltpax-kpi-p90-delta">--</div>
+            </article>
+            <article class="ltpax-kpi ltpax-kpi-warn">
+              <div class="ltpax-kpi-value" id="ltpax-kpi-peak">--</div>
+              <div class="ltpax-kpi-label">Forecast Peak Week (Central)</div>
+              <div class="ltpax-kpi-note warn" id="ltpax-kpi-peak-range">--</div>
+            </article>
+            <article class="ltpax-kpi ltpax-kpi-info">
+              <div class="ltpax-kpi-value" id="ltpax-kpi-load">--</div>
+              <div class="ltpax-kpi-label">Est. Annual Load Factor</div>
+              <div class="ltpax-kpi-note warn" id="ltpax-kpi-load-note">Baseline 2025 avg</div>
+            </article>
+          </div>
+
+          <div class="ltpax-main-grid">
+            <article class="ltpax-card ltpax-chart-card">
+              <div class="ltpax-card-title">52-Week Forecast - 2026 Ensemble (Week-by-Week)</div>
+              <div class="ltpax-chart-wrap">
+                <canvas id="ltpax-forecast-chart"></canvas>
+              </div>
+            </article>
+
+            <article class="ltpax-card ltpax-accuracy-card">
+              <div class="ltpax-card-title">Algorithm Accuracy &middot; Backtested vs 2025 Actuals</div>
+              <div id="ltpax-accuracy-list" class="ltpax-accuracy-list"></div>
+            </article>
+          </div>
+
+          <div class="ltpax-intel-banner">
+            The Ensemble model combines SARIMA (seasonal regression), Monte Carlo simulation, LSTM deep learning, and Prophet decomposition - weighted by backtested accuracy - and achieves <strong id="ltpax-banner-accuracy">--</strong> accuracy on 2025 actuals. The forecast signal below drives demand intensity, gate pressure, carrier growth, and risk calendar planning.
+          </div>
+        </section>
       </div>
     </section>
 
@@ -417,10 +471,28 @@
       <div class="page-header">
         <h1 class="page-title">Short Term &middot; PAX Demand</h1>
         <span class="sep">â€”</span>
-        <p class="page-sub">Passenger demand workspace</p>
+        <p class="page-sub">3-day passenger flow digital twin</p>
       </div>
-      <div class="blank-workspace">
-        <div class="empty-state">PAX Demand page is ready for future short-term demand views.</div>
+      <div class="stpax-module">
+        <section class="stpax-outlook-panel">
+          <div class="stpax-brand-row">
+            <span class="stpax-pill">Pulse</span>
+            <h2>PAX Flow Digital Twin</h2>
+          </div>
+
+          <div class="stpax-section-title">
+            <span id="stpax-title">3-Day Strategic Outlook</span>
+            <em id="stpax-subtitle">passenger numbers engineered based on actual next 3-day flight schedules</em>
+          </div>
+
+          <article class="stpax-chart-card">
+            <div class="stpax-chart-wrap">
+              <canvas id="stpax-outlook-chart"></canvas>
+            </div>
+          </article>
+
+          <div class="stpax-insight-grid" id="stpax-insight-grid"></div>
+        </section>
       </div>
     </section>
 
@@ -442,10 +514,68 @@
       <div class="page-header">
         <h1 class="page-title">Intraday &middot; PAX Demand</h1>
         <span class="sep">â€”</span>
-        <p class="page-sub">Passenger demand workspace</p>
+        <p class="page-sub">Live passenger pulse and what-if demand simulation</p>
       </div>
-      <div class="blank-workspace">
-        <div class="empty-state">PAX Demand page is ready for future intraday demand views.</div>
+      <div class="idpax-module">
+        <section class="idpax-brand-row">
+          <span class="stpax-pill">Pulse</span>
+          <h2>PAX Flow Digital Twin</h2>
+        </section>
+
+        <section class="idpax-sim-panel">
+          <div class="idpax-sim-heading">
+            <h3>Scenario Simulation</h3>
+            <span>What-if engine</span>
+          </div>
+          <div class="idpax-scenario-tabs">
+            <button class="idpax-scenario active" type="button">Flight Delay</button>
+            <button class="idpax-scenario" type="button" disabled>Weather Ground Stop</button>
+            <button class="idpax-scenario" type="button" disabled>Security Lane Closure</button>
+            <button class="idpax-scenario" type="button" disabled>Check-In Reduction</button>
+          </div>
+          <div class="idpax-sim-controls">
+            <label>
+              <span>Select Flight</span>
+              <select id="idpax-flight-select"></select>
+            </label>
+            <label>
+              <span>Delay (Minutes)</span>
+              <input id="idpax-delay-mins" type="number" min="0" step="5" value="30">
+            </label>
+            <div class="idpax-sim-actions">
+              <button class="btn-primary idpax-run" id="idpax-run-sim" type="button">Run Simulation</button>
+              <button class="btn-outline idpax-clear" id="idpax-clear-sim" type="button">Clear</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="idpax-section-title">
+          <span id="idpax-title">Intra-Day Tactical Pulse</span>
+          <em id="idpax-subtitle">PAX flow aligned to flights between 7 AM to 8:30 AM based on touchpoint-wise probability distributions</em>
+        </section>
+
+        <section class="idpax-content-grid">
+          <article class="idpax-chart-card">
+            <div class="idpax-chart-wrap">
+              <canvas id="idpax-pulse-chart"></canvas>
+            </div>
+          </article>
+          <article class="idpax-table-card">
+            <div class="idpax-table-title">PAX Count by Touchpoint</div>
+            <div class="idpax-table-scroll">
+              <table class="idpax-table">
+                <thead>
+                  <tr>
+                    <th>Time</th><th>Chk</th><th>Sec</th><th>CBP</th><th>Lng</th><th>Brd</th><th>Imm</th><th>Bag</th>
+                  </tr>
+                </thead>
+                <tbody id="idpax-table-body"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        <section class="idpax-insight-grid" id="idpax-insight-grid"></section>
       </div>
     </section>
 
@@ -469,6 +599,9 @@
 
   <script src="/static/js/theme.js"></script>
   <script src="/static/js/longterm.js"></script>
+  <script src="/static/js/longterm_pax_demand.js"></script>
+  <script src="/static/js/shortterm_pax_demand.js"></script>
+  <script src="/static/js/intraday_pax_demand.js"></script>
   <script src="/static/js/shortterm.js"></script>
   <script src="/static/js/intraday.js"></script>
   <script src="/static/js/scenario.js"></script>
