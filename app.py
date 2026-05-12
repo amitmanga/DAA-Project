@@ -15,7 +15,7 @@ try:
     )
 except ImportError:  # pragma: no cover
     _CPSAT_AVAILABLE = False
-    def _cpsat_optimize(*_a, **_kw):  # type: ignore[misc]
+    def _cpsat_optimize(*_a, **_kw):  # type: ignore[misc] 
         return None
 
 # Long-term MIP optimiser (optional — requires PuLP or scipy)
@@ -2083,6 +2083,9 @@ _manual_assigns = {}       # {date_key: {task_id: [extra_staff_ids]}}
 _manual_unassigns = {}     # {date_key: {task_id: [blocked_staff_ids]}}
 _manual_block_assigns = {} # {date_key: {block_key: {skill, terminal, block_start, block_end, staff_ids}}}
 _intraday_result_cache = {} # {date_key: result_dict} — live state for manual operations
+_st_manual_block_assigns = {} # {date_key: {block_key: {...}}} — ST staff allocation panel
+_st_result_cache = {}          # {date_key: result_dict} — cached ST schedule for block ops
+_st_shift_overrides = {}       # {date_key: {staff_id: {shift_start, shift_end}}} — ST shift-move
 
 
 def _apply_manual_unassigns_to_result(result, date_key):
@@ -2309,6 +2312,103 @@ def _apply_manual_block_assigns_to_result(result, date_key):
                     'task_id':    task.get('id'),
                     'task':       task.get('task'),
                     'skill':      task.get('skill', skill),
+                    'terminal':   task.get('terminal', 'ALL'),
+                    'start':      task.get('start'),
+                    'end':        task.get('end'),
+                    'start_mins': task.get('start_mins'),
+                    'end_mins':   task.get('end_mins'),
+                    'skill_mismatch': False,
+                })
+
+    _sync_flight_tasks_from_task_lookup(result, task_lookup)
+
+
+def _snapshot_all_optimizer_blocks_st(result, date_key):
+    """ST equivalent of _snapshot_all_optimizer_blocks — uses _st_manual_block_assigns."""
+    blocks = _st_manual_block_assigns.setdefault(date_key, {})
+    seen_keys = set()
+    for task in result.get('tasks', []):
+        skill = task.get('skill')
+        if not skill:
+            continue
+        start     = int(task.get('start_mins') or 0)
+        blk_start = (start // 60) * 60
+        blk_end   = blk_start + 60
+        terminal  = task.get('terminal') or 'ALL'
+        key = _manual_block_key(skill, terminal, blk_start, blk_end)
+        if key in blocks or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        tasks = _matching_block_tasks(result, skill, terminal, blk_start, blk_end)
+        if not tasks:
+            continue
+        blocks[key] = {
+            'skill':       skill,
+            'terminal':    terminal,
+            'block_start': blk_start,
+            'block_end':   blk_end,
+            'staff_ids':   list(_block_assigned_staff(tasks)),
+        }
+
+
+def _apply_st_manual_block_assigns_to_result(result, date_key):
+    """ST equivalent of _apply_manual_block_assigns_to_result — uses _st_manual_block_assigns."""
+    blocks = _st_manual_block_assigns.get(date_key, {})
+    if not blocks:
+        return
+
+    staff_by_id = {str(s.get('id')): s for s in result.get('staff', []) if s.get('id')}
+    task_lookup = {t.get('id'): t for t in result.get('tasks', [])}
+
+    for block in blocks.values():
+        skill     = block.get('skill', '')
+        terminal  = block.get('terminal', 'ALL')
+        blk_start = int(block.get('block_start', 0))
+        blk_end   = int(block.get('block_end', 0))
+        tasks     = _matching_block_tasks(result, skill, terminal, blk_start, blk_end)
+        if not tasks:
+            continue
+        required = _block_required_fte(tasks)
+        if required <= 0:
+            continue
+
+        preferred = []
+        for sid in block.get('staff_ids') or []:
+            sid   = str(sid)
+            staff = staff_by_id.get(sid)
+            if not staff:
+                continue
+            if not _staff_has_task_skill(staff, skill):
+                continue
+            if not _staff_shift_covers_block(staff, blk_start, blk_end):
+                continue
+            if sid not in preferred:
+                preferred.append(sid)
+
+        crew     = preferred[:required]
+        task_ids = {t.get('id') for t in tasks}
+        for staff in staff_by_id.values():
+            staff['assignments'] = [
+                a for a in (staff.get('assignments') or [])
+                if a.get('task_id') not in task_ids
+            ]
+
+        for task in tasks:
+            task['assigned'] = list(crew)
+            needed = int(task.get('staff_needed') or 0)
+            if len(task['assigned']) >= needed:
+                task['alert'] = None
+            else:
+                gap = needed - len(task['assigned'])
+                task['alert'] = f'Under-staffed: need {needed}, assigned {len(task["assigned"])} (gap {gap})'
+            for sid in crew:
+                staff = staff_by_id.get(sid)
+                if not staff:
+                    continue
+                staff.setdefault('assignments', []).append({
+                    'task_id':    task.get('id'),
+                    'task':       task.get('task'),
+                    'skill':      skill,
                     'terminal':   task.get('terminal', 'ALL'),
                     'start':      task.get('start'),
                     'end':        task.get('end'),
@@ -3762,7 +3862,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
 # Main optimiser
 # ---------------------------------------------------------------------------
 
-def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_mins=None, prefer_early=False, custom_constraints=None):
+def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_mins=None, prefer_early=False, custom_constraints=None, staff_shift_overrides=None):
     """Run the greedy staff-assignment optimiser for a single day.
 
     Returns a rich dict with flights, tasks, staff, alerts and KPIs.
@@ -3806,6 +3906,12 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     stands_map = {}
     on_duty, absent_staff, _cf = get_staff_for_date(date_str, custom_constraints)
     print(f"[DEBUG] On-duty: {len(on_duty)}, Absent: {len(absent_staff)}")
+    if staff_shift_overrides:
+        for s in on_duty:
+            ovr = staff_shift_overrides.get(str(s.get('id', '')))
+            if ovr:
+                s['shift_start'] = ovr['shift_start']
+                s['shift_end']   = ovr['shift_end']
 
     # Build skill lookup dicts using raw CSV skill names.
     # Staff CSV uses task-name labels ('Gate 335', 'Dep/Trolleys', etc.).
@@ -4802,11 +4908,13 @@ def _get_short_term_schedule(date_str, preserve_manual_assigns=True):
     """
     man = _manual_assigns.get(date_str, {}) if preserve_manual_assigns else {}
     custom_constraints = _st_custom_constraints_by_date.get(date_str, _st_custom_constraints)
+    shift_ovrs = _st_shift_overrides.get(date_str) or None
     return optimize_day(
         date_str,
         manual_assigns=man,
         prefer_early=True,
         custom_constraints=custom_constraints,
+        staff_shift_overrides=shift_ovrs,
     )
 
 
@@ -5001,6 +5109,212 @@ def st_constraints():
         'permitted_shifts': base.get('permitted_shifts')
     }
     return jsonify(res)
+
+
+@app.route('/api/short-term/assign-block', methods=['POST'])
+def st_assign_block():
+    """Assign or unassign a staff member for a short-term hourly allocation block."""
+    global _st_result_cache, _st_manual_block_assigns
+    body       = request.get_json(force=True) or {}
+    date_str   = body.get('date', '').strip()
+    staff_id   = body.get('staff_id', '').strip()
+    skill      = body.get('skill', '').strip()
+    terminal   = body.get('terminal', 'ALL').strip()
+    blk_start  = int(body.get('block_start', 0))
+    blk_end    = int(body.get('block_end', blk_start + 60))
+    action     = body.get('action', 'assign')
+    client_assigned = [str(x).strip() for x in (body.get('current_assigned') or []) if x]
+    if action == 'remove':
+        action = 'unassign'
+    if not date_str:
+        return jsonify({'error': 'date required'}), 400
+    if not staff_id:
+        return jsonify({'error': 'staff_id required'}), 400
+
+    if date_str not in _st_manual_block_assigns:
+        _st_manual_block_assigns[date_str] = {}
+
+    _tmp = _st_result_cache.get(date_str)
+    if _tmp is None:
+        _tmp = _get_short_term_schedule(date_str)
+        if 'error' in _tmp:
+            return jsonify(_tmp), 404
+        _snapshot_all_optimizer_blocks_st(_tmp, date_str)
+        _apply_st_manual_block_assigns_to_result(_tmp, date_str)
+        _st_result_cache[date_str] = _tmp
+
+    staff_member = next((s for s in _tmp.get('staff', []) if str(s.get('id', '')) == staff_id), None)
+    if action == 'assign':
+        if not staff_member:
+            return jsonify({'error': 'Staff member is not on duty for this schedule.'}), 400
+        if not _staff_has_task_skill(staff_member, skill):
+            return jsonify({'error': 'Staff member does not have this task skill in skill1-skill4.'}), 400
+        if not _staff_shift_covers_block(staff_member, blk_start, blk_end):
+            return jsonify({'error': 'Staff shift does not cover this whole block.'}), 400
+
+    matching_tasks = _matching_block_tasks(_tmp, skill, terminal, blk_start, blk_end)
+    matched_ids = [t.get('id') for t in matching_tasks if t.get('id')]
+    if not matched_ids:
+        return jsonify({'error': 'No matching tasks found for this block.'}), 404
+
+    if action == 'assign':
+        block_required = _block_required_fte(matching_tasks)
+        block_assigned = set(client_assigned) if client_assigned else _block_assigned_staff(matching_tasks)
+        if staff_id not in block_assigned and len(block_assigned) >= block_required:
+            return jsonify({'error': f'Selected block already has required FTE ({block_required}). Use extra FTE on another gap block.'}), 409
+        busy_elsewhere = _staff_busy_outside_tasks(_tmp, staff_id, matched_ids, blk_start, blk_end)
+        if busy_elsewhere:
+            busy = busy_elsewhere[0]
+            return jsonify({'error': f'Staff is still assigned to {busy.get("skill", "another task")} {busy.get("start", "")}-{busy.get("end", "")}. Remove them there first.'}), 409
+
+    block_key = _manual_block_key(skill, terminal, blk_start, blk_end)
+    is_new_block = block_key not in _st_manual_block_assigns[date_str]
+    block_entry = _st_manual_block_assigns[date_str].setdefault(block_key, {
+        'skill': skill, 'terminal': terminal,
+        'block_start': blk_start, 'block_end': blk_end, 'staff_ids': [],
+    })
+    if is_new_block:
+        block_entry['staff_ids'] = client_assigned if client_assigned else list(_block_assigned_staff(matching_tasks))
+    if action == 'assign' and staff_id not in block_entry['staff_ids']:
+        block_entry['staff_ids'].append(staff_id)
+    elif action == 'unassign':
+        block_entry['staff_ids'] = [sid for sid in block_entry.get('staff_ids', []) if sid != staff_id]
+
+    changed_ids = []
+    final_crew = list(block_entry['staff_ids'])
+    result = _tmp
+    task_lookup_r  = {t.get('id'): t for t in result.get('tasks', [])}
+    staff_by_id_r  = {str(s.get('id', '')): s for s in result.get('staff', []) if s.get('id')}
+    tasks_to_modify = [task_lookup_r[t.get('id')] for t in matching_tasks if task_lookup_r.get(t.get('id'))]
+    modified_task_ids = set()
+    for task in tasks_to_modify:
+        task['assigned'] = final_crew
+        _set_task_status(task)
+        modified_task_ids.add(task.get('id'))
+        changed_ids.append(task.get('id'))
+
+    s_member = staff_by_id_r.get(str(staff_id))
+    if s_member:
+        if action == 'unassign':
+            s_member['assignments'] = [
+                a for a in (s_member.get('assignments') or [])
+                if a.get('task_id') not in modified_task_ids
+            ]
+        else:
+            existing_ids = {a.get('task_id') for a in (s_member.get('assignments') or [])}
+            for task in tasks_to_modify:
+                if task.get('id') not in existing_ids:
+                    _append_staff_assignment(s_member, task)
+
+    all_tasks = result.get('tasks', [])
+    tasks_covered = sum(1 for t in all_tasks if not t.get('alert'))
+    tasks_total   = len(all_tasks)
+    result['kpis']['tasks_covered']          = tasks_covered
+    result['kpis']['demand_windows_covered'] = tasks_covered
+    total_windows = result['kpis'].get('demand_windows_total') or tasks_total
+    result['kpis']['coverage_pct'] = round(tasks_covered / total_windows * 100, 1) if total_windows else 100.0
+
+    new_alerts = []
+    for task in all_tasks:
+        if task.get('alert'):
+            needed         = int(task.get('staff_needed') or 0)
+            assigned_count = len(task.get('assigned') or [])
+            gap            = max(0, needed - assigned_count)
+            new_alerts.append({
+                'task_id':         task.get('id', ''),
+                'flight_no':       task.get('flight_no', ''),
+                'flights_covered': task.get('flights_covered', []),
+                'covered_flights': task.get('covered_flights', []),
+                'task':            task.get('task', ''),
+                'skill':           task.get('skill', ''),
+                'priority':        task.get('priority', 'Normal'),
+                'start':           task.get('start', ''),
+                'end':             task.get('end', ''),
+                'staff_needed':    needed,
+                'assigned_count':  assigned_count,
+                'assigned_staff':  task.get('assigned', []),
+                'gap':             gap,
+                'message':         task.get('alert', ''),
+                'rec_staff':       [],
+                'sharing_mode':    task.get('sharing_mode', 'dedicated'),
+                'terminal':        task.get('terminal', ''),
+                'pier':            task.get('pier', ''),
+                'time_window':     task.get('time_window', ''),
+                'passengers':      task.get('passengers', 0),
+                'pax_rate':        task.get('pax_rate', 0),
+            })
+    result['alerts'] = new_alerts
+
+    verified_count = _count_staff_in_block(result, staff_id, skill, terminal, blk_start, blk_end)
+    result['move_status'] = {
+        'action': action, 'staff_id': staff_id, 'skill': skill,
+        'terminal': terminal, 'block_start': blk_start, 'block_end': blk_end,
+        'matched_tasks': len(matched_ids), 'changed_tasks': len(changed_ids),
+        'verified_assigned_tasks': verified_count,
+        'applied': verified_count > 0 if action == 'assign' else verified_count == 0,
+    }
+    if action == 'assign' and verified_count == 0:
+        result['move_status']['error'] = 'Staff could not be assigned to this block. Check skill, shift, break, or duty eligibility.'
+    return jsonify(result)
+
+
+@app.route('/api/short-term/shift-move', methods=['POST'])
+def st_shift_move():
+    """Move a staff member to a different shift window and re-optimise the day."""
+    global _st_result_cache, _st_manual_block_assigns, _st_shift_overrides
+    body          = request.get_json(force=True) or {}
+    date_str      = body.get('date', '').strip()
+    staff_id      = str(body.get('staff_id', '')).strip()
+    new_start_raw = body.get('new_shift_start', '')  # e.g. "08:00" or minutes int
+    new_end_raw   = body.get('new_shift_end', '')
+
+    if not date_str or not staff_id:
+        return jsonify({'error': 'date and staff_id required'}), 400
+
+    def _parse_time(val):
+        if isinstance(val, (int, float)):
+            return int(val)
+        s = str(val).strip()
+        if ':' in s:
+            h, m = s.split(':', 1)
+            return int(h) * 60 + int(m)
+        return int(s)
+
+    try:
+        new_start = _parse_time(new_start_raw)
+        new_end   = _parse_time(new_end_raw)
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid shift times. Use HH:MM format.'}), 400
+
+    if new_end <= new_start:
+        new_end += 1440  # cross-midnight shift
+
+    if date_str not in _st_shift_overrides:
+        _st_shift_overrides[date_str] = {}
+    _st_shift_overrides[date_str][staff_id] = {
+        'shift_start': new_start,
+        'shift_end':   new_end,
+    }
+
+    # Clear cached result and block assignments so the re-optimised schedule is clean
+    _st_result_cache.pop(date_str, None)
+    _st_manual_block_assigns.pop(date_str, None)
+
+    result = _get_short_term_schedule(date_str)
+    if 'error' in result:
+        return jsonify(result), 404
+
+    _snapshot_all_optimizer_blocks_st(result, date_str)
+    _apply_st_manual_block_assigns_to_result(result, date_str)
+    _st_result_cache[date_str] = result
+    result['shift_move_status'] = {
+        'staff_id':    staff_id,
+        'date':        date_str,
+        'shift_start': new_start,
+        'shift_end':   new_end,
+        'applied':     True,
+    }
+    return jsonify(result)
 
 
 @app.route('/api/intraday')

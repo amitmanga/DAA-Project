@@ -33,6 +33,8 @@ let ST_DATES = [];
 let ST_CURRENT_DATE = null;
 let ST_DATA = null;
 let ST_ACTIVE_TAB = 'staff-timeline';
+let _stAllocSelection = { skill: null, terminal: null, block: null };
+const _stAllocLog = [];
 const ST_CHARTS = {};
 let ST_OPT_RESULTS_CACHE = null; // persists across sub-tab switches
 
@@ -282,6 +284,7 @@ function renderShortTermDay() {
     <div class="sub-tabs" style="margin-top:20px">
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='roster-board'?'active':''}" data-sttab="roster-board">📋 Roster Board</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='staff-allocation'?'active':''}" data-sttab="staff-allocation">📊 Staff Allocation</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='opt'?'active':''}" data-sttab="opt">⚙ Optimization</button>
     </div>
     <div id="st-sub-content"></div>
@@ -803,6 +806,7 @@ function renderSTSubContent() {
   else if (ST_ACTIVE_TAB === 'staff-timeline') renderSTRosterTimeline(el);
   else if (ST_ACTIVE_TAB === 'roster-board') renderSTRosterBoard(el);
   else if (ST_ACTIVE_TAB === 'opt') renderSTOptimization(el);
+  else if (ST_ACTIVE_TAB === 'staff-allocation') renderSTStaffAllocation(el);
 }
 
 // ── Roster Timeline Tab ──────────────────────────────────────────
@@ -2569,6 +2573,489 @@ function renderSTGateTimeline(container) {
       <!-- Legend -->
       <div class="gt-legend">${legendHtml}</div>
     </div>`;
+}
+
+
+// ── Staff Allocation Tab ────────────────────────────────────────
+function renderSTStaffAllocation(container) {
+  if (!ST_DATA) {
+    container.innerHTML = `<div class="panel mt-16"><div class="loading-spinner"><div class="spinner"></div><span>Loading data…</span></div></div>`;
+    return;
+  }
+
+  const tasks    = ST_DATA.tasks  || [];
+  const allStaff = ST_DATA.staff  || [];
+  const date     = ST_DATA.date   || '';
+  const staffById = {};
+  allStaff.forEach(s => { const sid = String(s.id || ''); if (sid) staffById[sid] = s; });
+
+  // ── helpers ──────────────────────────────────────────────────
+  function _skillColor(sk) {
+    const found = Object.keys(ST_SKILL_COLOR).find(k => k.toLowerCase() === (sk||'').toLowerCase());
+    return found ? ST_SKILL_COLOR[found] : '#6c757d';
+  }
+  function _escAttr(v) {
+    return String(v ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function _staffSkills(s) {
+    return ['skill1','skill2','skill3','skill4'].map(k=>(s?.[k]||'').trim()).filter(Boolean);
+  }
+  function _staffHasSkill(s, skill) {
+    return _staffSkills(s).some(sk => sk.toLowerCase() === (skill||'').toLowerCase());
+  }
+
+  function buildMatrixData() {
+    const matrix = {};
+    tasks.forEach(t => {
+      const sk  = t.skill || 'Unknown';
+      const term = t.terminal || 'ALL';
+      const rowKey = sk + '||' + term;
+      const h = Math.floor((t.start_mins || 0) / 60);
+      const bId = `h${String(h).padStart(2,'0')}`;
+      if (!matrix[rowKey]) matrix[rowKey] = {};
+      if (!matrix[rowKey][bId]) matrix[rowKey][bId] = {
+        req:0, _slotReq:{}, _staffSet:new Set(), skill:sk, terminal:term, tasks:[]
+      };
+      const cell = matrix[rowKey][bId];
+      cell.tasks.push(t);
+      const sm = t.start_mins || 0;
+      cell._slotReq[sm] = (cell._slotReq[sm]||0) + (t.staff_needed||0);
+      (t.assigned||[]).filter(Boolean).forEach(id => cell._staffSet.add(String(id)));
+    });
+    Object.values(matrix).forEach(byBlock => Object.values(byBlock).forEach(cell => {
+      const vals = Object.values(cell._slotReq);
+      cell.req  = vals.length ? Math.max(...vals) : 0;
+      cell.asgn = cell._staffSet.size;
+      cell.gap  = Math.max(0, cell.req - cell.asgn);
+      cell.pct  = cell.req > 0 ? Math.round((cell.asgn / cell.req) * 100) : 100;
+    }));
+    return matrix;
+  }
+
+  function buildGapList(matrix) {
+    const list = [];
+    Object.entries(matrix).forEach(([rowKey, byBlock]) => {
+      const [sk, term] = rowKey.split('||');
+      Object.entries(byBlock).forEach(([bId, cell]) => {
+        if (cell.gap > 0) list.push({ rowKey, skill:sk, terminal:term, blockId:bId, ...cell });
+      });
+    });
+    list.sort((a,b) => a.pct - b.pct || b.gap - a.gap);
+    return list;
+  }
+
+  function _cellColor(pct, gap) {
+    if (gap === 0 && pct >= 100) return { bg:'#1a3a1a', border:'#2ecc71', text:'#2ecc71' };
+    if (pct >= 100)              return { bg:'#1a3a1a', border:'#2ecc71', text:'#2ecc71' };
+    if (pct >= 70)               return { bg:'#3a2a00', border:'#f39c12', text:'#f39c12' };
+    return                              { bg:'#3a1a1a', border:'#e74c3c', text:'#e74c3c' };
+  }
+
+  const matrix   = buildMatrixData();
+  const gapList  = buildGapList(matrix);
+  const rowKeys  = Object.keys(matrix).sort((a,b) => {
+    const [ska,ta] = a.split('||'); const [skb,tb] = b.split('||');
+    return ska.localeCompare(skb) || ta.localeCompare(tb);
+  });
+  const allBlocks = ST_HOUR_BLOCKS;
+  const allCells  = Object.values(matrix).flatMap(b => Object.values(b));
+  const covPct    = allCells.length ? Math.round(allCells.reduce((a,c)=>a+Math.min(c.pct,100),0)/allCells.length) : 100;
+  const totalGaps = allCells.reduce((a,c)=>a+c.gap,0);
+  const totalOnDuty = new Set(tasks.flatMap(t=>(t.assigned||[]).filter(Boolean))).size;
+
+  let _selSkill    = _stAllocSelection.skill;
+  let _selTerminal = _stAllocSelection.terminal;
+  let _selBlock    = _stAllocSelection.block;
+
+  function _setSelection(skill, terminal, block) {
+    _selSkill = skill; _selTerminal = terminal; _selBlock = block;
+    _stAllocSelection = { skill, terminal, block };
+  }
+
+  container.innerHTML = `
+  <div class="rl-shell">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px 12px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div>
+        <div style="font-size:1.25rem;font-weight:700;color:var(--text);">Staff Allocation — ${date}</div>
+        <div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Click a cell to select a skill × hour block, then assign or remove staff · Use Shift Move to change a staff member's shift window</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div class="rl-kpi-tile" style="border-right:1px solid var(--border);">
+        <div class="rl-kpi-val" style="color:var(--info);">${totalOnDuty}</div>
+        <div class="rl-kpi-lbl">On Duty</div>
+      </div>
+      <div class="rl-kpi-tile" style="border-right:1px solid var(--border);">
+        <div class="rl-kpi-val" style="color:${covPct>=90?'var(--ok)':covPct>=70?'var(--warn)':'var(--crit)'};">${covPct}%</div>
+        <div class="rl-kpi-lbl">Avg Coverage</div>
+      </div>
+      <div class="rl-kpi-tile" style="border-right:1px solid var(--border);">
+        <div class="rl-kpi-val" style="color:${totalGaps===0?'var(--ok)':'var(--crit)'};">${totalGaps}</div>
+        <div class="rl-kpi-lbl">Total Gaps</div>
+      </div>
+      <div class="rl-kpi-tile" style="border-right:1px solid var(--border);">
+        <div class="rl-kpi-val" style="color:var(--warn);">${gapList.length}</div>
+        <div class="rl-kpi-lbl">Blocks w/ Gap</div>
+      </div>
+      <div class="rl-kpi-tile" style="flex:1;">
+        <div style="display:flex;gap:14px;align-items:center;font-size:0.75rem;">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#2ecc71;margin-right:4px;vertical-align:middle;"></span>≥100%</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#f39c12;margin-right:4px;vertical-align:middle;"></span>70–99%</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#e74c3c;margin-right:4px;vertical-align:middle;"></span>&lt;70%</span>
+          <span style="margin-left:6px;color:var(--muted);">Cell: <strong style="color:var(--text);">REQ / ASGN</strong></span>
+        </div>
+        <div class="rl-kpi-lbl" style="margin-top:4px;">Legend</div>
+      </div>
+    </div>
+    <div class="rl-main">
+      <div class="rl-left-pane">
+        <div class="rl-matrix-wrap" id="st-rl-matrix-wrap">
+          <table style="border-collapse:collapse;width:100%;min-width:${132+allBlocks.length*48}px;font-size:0.72rem;" id="st-rl-matrix-table">
+            <thead>
+              <tr style="background:var(--surface-2,#1e1e1e);position:sticky;top:0;z-index:2;">
+                <th class="rl-skill-head">Skill / Touchpoint</th>
+                ${allBlocks.map(b=>`<th class="rl-block-head">${b.label}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody id="st-rl-matrix-body"></tbody>
+          </table>
+        </div>
+        <div class="rl-gap-pane">
+          <div style="padding:8px 12px 4px;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;position:sticky;top:0;background:var(--surface-2,#1e1e1e);z-index:1;">
+            Gap Priority — worst first
+          </div>
+          <div id="st-rl-gap-list" style="padding:0 8px 8px;"></div>
+        </div>
+      </div>
+      <div class="rl-right-pane">
+        <div class="rl-staff-panel" id="st-rl-staff-panel">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--muted);text-align:center;gap:8px;">
+            <div style="font-size:2rem;opacity:0.3;">←</div>
+            <div style="font-size:0.85rem;">Select a cell in the heatmap to manage staff for that block</div>
+          </div>
+        </div>
+        <!-- Shift Move panel -->
+        <div style="flex-shrink:0;border-top:1px solid var(--border);padding:14px 16px;background:var(--surface-2,#141414);">
+          <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">Shift Move</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <select id="st-shift-move-staff" style="width:100%;padding:6px 8px;background:var(--surface-3,#1e1e1e);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:0.78rem;">
+              <option value="">— Select staff member —</option>
+              ${allStaff.map(s => {
+                const sid = String(s.id||'');
+                const nm  = s.name || sid;
+                const sh  = s.shift_label || s.shift || '';
+                return `<option value="${_escAttr(sid)}">${_escAttr(nm)} (${_escAttr(sh)})</option>`;
+              }).join('')}
+            </select>
+            <select id="st-shift-move-preset" style="width:100%;padding:6px 8px;background:var(--surface-3,#1e1e1e);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:0.78rem;">
+              <option value="">— Select new shift —</option>
+              <option value="00:00|12:00">Early &nbsp; 00:00 – 12:00</option>
+              <option value="06:00|18:00">Mid &nbsp;&nbsp;&nbsp; 06:00 – 18:00</option>
+              <option value="12:00|00:00">Late &nbsp;&nbsp; 12:00 – 00:00</option>
+              <option value="16:00|04:00">Evening &nbsp;16:00 – 04:00</option>
+              <option value="22:00|10:00">Night &nbsp; 22:00 – 10:00</option>
+            </select>
+            <button id="st-shift-move-btn"
+              style="padding:6px 14px;background:var(--info);color:#fff;border:none;border-radius:6px;font-size:0.78rem;font-weight:600;cursor:pointer;">
+              Move Shift
+            </button>
+            <div id="st-shift-move-msg" style="font-size:0.75rem;min-height:18px;"></div>
+          </div>
+        </div>
+        <!-- Move log -->
+        <div style="flex-shrink:0;border-top:1px solid var(--border);max-height:160px;overflow-y:auto;background:var(--surface-2,#141414);">
+          <div style="padding:8px 14px 4px;font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--surface-2,#141414);z-index:1;">
+            <span>Move History</span>
+            <span id="st-rl-log-count" style="font-size:0.7rem;color:var(--info);">${_stAllocLog.length} moves</span>
+          </div>
+          <div id="st-rl-log-body" style="padding:0 14px 8px;font-size:0.75rem;"></div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  // ── Heatmap render ─────────────────────────────────────────────
+  function renderMatrix(mx) {
+    const tbody = document.getElementById('st-rl-matrix-body');
+    if (!tbody) return;
+    const skillOrder = [...new Set(rowKeys.map(rk=>rk.split('||')[0]))];
+    let html = '';
+    for (const sk of skillOrder) {
+      const skColor  = _skillColor(sk);
+      const termRows = rowKeys.filter(rk=>rk.split('||')[0]===sk);
+      const multiTerm = termRows.length > 1;
+      termRows.forEach((rowKey, idx) => {
+        const term    = rowKey.split('||')[1];
+        const byBlock = mx[rowKey] || {};
+        const isFirst = idx === 0;
+        const cells = allBlocks.map(b => {
+          const cell = byBlock[b.id];
+          if (!cell) return `<td style="padding:4px 2px;text-align:center;"><span style="font-size:0.65rem;color:var(--muted);opacity:.4;">—</span></td>`;
+          const c     = _cellColor(cell.pct, cell.gap);
+          const isSel = (_selSkill===sk && _selTerminal===term && _selBlock===b.id);
+          return `<td style="padding:3px 2px;text-align:center;">
+            <div class="rl-cell${isSel?' rl-cell-sel':''}"
+              data-skill="${_escAttr(sk)}" data-terminal="${_escAttr(term)}" data-block="${b.id}"
+              style="display:inline-block;min-width:40px;padding:4px 4px;border-radius:5px;
+                background:${c.bg};border:1px solid ${isSel?'#fff':c.border};
+                color:${c.text};font-size:0.7rem;font-weight:700;cursor:pointer;
+                transition:transform .1s;${isSel?'transform:scale(1.08);box-shadow:0 0 0 2px #fff4;':''}">
+              ${cell.req}/${cell.asgn}
+            </div></td>`;
+        }).join('');
+        const termBadge = multiTerm
+          ? ` <span style="font-size:0.6rem;font-weight:700;background:${skColor}25;color:${skColor};border:1px solid ${skColor}50;border-radius:3px;padding:1px 5px;margin-left:4px;">${term}</span>` : '';
+        const rowLabel = `<span style="color:${skColor};font-weight:600;">${sk}</span>${termBadge}`;
+        const topBorder = isFirst ? 'border-top:1px solid var(--border);' : '';
+        html += `<tr style="border-bottom:1px solid var(--border)05;${topBorder}">
+          <td class="rl-skill-cell" title="${sk}${multiTerm?' — '+term:''}">${rowLabel}</td>${cells}</tr>`;
+      });
+    }
+    tbody.innerHTML = html;
+    tbody.querySelectorAll('.rl-cell').forEach(el2 => {
+      el2.addEventListener('click', () => {
+        _setSelection(el2.dataset.skill, el2.dataset.terminal, el2.dataset.block);
+        renderMatrix(mx);
+        renderStaffPanel(mx);
+        renderGapList(gapList);
+      });
+    });
+  }
+
+  // ── Gap list render ────────────────────────────────────────────
+  function renderGapList(gl) {
+    const el2 = document.getElementById('st-rl-gap-list');
+    if (!el2) return;
+    if (!gl.length) { el2.innerHTML = `<div style="padding:10px 4px;font-size:0.78rem;color:var(--ok);">✓ No gaps — all blocks covered</div>`; return; }
+    el2.innerHTML = gl.slice(0, 12).map(g => {
+      const b    = allBlocks.find(x=>x.id===g.blockId)||{};
+      const c    = _cellColor(g.pct, g.gap);
+      const isSel = (_selSkill===g.skill && _selTerminal===g.terminal && _selBlock===g.blockId);
+      return `<div class="rl-gap-item${isSel?' rl-gap-sel':''}"
+        data-skill="${_escAttr(g.skill)}" data-terminal="${_escAttr(g.terminal)}" data-block="${g.blockId}"
+        style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:3px;cursor:pointer;
+          background:${isSel?'var(--surface-3,#2a2a2a)':'transparent'};border:1px solid ${isSel?'var(--border)':'transparent'};">
+        <div style="width:7px;height:7px;border-radius:50%;background:${c.border};flex-shrink:0;"></div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:0.72rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.skill}</div>
+          <div style="font-size:0.65rem;color:var(--muted);">${b.label||g.blockId} · ${g.terminal}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-size:0.72rem;font-weight:700;color:${c.text};">${g.req}/${g.asgn}</div>
+          <div style="font-size:0.65rem;color:var(--crit);">-${g.gap} staff</div>
+        </div>
+      </div>`;
+    }).join('');
+    el2.querySelectorAll('.rl-gap-item').forEach(el3 => {
+      el3.addEventListener('click', () => {
+        _setSelection(el3.dataset.skill, el3.dataset.terminal, el3.dataset.block);
+        renderMatrix(mx);
+        renderStaffPanel(mx);
+        renderGapList(gl);
+      });
+    });
+  }
+
+  // ── Staff panel render ─────────────────────────────────────────
+  function renderStaffPanel(mx) {
+    const panel = document.getElementById('st-rl-staff-panel');
+    if (!panel || !_selSkill || !_selTerminal || !_selBlock) return;
+    const rowKey = _selSkill + '||' + _selTerminal;
+    const cell   = (mx[rowKey]||{})[_selBlock];
+    const blk    = allBlocks.find(b=>b.id===_selBlock)||{};
+    if (!cell) { panel.innerHTML = `<div style="color:var(--muted);font-size:0.85rem;padding:20px;">No tasks in this block.</div>`; return; }
+    const c = _cellColor(cell.pct, cell.gap);
+    const assignedIds  = new Set(cell._staffSet);
+    const blockStart   = blk.start ?? 0;
+    const blockEnd     = blk.end ?? 1440;
+    function isAssignedElsewhere(sid) {
+      return tasks.some(t => !(t.start_mins < blockEnd && t.end_mins > blockStart) ? false :
+        (t.assigned||[]).map(String).includes(String(sid)));
+    }
+    let eligible = allStaff.filter(s => {
+      const sid = String(s.id||'');
+      if (assignedIds.has(sid)) return false;
+      if (isAssignedElsewhere(sid)) return false;
+      const shStart = s.shift_start_mins ?? s.shift_start ?? 0;
+      const shEnd   = s.shift_end_mins ?? s.shift_end ?? 1440;
+      return _staffHasSkill(s, _selSkill) && shStart <= blockStart && shEnd >= blockEnd;
+    });
+    const assignedList = allStaff.filter(s => assignedIds.has(String(s.id||'')));
+    const terms     = _selTerminal || '—';
+    const coverBar  = Math.min(cell.pct, 100);
+    panel.innerHTML = `
+      <div style="background:var(--surface-2,#1e1e1e);border-radius:10px;padding:14px 16px;margin-bottom:16px;border:1px solid ${c.border}40;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+          <div>
+            <div style="font-size:0.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px;">Selected Hour</div>
+            <div style="font-size:1rem;font-weight:700;color:${_skillColor(_selSkill)};">${_selSkill}</div>
+            <div style="font-size:0.78rem;color:var(--muted);margin-top:2px;">${blk.label||_selBlock} &nbsp;·&nbsp; Terminal: ${terms}</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:1.6rem;font-weight:800;color:${c.text};line-height:1;">${cell.req}/${cell.asgn}</div>
+            <div style="font-size:0.68rem;color:var(--muted);">REQ / ASGN</div>
+          </div>
+        </div>
+        <div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden;">
+          <div style="width:${coverBar}%;height:100%;background:${c.border};border-radius:3px;transition:width .3s;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.65rem;color:var(--muted);margin-top:3px;">
+          <span>${cell.pct}% coverage</span>
+          <span>${cell.gap>0?`<span style="color:var(--crit);">-${cell.gap} gap</span>`:'<span style="color:var(--ok);">✓ met</span>'}</span>
+        </div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Currently Assigned (${assignedList.length})</div>
+        ${assignedList.length===0
+          ? `<div style="font-size:0.78rem;color:var(--muted);padding:8px 0;">No staff assigned yet.</div>`
+          : assignedList.map(s=>{
+              const sid=String(s.id||''); const nm=s.name||sid; const sk1=s.skill1||'—';
+              return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-2,#1e1e1e);border-radius:7px;margin-bottom:5px;border:1px solid var(--border);">
+                <div style="width:28px;height:28px;border-radius:50%;background:${_skillColor(sk1)}20;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:${_skillColor(sk1)};flex-shrink:0;">${(nm[0]||'?').toUpperCase()}</div>
+                <div style="flex:1;min-width:0;"><div style="font-size:0.78rem;font-weight:600;color:var(--text);">${nm}</div><div style="font-size:0.65rem;color:var(--muted);">${_staffSkills(s).join(' / ')||sk1} · ID ${sid}</div></div>
+                <button class="rl-remove-btn" data-sid="${_escAttr(sid)}" data-sname="${_escAttr(nm)}"
+                  style="padding:4px 10px;background:transparent;border:1px solid var(--crit);color:var(--crit);border-radius:5px;font-size:0.7rem;font-weight:600;cursor:pointer;">✕ Remove</button>
+              </div>`;
+            }).join('')}
+      </div>
+      <div>
+        <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Available to Assign (${eligible.length})</div>
+        ${eligible.length===0
+          ? `<div style="font-size:0.78rem;color:var(--muted);padding:8px 0;">No eligible staff free for this hour.</div>`
+          : eligible.map(s=>{
+              const sid=String(s.id||''); const nm=s.name||sid; const sk1=s.skill1||'—';
+              const util=s.utilisation_pct||0;
+              const uColor=util>=85?'var(--ok)':util>=50?'var(--info)':'var(--muted)';
+              return `<div style="display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-2,#1e1e1e);border-radius:7px;margin-bottom:5px;border:1px solid var(--border);">
+                <div style="width:28px;height:28px;border-radius:50%;background:${_skillColor(sk1)}20;display:flex;align-items:center;justify-content:center;font-size:0.65rem;font-weight:700;color:${_skillColor(sk1)};flex-shrink:0;">${(nm[0]||'?').toUpperCase()}</div>
+                <div style="flex:1;min-width:0;"><div style="font-size:0.78rem;font-weight:600;color:var(--text);">${nm}</div><div style="font-size:0.65rem;color:var(--muted);">${_staffSkills(s).join(' / ')||sk1} · ID ${sid}</div></div>
+                <div style="font-size:0.65rem;color:${uColor};font-weight:600;margin-right:6px;">${util}% util</div>
+                <button class="rl-assign-btn" data-sid="${_escAttr(sid)}" data-sname="${_escAttr(nm)}"
+                  style="padding:4px 10px;background:var(--info);color:#fff;border:none;border-radius:5px;font-size:0.7rem;font-weight:600;cursor:pointer;">+ Assign</button>
+              </div>`;
+            }).join('')}
+      </div>`;
+    panel.querySelectorAll('.rl-assign-btn').forEach(btn =>
+      btn.addEventListener('click', () => _doMove('assign', btn.dataset.sid, btn.dataset.sname)));
+    panel.querySelectorAll('.rl-remove-btn').forEach(btn =>
+      btn.addEventListener('click', () => _doMove('unassign', btn.dataset.sid, btn.dataset.sname)));
+  }
+
+  // ── Log render ─────────────────────────────────────────────────
+  function renderLog() {
+    const el2  = document.getElementById('st-rl-log-body');
+    const cnt  = document.getElementById('st-rl-log-count');
+    if (!el2) return;
+    if (cnt) cnt.textContent = `${_stAllocLog.length} moves`;
+    if (!_stAllocLog.length) { el2.innerHTML = `<div style="color:var(--muted);padding:6px 0;">No moves yet.</div>`; return; }
+    el2.innerHTML = [..._stAllocLog].reverse().map(lg => {
+      const col = lg.action==='assign'?'var(--ok)':'var(--crit)';
+      return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)05;">
+        <span style="color:${col};font-weight:700;flex-shrink:0;">${lg.action==='assign'?'+ ':'✕ '}</span>
+        <span style="flex:1;">${lg.staffName} → <strong>${lg.skill}</strong> ${lg.blockLabel}</span>
+        <span style="color:var(--muted);flex-shrink:0;font-size:0.65rem;">${lg.time}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Assign/Unassign action ─────────────────────────────────────
+  async function _doMove(action, staffId, staffName) {
+    const blk    = allBlocks.find(b=>b.id===_selBlock)||{};
+    const rowKey = _selSkill + '||' + _selTerminal;
+    const cell   = (matrix[rowKey]||{})[_selBlock];
+    if (!cell) return;
+    const currentAssigned = [...(cell._staffSet||[])].map(String);
+    const payload = {
+      date, staff_id: staffId, skill: _selSkill, terminal: _selTerminal,
+      block_start: blk.start, block_end: blk.end,
+      action, current_assigned: currentAssigned,
+    };
+    document.querySelectorAll('.rl-assign-btn,.rl-remove-btn').forEach(b => { b.disabled=true; b.style.opacity='0.5'; });
+    try {
+      const res  = await fetch('/api/short-term/assign-block', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error||'Request failed');
+      const ms = data.move_status||{};
+      if (ms.applied===false) throw new Error(ms.error||'Move was not applied.');
+      _stAllocLog.push({
+        action, staffId, staffName,
+        skill: `${_selSkill} (${_selTerminal})`,
+        blockLabel: blk.label||_selBlock,
+        time: new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
+      });
+      ST_DATA = data;
+      try { renderSTKPIs(data.kpis); } catch(_) {}
+      try { renderSTAlerts(data.alerts, data.date); } catch(_) {}
+      const saved = { skill: _selSkill, terminal: _selTerminal, block: _selBlock };
+      _stAllocSelection = saved;
+      renderSTStaffAllocation(container);
+      setTimeout(() => {
+        const c2 = container.querySelector(
+          `.rl-cell[data-skill="${CSS.escape(saved.skill)}"][data-terminal="${CSS.escape(saved.terminal)}"][data-block="${saved.block}"]`
+        );
+        if (c2) c2.click();
+      }, 60);
+    } catch (err) {
+      const panel = document.getElementById('st-rl-staff-panel');
+      if (panel) {
+        const errDiv = document.createElement('div');
+        errDiv.style.cssText = 'padding:8px 12px;background:#3a1a1a;border:1px solid var(--crit);border-radius:6px;font-size:0.78rem;color:var(--crit);margin-bottom:10px;';
+        errDiv.textContent = '✕ ' + err.message;
+        panel.prepend(errDiv);
+      }
+    } finally {
+      document.querySelectorAll('.rl-assign-btn,.rl-remove-btn').forEach(b => { b.disabled=false; b.style.opacity='1'; });
+    }
+  }
+
+  // ── Shift Move action ──────────────────────────────────────────
+  const shiftMoveBtn = document.getElementById('st-shift-move-btn');
+  if (shiftMoveBtn) {
+    shiftMoveBtn.addEventListener('click', async () => {
+      const staffId    = document.getElementById('st-shift-move-staff')?.value||'';
+      const presetVal  = document.getElementById('st-shift-move-preset')?.value||'';
+      const [newStart, newEnd] = presetVal ? presetVal.split('|') : ['',''];
+      const msgEl      = document.getElementById('st-shift-move-msg');
+      if (!staffId)  { if (msgEl) { msgEl.style.color='var(--crit)'; msgEl.textContent='Select a staff member.'; } return; }
+      if (!presetVal) { if (msgEl) { msgEl.style.color='var(--crit)'; msgEl.textContent='Select a shift.'; } return; }
+      shiftMoveBtn.disabled = true; shiftMoveBtn.textContent = 'Moving…';
+      if (msgEl) msgEl.textContent = '';
+      try {
+        const res = await fetch('/api/short-term/shift-move', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ date, staff_id: staffId, new_shift_start: newStart, new_shift_end: newEnd }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error||'Shift move failed');
+        const staff = allStaff.find(s=>String(s.id||'')===staffId);
+        const nm    = staff ? (staff.name||staffId) : staffId;
+        _stAllocLog.push({
+          action: 'shift-move', staffId, staffName: nm,
+          skill: `Shift → ${newStart}–${newEnd}`,
+          blockLabel: date,
+          time: new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
+        });
+        if (msgEl) { msgEl.style.color='var(--ok)'; msgEl.textContent=`✓ Shift moved to ${newStart}–${newEnd}`; }
+        ST_DATA = data;
+        try { renderSTKPIs(data.kpis); } catch(_) {}
+        try { renderSTAlerts(data.alerts, data.date); } catch(_) {}
+        _stAllocSelection = { skill: null, terminal: null, block: null };
+        renderSTStaffAllocation(container);
+      } catch (err) {
+        if (msgEl) { msgEl.style.color='var(--crit)'; msgEl.textContent='✕ '+err.message; }
+      } finally {
+        shiftMoveBtn.disabled = false; shiftMoveBtn.textContent = 'Move Shift';
+      }
+    });
+  }
+
+  // ── Initial paint ──────────────────────────────────────────────
+  renderMatrix(matrix);
+  renderGapList(gapList);
+  renderLog();
+  if (_selSkill && _selTerminal && _selBlock) renderStaffPanel(matrix);
 }
 
 
