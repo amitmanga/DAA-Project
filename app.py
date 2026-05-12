@@ -87,7 +87,7 @@ def clean_employee_id(value):
 
 def parse_date(s, fmt='%d-%m-%y'):
     s = s.strip()
-    for f in ('%d-%m-%y', '%d-%m-%Y', '%d-%b-%y', '%d-%b-%Y'):
+    for f in ('%Y-%m-%d', '%d-%m-%y', '%d-%m-%Y', '%d-%b-%y', '%d-%b-%Y'):
         try:
             return datetime.strptime(s, f)
         except ValueError:
@@ -334,6 +334,16 @@ FLIGHT_CATEGORY_PAX_CAPACITY = {
 
 PAX_CONFIG_CACHE = None
 PAX_PROFILE_CACHE = None
+LONG_TERM_TARGET_YEAR = 2026
+LONG_TERM_PAX_FORECAST_FILE = 'forecast_pax_results_2026.csv'
+LONG_TERM_HISTORICAL_PAX_FILE = 'historical_pax_data.csv'
+
+# The weekly P50 file contains total passenger footfall only. These conservative
+# operating shares keep the long-term FTE model independent from flight movements.
+LONG_TERM_TERMINAL_SHARE = {'T1': 0.50, 'T2': 0.50}
+LONG_TERM_DEPARTURE_SHARE = 0.50
+LONG_TERM_ARRIVAL_SHARE = 0.50
+LONG_TERM_CBP_DEPARTURE_SHARE = 0.15
 
 
 def _pax_work_from_col(col_name):
@@ -570,14 +580,132 @@ def _long_term_pax_work_mix(category, status, terminal):
     return [f'{terminal}_{w}' for w in work]
 
 
+def _float_or_zero(value):
+    try:
+        return float(str(value or '').strip().replace(',', ''))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _row_value(row, *names):
+    lowered = {str(k).strip().lower(): v for k, v in row.items()}
+    for name in names:
+        val = lowered.get(name.lower())
+        if val not in (None, ''):
+            return val
+    return ''
+
+
+def _first_monday_in_year(year):
+    d = datetime(year, 1, 1)
+    return d + timedelta(days=(7 - d.weekday()) % 7)
+
+
+def load_weekly_passenger_forecast(target_year=LONG_TERM_TARGET_YEAR):
+    """Return weekly P50 passenger footfall keyed by the long-term week key."""
+    rows = read_csv(LONG_TERM_PAX_FORECAST_FILE)
+    parsed = []
+    for idx, row in enumerate(rows):
+        pax = _float_or_zero(_row_value(row, 'P50_Pax', 'p50_pax'))
+        if pax <= 0:
+            continue
+        week_raw = _row_value(row, 'Week', 'week')
+        week_start = parse_date(str(week_raw)) if week_raw else None
+        parsed.append({
+            'idx': idx,
+            'source_week': str(week_raw or '').strip(),
+            'week_start': week_start,
+            'p50_pax': pax,
+        })
+
+    if not parsed:
+        return {}
+
+    rows_in_target_year = [
+        item for item in parsed
+        if item['week_start'] and item['week_start'].year == target_year
+    ]
+    use_file_dates = len(rows_in_target_year) >= max(1, len(parsed) // 2)
+    sequential_start = _first_monday_in_year(target_year)
+
+    forecast = {}
+    for item in parsed:
+        if use_file_dates and item['week_start']:
+            week_start = item['week_start']
+        else:
+            week_start = sequential_start + timedelta(weeks=item['idx'])
+        if week_start.year != target_year:
+            continue
+        wk_key = week_start.strftime('%Y-W%V')
+        forecast[wk_key] = {
+            'week_start': week_start,
+            'p50_pax': item['p50_pax'],
+            'source_week': item['source_week'],
+        }
+    return forecast
+
+
+def load_historical_weekly_passenger_footfall(years=(2024, 2025)):
+    """Return historical weekly passenger footfall rows for the requested years."""
+    rows = read_csv(LONG_TERM_HISTORICAL_PAX_FILE)
+    wanted = {int(y) for y in years}
+    out = []
+    for row in rows:
+        week_start = parse_date(str(_row_value(row, 'week')))
+        if not week_start:
+            continue
+        year = week_start.year
+        if year not in wanted:
+            continue
+        pax = _float_or_zero(_row_value(row, 'pax'))
+        if pax <= 0:
+            continue
+        out.append({
+            'week_start': week_start,
+            'year': year,
+            'month': week_start.strftime('%b'),
+            'passengers': pax,
+        })
+    return out
+
+
+def _weekly_passengers_from_demand(week_demand):
+    return sum(float(v or 0) for v in week_demand.values())
+
+
+def _long_term_weekly_pax_work_columns(weekly_pax):
+    """Split total weekly footfall into passenger process columns."""
+    allocations = []
+    dep_pax = weekly_pax * LONG_TERM_DEPARTURE_SHARE
+    arr_pax = weekly_pax * LONG_TERM_ARRIVAL_SHARE
+
+    for terminal, term_share in LONG_TERM_TERMINAL_SHARE.items():
+        terminal_dep = dep_pax * term_share
+        terminal_arr = arr_pax * term_share
+        for work in ('Checkin', 'Security', 'Lounge', 'Boarding'):
+            allocations.append((f'{terminal}_{work}', terminal_dep))
+        allocations.append((f'{terminal}_CBP', terminal_dep * LONG_TERM_CBP_DEPARTURE_SHARE))
+        for work in ('Immigration', 'Baggage'):
+            allocations.append((f'{terminal}_{work}', terminal_arr))
+    return allocations
+
+
 def compute_week_start(d):
     """Return Monday of the week containing date d."""
     return d - timedelta(days=d.weekday())
 
 
 def load_weekly_demand():
-    rows = read_csv('Weekly_flight_demand.csv')
-    return [r for r in rows if r.get('Season_Code') and r.get('Flight_Category', '').strip().lower() != 'cargo']
+    forecast = load_weekly_passenger_forecast()
+    rows = []
+    for wk_key, item in sorted(forecast.items()):
+        rows.append({
+            'Week': wk_key,
+            'Week_Start': item['week_start'].strftime('%Y-%m-%d'),
+            'P50_Pax': item['p50_pax'],
+            'Data_type': 'Forecast',
+        })
+    return rows
 
 
 def load_staff():
@@ -607,42 +735,11 @@ def load_absences():
 
 
 def weekly_demand_2026():
-    """Returns weekly movement groups with enough metadata to estimate passengers.
-
-    Uses S26/W26 Forecast for weeks W15-W53.
-    Uses W25 Historical for weeks W01-W14 (Jan-Mar 2026, winter season).
-    """
-    rows = load_weekly_demand()
+    """Return weekly P50 passenger footfall from forecast_pax_results_2026.csv."""
     by_week = defaultdict(lambda: defaultdict(float))
-
-    for r in rows:
-        sc    = r.get('Season_Code', '').strip()
-        dtype = r.get('Data_type', '').strip()
-        d     = parse_date(r.get('Week_Start', '').strip())
-        if not d or d.year != 2026:
-            continue
-
-        include = sc in ('S26', 'W26') or \
-                  (dtype == 'Historical' and sc == 'W25')
-        if not include:
-            continue
-
-        week_key = d.strftime('%Y-W%V')
-
-        # Be permissive with input column names for aircraft and load-factor.
-        flight_category = r.get('Flight_Category', '').strip()
-        status = r.get('Status', '').strip()
-        terminal = r.get('Terminal', '').strip()
-        aircraft = (r.get('Aircraft_Family') or r.get('aircraft_type') or r.get('Aircraft_Type') or r.get('Aircraft') or r.get('AircraftFamily') or '').strip()
-        load_factor = (r.get('Avg_Load_Factor_Pct') or r.get('Avg_Load_Factor') or r.get('Load_Factor_Pct') or r.get('Load_Factor') or '').strip()
-
-        key = (flight_category, status, terminal, aircraft, load_factor)
-        try:
-            mvmt = float(r.get('Weekly_Movements', 0) or 0)
-        except:
-            mvmt = 0
-        by_week[week_key][key] += mvmt
-
+    for wk_key, item in load_weekly_passenger_forecast().items():
+        key = ('P50 Passenger Forecast', 'Passenger Footfall', 'ALL', '', '')
+        by_week[wk_key][key] += item['p50_pax']
     return dict(by_week)
 
 
@@ -650,11 +747,9 @@ def weekly_staff_required(demand_by_week):
     """Returns {week_key: fte_required} and {week_key: {skill: fte}}.
 
     Methodology:
-    1. Passenger estimate per row = Weekly_Movements × aircraft_capacity × load_factor
-    2. All passengers flow through every applicable stage (no even-split across stages):
-         DEP: Checkin, Security, Lounge, Boarding (+ CBP for Transatlantic)
-         ARR: Immigration, Baggage
-    3. FTE per skill = (weekly_pax / PAX_Config_rate) / PAX_SLOTS_PER_FTE_WEEK
+    1. Weekly passenger footfall comes directly from P50_Pax.
+    2. Footfall is split into default departure/arrival and terminal shares.
+    3. FTE per skill = (allocated_pax / PAX_Config_rate) / PAX_SLOTS_PER_FTE_WEEK
        where PAX_Config_rate is passengers handled per FTE per 15-min slot.
     """
     total = {}
@@ -666,31 +761,20 @@ def weekly_staff_required(demand_by_week):
         skill_slots = defaultdict(float)
         total_slots = 0.0
 
-        for key, mvmt in grouped.items():
-            if len(key) == 5:
-                cat, status, terminal, aircraft, load_factor = key
-            else:
-                cat, status = key[:2]
-                terminal, aircraft, load_factor = 'T1', '', '85%'
+        weekly_pax = _weekly_passengers_from_demand(grouped)
+        if weekly_pax <= 0:
+            total[wk] = 0
+            by_skill[wk] = {}
+            continue
 
-            row = {
-                'Flight_Category': cat,
-                'Aircraft_Family': aircraft,
-                'Avg_Load_Factor_Pct': load_factor,
-            }
-            pax = float(mvmt or 0) * _aircraft_capacity(row) * _load_factor(row)
-            work_cols = _long_term_pax_work_mix(cat, status, terminal)
-            if pax <= 0 or not work_cols:
+        for col, pax in _long_term_weekly_pax_work_columns(weekly_pax):
+            rate = pax_cfg.get(col, fallback_rate)
+            if pax <= 0 or rate <= 0:
                 continue
-
-            for col in work_cols:
-                rate = pax_cfg.get(col, fallback_rate)
-                if rate <= 0:
-                    continue
-                slots = pax / rate
-                skill = PAX_WORK_SKILL_MAP.get(_pax_work_from_col(col), _pax_work_from_col(col))
-                skill_slots[skill] += slots
-                total_slots += slots
+            slots = pax / rate
+            skill = PAX_WORK_SKILL_MAP.get(_pax_work_from_col(col), _pax_work_from_col(col))
+            skill_slots[skill] += slots
+            total_slots += slots
 
         skill_fte = defaultdict(float)
         for sk, slots in skill_slots.items():
@@ -811,70 +895,26 @@ def index():
 def lt_summary():
     demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
 
-    all_rows = load_weekly_demand()
-    # Include both Historical (W25/S26 actuals) and Forecast rows for 2026
-    rows_2026 = [r for r in all_rows if r.get('Data_type', '').strip() in ('Forecast', 'Historical')]
-
-    # Annual flights 2026
+    passenger_forecast = load_weekly_passenger_forecast()
     annual_flights = 0
-    monthly_flights = defaultdict(float)
-    # Also compute passenger estimates for the year (movements × aircraft capacity × load factor)
     annual_passengers = 0.0
     monthly_passengers = defaultdict(float)
-    for r in rows_2026:
-        d = parse_date(r.get('Week_Start', ''))
-        if d and d.year == 2026:
-            try:
-                mv = float(r.get('Weekly_Movements', 0) or 0)
-            except:
-                mv = 0
-            annual_flights += mv
-            monthly_flights[d.month] += mv
+    weekly_passengers = {}
+    for wk, item in passenger_forecast.items():
+        d = item['week_start']
+        pax_week = item['p50_pax']
+        annual_passengers += pax_week
+        monthly_passengers[d.month] += pax_week
+        weekly_passengers[wk] = pax_week
 
-            # Estimate passengers for these movements using aircraft capacity + load factor
-            try:
-                cap = _aircraft_capacity(r)
-                lf = _load_factor(r)
-                pax_week = mv * cap * lf
-            except Exception:
-                pax_week = 0.0
-            annual_passengers += pax_week
-            monthly_passengers[d.month] += pax_week
+    week_count = len(passenger_forecast) or 52
+    avg_weekly = 0
+    avg_weekly_passengers = annual_passengers / week_count if annual_passengers else 0
 
-    avg_weekly = annual_flights / 52 if annual_flights else 0
-    avg_weekly_passengers = annual_passengers / 52 if annual_passengers else 0
-
-    # Choose peak month by passenger footfall when available, otherwise by movements
-    if monthly_passengers:
-        peak_month_num = max(monthly_passengers, key=monthly_passengers.get)
-    else:
-        peak_month_num = max(monthly_flights, key=monthly_flights.get) if monthly_flights else 7
+    peak_month_num = max(monthly_passengers, key=monthly_passengers.get) if monthly_passengers else 7
     peak_month = datetime(2026, peak_month_num, 1).strftime('%B')
 
-    # Peak week
-    # Peak week: prefer passenger-weighted peak when possible
-    weekly_flights = defaultdict(float)
-    weekly_passengers = defaultdict(float)
-    for r in rows_2026:
-        d = parse_date(r.get('Week_Start', ''))
-        if d and d.year == 2026:
-            try:
-                mv = float(r.get('Weekly_Movements', 0) or 0)
-            except:
-                mv = 0
-            wk = d.strftime('%Y-W%V')
-            weekly_flights[wk] += mv
-            try:
-                cap = _aircraft_capacity(r)
-                lf = _load_factor(r)
-                pax_week = mv * cap * lf
-            except Exception:
-                pax_week = 0.0
-            weekly_passengers[wk] += pax_week
-    if weekly_passengers:
-        peak_wk = max(weekly_passengers, key=weekly_passengers.get)
-    else:
-        peak_wk = max(weekly_flights, key=weekly_flights.get) if weekly_flights else '2026-W28'
+    peak_wk = max(weekly_passengers, key=weekly_passengers.get) if weekly_passengers else '2026-W28'
 
     # Staff utilisation: avg (staff_req / staff_avail) across 2026 weeks
     utils = []
@@ -917,31 +957,11 @@ def _build_heatmap_row(wk_key, staff_req, skill_req, staff_avail, demand):
     # Per-skill FTE for the week
     skills = skill_req.get(wk_key, {})
 
-    # Per-category flight volumes for the week (raw movements)
+    # Weekly P50 passenger footfall.
     cat_mvmt = {}
-    for key, mvmt in demand.get(wk_key, {}).items():
-        cat = key[0] if key else 'Unknown'
-        cat_mvmt[cat] = round(cat_mvmt.get(cat, 0) + mvmt, 0)
-
-    # Also estimate passengers for the week (movements × aircraft capacity × load factor)
-    weekly_passengers = 0.0
-    for key, mvmt in demand.get(wk_key, {}).items():
-        if len(key) == 5:
-            cat, status, terminal, aircraft, load_factor = key
-        else:
-            cat, status = key[:2]
-            terminal, aircraft, load_factor = 'T1', '', '85%'
-        row = {
-            'Flight_Category': cat,
-            'Aircraft_Family': aircraft,
-            'Avg_Load_Factor_Pct': load_factor,
-        }
-        try:
-            cap = _aircraft_capacity(row)
-            lf = _load_factor(row)
-            weekly_passengers += float(mvmt or 0) * cap * lf
-        except Exception:
-            pass
+    weekly_passengers = _weekly_passengers_from_demand(demand.get(wk_key, {}))
+    if weekly_passengers:
+        cat_mvmt['P50 Passengers'] = int(round(weekly_passengers))
 
     return {
         'week':              wk_key,
@@ -979,12 +999,10 @@ def lt_week_detail(week_key):
     if not row:
         return jsonify({'error': 'Week not found'}), 404
 
-    # Weekly flight movements by (category, status) for a mini breakdown chart
+    # Weekly passenger footfall breakdown for the mini chart.
     cat_status = {}
-    for key, mvmt in demand.get(week_key, {}).items():
-        cat = key[0] if len(key) > 0 else 'Unknown'
-        status = key[1] if len(key) > 1 else 'Unknown'
-        cat_status[f'{cat} ({status})'] = round(cat_status.get(f'{cat} ({status})', 0) + mvmt, 0)
+    weekly_passengers = _weekly_passengers_from_demand(demand.get(week_key, {}))
+    cat_status['P50 Passenger Footfall'] = int(round(weekly_passengers))
 
     # Absent staff this week
     absences = load_absences()
@@ -1021,7 +1039,6 @@ def lt_week_detail(week_key):
     row['cat_status_breakdown'] = cat_status
     row['absent_staff']         = absent_emps
     row['absent_count']         = len(absent_emps)
-    row['weekly_passengers']    = int(round(weekly_passengers))
     return jsonify(row)
 
 
@@ -1269,34 +1286,29 @@ def lt_skill_breakdown():
 
 @app.route('/api/long-term/flight-trend')
 def lt_flight_trend():
-    rows = load_weekly_demand()
+    passenger_forecast = load_weekly_passenger_forecast()
+    monthly = defaultdict(lambda: {
+        'actual_2024': 0.0,
+        'actual_2025': 0.0,
+        'forecast_2026': 0.0,
+    })
 
-    # Monthly passenger footfall: movements × aircraft_capacity × load_factor
-    monthly = defaultdict(lambda: {'historical': 0.0, 'forecast': 0.0})
-    for r in rows:
-        if not r.get('Season_Code'):
-            continue
-        d = parse_date(r.get('Week_Start', ''))
-        if not d:
-            continue
-        try:
-            mv = float(r.get('Weekly_Movements', 0) or 0)
-        except:
-            mv = 0
-        pax = mv * _aircraft_capacity(r) * _load_factor(r)
-        dtype = r.get('Data_type', '').strip()
+    for item in load_historical_weekly_passenger_footfall((2024, 2025)):
+        mk = item['month']
+        monthly[mk][f"actual_{item['year']}"] += item['passengers']
+
+    for item in passenger_forecast.values():
+        d = item['week_start']
         mk = d.strftime('%b')
-        if d.year == 2025 and dtype == 'Historical':
-            monthly[mk]['historical'] += pax
-        elif d.year == 2026 and dtype in ('Forecast', 'Historical'):
-            monthly[mk]['forecast'] += pax
+        monthly[mk]['forecast_2026'] += item['p50_pax']
 
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     return jsonify([{
         'month': m,
-        'historical': int(round(monthly[m]['historical'])),
-        'forecast':   int(round(monthly[m]['forecast'])),
+        'actual_2024': int(round(monthly[m]['actual_2024'])),
+        'actual_2025': int(round(monthly[m]['actual_2025'])),
+        'forecast_2026': int(round(monthly[m]['forecast_2026'])),
     } for m in months])
 
 
@@ -1549,44 +1561,18 @@ def lt_four_week_roster():
     """Return daily FTE breakdown and shift plan for the next 4 ISO weeks.
 
     Methodology:
-    1. Compute day-of-week weights from the ratio of Peak_Day_Movements /
-       Weekly_Movements across all historical rows, then normalise a canonical
-       aviation DOW distribution to those weights.
+    1. Use a canonical aviation day-of-week distribution.
     2. Retrieve weekly skill FTE for the next 4 ISO weeks via
        weekly_staff_required().
     3. Expand each week to 7 days using the DOW weights.
     4. Derive Early / Late / Night shift headcount from daily totals.
     """
-    # ── 1. Day-of-week weights from historical peak-day ratios ──────────────
+    # ── 1. Day-of-week weights ─────────────────────────────────────────────
     # Aviation baseline weights (Mon–Sun index 0–6).
     # These reflect typical airport traffic patterns (Fri/Sat peaks, Tue troughs).
-    _BASE_DOW = [0.150, 0.120, 0.135, 0.145, 0.170, 0.165, 0.115]
-
-    rows = load_weekly_demand()
-    # Collect peak_day / weekly ratios per row to compute average "peakiness"
-    ratios = []
-    for r in rows:
-        dtype = r.get('Data_type', '').strip()
-        if dtype != 'Historical':
-            continue
-        try:
-            wm = float(r.get('Weekly_Movements', 0) or 0)
-            pd_val = float(r.get('Peak_Day_Movements', 0) or 0)
-            if wm > 0 and pd_val > 0:
-                ratios.append(pd_val / wm)
-        except (ValueError, TypeError):
-            pass
-
-    # Average peak-day share across historical rows
-    avg_peak_ratio = sum(ratios) / len(ratios) if ratios else 1.0 / 7
-
-    # The peak DOW (index 4 = Fri) should equal avg_peak_ratio.
-    # Scale the base weights so that peak matches, then re-normalise.
-    peak_idx = _BASE_DOW.index(max(_BASE_DOW))  # Fri = index 4
-    scale = avg_peak_ratio / _BASE_DOW[peak_idx] if _BASE_DOW[peak_idx] > 0 else 1.0
-    scaled = [w * scale for w in _BASE_DOW]
-    total_w = sum(scaled)
-    dow_weights = [round(w / total_w, 4) for w in scaled]  # Mon–Sun, sum=1.0
+    _BASE_DOW = [0.100, 0.110, 0.125, 0.135, 0.155, 0.175, 0.200]
+    total_w = sum(_BASE_DOW)
+    dow_weights = [round(w / total_w, 4) for w in _BASE_DOW]  # Mon–Sun, sum=1.0
 
     DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -6428,37 +6414,6 @@ def update_csv_dates_to_current():
             # Fail silently — don't break the updater if openpyxl or parsing fails
             pass
 
-    # 4. Update Weekly_flight_demand.csv status (Historical vs Forecast)
-    demand_path = os.path.join(BASE_DIR, 'data', 'Weekly_flight_demand.csv')
-    if os.path.exists(demand_path):
-        with open(demand_path, encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-            fieldnames = reader.fieldnames
-        if rows:
-            changed = False
-            for r in rows:
-                week_start_str = r.get('Week_Start', '').strip()
-                if not week_start_str:
-                    continue
-                ws_date = parse_date(week_start_str)
-                if ws_date:
-                    # A week is considered completed if the current time is past its 7-day duration
-                    if now >= ws_date + timedelta(days=7):
-                        new_type = 'Historical'
-                    else:
-                        new_type = 'Forecast'
-                    
-                    if r.get('Data_type') != new_type:
-                        r['Data_type'] = new_type
-                        changed = True
-            
-            if changed:
-                with open(demand_path, 'w', encoding='utf-8-sig', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(rows)
-
 # ===========================================================================
 # UNIFIED SHORT-TERM OPTIMISE ENDPOINT
 # ===========================================================================
@@ -7123,9 +7078,15 @@ def save_staff_skills_api():
 def config_reload_api():
     """Clear all server-side data caches so every view reloads fresh data."""
     global PAX_CONFIG_CACHE, PAX_PROFILE_CACHE, _config_rules
+    global _demand, _staff_req, _skill_req, _staff_avail, _skill_avail
     PAX_CONFIG_CACHE = None
     PAX_PROFILE_CACHE = None
     _config_rules = None
+    _demand = None
+    _staff_req = None
+    _skill_req = None
+    _staff_avail = None
+    _skill_avail = None
     return jsonify({'ok': True})
 
 

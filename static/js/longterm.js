@@ -375,7 +375,7 @@ function renderDDCatChart(categories) {
         legend: { labels: { color: DAA.white(), usePointStyle: true, boxWidth: 10 }, position: 'right' },
         tooltip: {
           backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1,
-          callbacks: { label: ctx => ` ${fmt(ctx.parsed)} movements` },
+          callbacks: { label: ctx => ` ${fmt(ctx.parsed)} passengers` },
         },
       },
       scales: {
@@ -540,38 +540,49 @@ function renderHeatmap() {
 async function loadFlightTrendChart() {
   const isDark = window.getCurrentTheme && window.getCurrentTheme() === 'dark';
   const data = await api('/api/long-term/flight-trend');
+  const datasets = [
+    {
+      label: '2024 Actuals',
+      data: data.map(d => d.actual_2024),
+      borderColor: DAA.info,
+      backgroundColor: 'rgba(52,152,219,.10)',
+      borderDash: [6, 4],
+      tension: 0.4, fill: false, pointRadius: 3,
+    },
+    {
+      label: '2025 Actuals',
+      data: data.map(d => d.actual_2025),
+      borderColor: DAA.muted,
+      backgroundColor: 'rgba(139,165,192,.1)',
+      tension: 0.4, fill: false, pointRadius: 3,
+    },
+    {
+      label: '2026 Forecast',
+      data: data.map(d => d.forecast_2026),
+      borderColor: DAA.accent,
+      backgroundColor: 'rgba(232,133,10,.15)',
+      tension: 0.4, fill: true, pointRadius: 4,
+      pointBackgroundColor: DAA.accent,
+    },
+  ];
   destroyChart('flight-trend');
   const ctx = document.getElementById('flight-trend-chart').getContext('2d');
   CHARTS['flight-trend'] = new Chart(ctx, {
     type: 'line',
     data: {
       labels: data.map(d => d.month),
-      datasets: [
-        {
-          label: '2025 Historical',
-          data: data.map(d => d.historical),
-          borderColor: DAA.muted,
-          backgroundColor: 'rgba(139,165,192,.1)',
-          borderDash: [5, 3],
-          tension: 0.4, fill: true, pointRadius: 3,
-        },
-        {
-          label: '2026 Forecast',
-          data: data.map(d => d.forecast),
-          borderColor: DAA.accent,
-          backgroundColor: 'rgba(232,133,10,.15)',
-          tension: 0.4, fill: true, pointRadius: 4,
-          pointBackgroundColor: DAA.accent,
-        },
-      ],
+      datasets,
     },
     options: {
       responsive: true,
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { labels: { color: DAA.white(), usePointStyle: true } },
         tooltip: {
+          mode: 'index',
+          intersect: false,
           backgroundColor: '#061729', borderColor: DAA.accent, borderWidth: 1,
-          callbacks: { label: ctx => ` ${fmtM(ctx.parsed.y)} passengers` },
+          callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtM(ctx.parsed.y)} passengers` },
         },
       },
       scales: {

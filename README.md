@@ -38,7 +38,8 @@ The application is powered by a set of CSV files located in the `data/` director
 
 | File | Description |
 | :--- | :--- |
-| `Weekly_flight_demand.csv` | Strategic forecast data used for the long-term view. |
+| `forecast_pax_results_2026.csv` | Weekly P10/P50/P90 passenger forecast used for the long-term view. |
+| `historical_pax_data.csv` | Historical weekly passenger footfall used for actuals in the long-term trend chart. |
 | `Flights_schedule_4days.csv` | Tactical flight movement data for the next 4 days. |
 | `Staff_schedule.csv` | Daily roster showing which staff members are on duty. |
 | `Staff_absence_schedule.csv` | Tracks approved leave and sickness. |
@@ -46,7 +47,7 @@ The application is powered by a set of CSV files located in the `data/` director
 | `Stands.csv` | Mapping of gates to terminals, piers, and stand types (Contact vs. Remote). |
 
 > [!NOTE]
-> The platform includes **Self-Healing Data Automation**. On startup, the app automatically updates schedule dates to the current day and re-classifies strategic demand as "Historical" or "Forecast" based on the calendar.
+> The platform includes **Self-Healing Data Automation**. On startup, the app automatically updates operational schedule dates to the current day.
 
 ## 🚦 Getting Started
 
@@ -67,7 +68,7 @@ The application is powered by a set of CSV files located in the `data/` director
 
 ## 📈 Methodology
 
-Staffing requirements are calculated using a **calibrated FTE model**. For long-term forecasting, the system converts flight movements to estimated passengers per flight (using aircraft type/category and average load factor), applies passenger-handling rates from `PAX Config.xlsx`, and converts those passenger-slots into FTEs. The model is anchored to a 2025 historical baseline and scales by flight complexity and category (Long-Haul, Short-Haul, Cargo).
+Staffing requirements are calculated using a **calibrated FTE model**. For long-term forecasting, the system uses weekly `P50_Pax` footfall from `forecast_pax_results_2026.csv`, applies passenger-handling rates from `PAX Config.xlsx`, and converts those passenger-slots into FTEs.
 
 ---
 *Created for DAA Ground Operations — Operational Excellence through Intelligence.*
