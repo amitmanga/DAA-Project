@@ -403,27 +403,42 @@
           </div>
 
           <div class="ltpax-kpi-grid">
-            <article class="ltpax-kpi ltpax-kpi-info">
+            <article class="ltpax-kpi ltpax-kpi-info" style="--pax-accent:#3b82f6">
+              <div class="pax-icon-bubble" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-7"/></svg>
+              </div>
               <div class="ltpax-kpi-value" id="ltpax-kpi-p50">--</div>
               <div class="ltpax-kpi-label">P50 Central Estimate (Total Pax)</div>
               <div class="ltpax-kpi-note" id="ltpax-kpi-p50-delta">--</div>
             </article>
-            <article class="ltpax-kpi ltpax-kpi-teal">
+            <article class="ltpax-kpi ltpax-kpi-teal" style="--pax-accent:#0ea5e9">
+              <div class="pax-icon-bubble" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M7.5 4.21 12 6.81l4.5-2.6"/><path d="M7.5 19.79V14.6L3 12"/><path d="M21 12l-4.5 2.6v5.19"/><path d="M3.27 6.96 12 12.01l8.73-5.05"/><path d="M12 22.08V12"/></svg>
+              </div>
               <div class="ltpax-kpi-value" id="ltpax-kpi-p10">--</div>
               <div class="ltpax-kpi-label">P10 Conservative Estimate</div>
               <div class="ltpax-kpi-note" id="ltpax-kpi-p10-delta">--</div>
             </article>
-            <article class="ltpax-kpi ltpax-kpi-ok">
+            <article class="ltpax-kpi ltpax-kpi-ok" style="--pax-accent:#10b981">
+              <div class="pax-icon-bubble" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7 9 18l-5-5"/><path d="M21 12a9 9 0 1 1-2.64-6.36"/></svg>
+              </div>
               <div class="ltpax-kpi-value" id="ltpax-kpi-p90">--</div>
               <div class="ltpax-kpi-label">P90 Optimistic Estimate</div>
               <div class="ltpax-kpi-note" id="ltpax-kpi-p90-delta">--</div>
             </article>
-            <article class="ltpax-kpi ltpax-kpi-warn">
+            <article class="ltpax-kpi ltpax-kpi-warn" style="--pax-accent:#f59e0b">
+              <div class="pax-icon-bubble" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M12 3v18"/><path d="m16 7 4 5-4 5"/><path d="m8 7-4 5 4 5"/></svg>
+              </div>
               <div class="ltpax-kpi-value" id="ltpax-kpi-peak">--</div>
               <div class="ltpax-kpi-label">Forecast Peak Week (Central)</div>
               <div class="ltpax-kpi-note warn" id="ltpax-kpi-peak-range">--</div>
             </article>
-            <article class="ltpax-kpi ltpax-kpi-info">
+            <article class="ltpax-kpi ltpax-kpi-info" style="--pax-accent:#8b5cf6">
+              <div class="pax-icon-bubble" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+              </div>
               <div class="ltpax-kpi-value" id="ltpax-kpi-load">--</div>
               <div class="ltpax-kpi-label">Est. Annual Load Factor</div>
               <div class="ltpax-kpi-note warn" id="ltpax-kpi-load-note">Baseline 2025 avg</div>
@@ -431,21 +446,34 @@
           </div>
 
           <div class="ltpax-main-grid">
-            <article class="ltpax-card ltpax-chart-card">
-              <div class="ltpax-card-title">52-Week Forecast - 2026 Ensemble (Week-by-Week)</div>
+            <article class="ltpax-card ltpax-chart-card" style="--pax-accent:#3b82f6">
+              <div class="ltpax-card-title pax-card-title-row">
+                <div class="pax-icon-bubble pax-icon-bubble-sm" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 3-3 4 4 5-7"/></svg>
+                </div>
+                <span>52-Week Forecast - 2026 Ensemble (Week-by-Week)</span>
+              </div>
               <div class="ltpax-chart-wrap">
                 <canvas id="ltpax-forecast-chart"></canvas>
               </div>
             </article>
 
-            <article class="ltpax-card ltpax-accuracy-card">
-              <div class="ltpax-card-title">Algorithm Accuracy &middot; Backtested vs 2025 Actuals</div>
+            <article class="ltpax-card ltpax-accuracy-card" style="--pax-accent:#10b981">
+              <div class="ltpax-card-title pax-card-title-row">
+                <div class="pax-icon-bubble pax-icon-bubble-sm" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/><path d="M3 3h18v18H3z"/></svg>
+                </div>
+                <span>Algorithm Accuracy &middot; Backtested vs 2025 Actuals</span>
+              </div>
               <div id="ltpax-accuracy-list" class="ltpax-accuracy-list"></div>
             </article>
           </div>
 
-          <div class="ltpax-intel-banner">
-            The Ensemble model combines SARIMA (seasonal regression), Monte Carlo simulation, LSTM deep learning, and Prophet decomposition - weighted by backtested accuracy - and achieves <strong id="ltpax-banner-accuracy">--</strong> accuracy on 2025 actuals. The forecast signal below drives demand intensity, gate pressure, carrier growth, and risk calendar planning.
+          <div class="ltpax-intel-banner" style="--pax-accent:#0ea5e9">
+            <div class="pax-icon-bubble pax-icon-bubble-sm" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"/><path d="M2 12h20"/><path d="m5 5 14 14"/><path d="m19 5-14 14"/></svg>
+            </div>
+            <div>The Ensemble model combines SARIMA (seasonal regression), Monte Carlo simulation, LSTM deep learning, and Prophet decomposition - weighted by backtested accuracy - and achieves <strong id="ltpax-banner-accuracy">--</strong> accuracy on 2025 actuals. The forecast signal below drives demand intensity, gate pressure, carrier growth, and risk calendar planning.</div>
           </div>
         </section>
       </div>
@@ -485,7 +513,13 @@
             <em id="stpax-subtitle">passenger numbers engineered based on actual next 3-day flight schedules</em>
           </div>
 
-          <article class="stpax-chart-card">
+          <article class="stpax-chart-card" style="--pax-accent:#0ea5e9">
+            <div class="stpax-card-title pax-card-title-row">
+              <div class="pax-icon-bubble pax-icon-bubble-sm" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 16 3-4 4 3 5-7"/></svg>
+              </div>
+              <span>3-Day Passenger Flow Outlook</span>
+            </div>
             <div class="stpax-chart-wrap">
               <canvas id="stpax-outlook-chart"></canvas>
             </div>
@@ -522,8 +556,11 @@
           <h2>PAX Flow Digital Twin</h2>
         </section>
 
-        <section class="idpax-sim-panel">
+        <section class="idpax-sim-panel" style="--pax-accent:#0ea5e9">
           <div class="idpax-sim-heading">
+            <div class="pax-icon-bubble pax-icon-bubble-sm" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+            </div>
             <h3>Scenario Simulation</h3>
             <span>What-if engine</span>
           </div>
@@ -549,13 +586,24 @@
         </section>
 
         <section class="idpax-content-grid">
-          <article class="idpax-chart-card">
+          <article class="idpax-chart-card" style="--pax-accent:#8b5cf6">
+            <div class="idpax-card-title pax-card-title-row">
+              <div class="pax-icon-bubble pax-icon-bubble-sm" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14h3v4H7z"/><path d="M12 10h3v8h-3z"/><path d="M17 6h3v12h-3z"/></svg>
+              </div>
+              <span>Live Touchpoint Pulse</span>
+            </div>
             <div class="idpax-chart-wrap">
               <canvas id="idpax-pulse-chart"></canvas>
             </div>
           </article>
-          <article class="idpax-table-card">
-            <div class="idpax-table-title">PAX Count by Touchpoint</div>
+          <article class="idpax-table-card" style="--pax-accent:#10b981">
+            <div class="idpax-table-title pax-card-title-row">
+              <div class="pax-icon-bubble pax-icon-bubble-sm" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v18H3z"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/><path d="M15 3v18"/></svg>
+              </div>
+              <span>PAX Count by Touchpoint</span>
+            </div>
             <div class="idpax-table-scroll">
               <table class="idpax-table">
                 <thead>

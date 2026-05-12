@@ -14,6 +14,17 @@ const IDPAX_SERIES = [
   { key: 'baggage', label: 'Baggage', color: '#3b82f6', axis: 'y' },
 ];
 
+const IDPAX_TOUCHPOINT_ICONS = {
+  check: '<path d="M3 7h18"/><path d="M5 7l2-4h10l2 4"/><path d="M6 11h12"/><path d="M8 15h8"/><path d="M10 19h4"/>',
+  security: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-5"/>',
+  cbp: '<path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
+  lounge: '<path d="M4 11h16"/><path d="M5 11l1 8h12l1-8"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  boarding: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>',
+  immigration: '<path d="M16 21v-2a4 4 0 0 0-8 0v2"/><circle cx="12" cy="7" r="4"/><path d="M4 3h16v18H4z"/>',
+  baggage: '<rect x="5" y="7" width="14" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M9 11v5"/><path d="M15 11v5"/>',
+  default: '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-7"/>',
+};
+
 function idpaxEsc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -33,6 +44,18 @@ function idpaxAccent(name) {
 
 function idpaxFmt(value) {
   return Number(value || 0).toLocaleString();
+}
+
+function idpaxIconFor(label) {
+  const value = String(label || '').toLowerCase();
+  if (value.includes('check')) return IDPAX_TOUCHPOINT_ICONS.check;
+  if (value.includes('security')) return IDPAX_TOUCHPOINT_ICONS.security;
+  if (value.includes('cbp') || value.includes('preclearance')) return IDPAX_TOUCHPOINT_ICONS.cbp;
+  if (value.includes('lounge') || value.includes('retail')) return IDPAX_TOUCHPOINT_ICONS.lounge;
+  if (value.includes('boarding') || value.includes('gate')) return IDPAX_TOUCHPOINT_ICONS.boarding;
+  if (value.includes('immigration')) return IDPAX_TOUCHPOINT_ICONS.immigration;
+  if (value.includes('baggage') || value.includes('reclaim')) return IDPAX_TOUCHPOINT_ICONS.baggage;
+  return IDPAX_TOUCHPOINT_ICONS.default;
 }
 
 function idpaxSetText(id, value) {
@@ -146,9 +169,15 @@ function idpaxRenderInsights(payload) {
   if (!grid) return;
   grid.innerHTML = (payload.insights || []).map(item => {
     const accent = idpaxAccent(item.accent);
+    const icon = idpaxIconFor(item.label);
     return `
-      <article class="idpax-insight-card" style="--idpax-accent:${accent}">
-        <div class="idpax-card-name">${idpaxEsc(item.label)}</div>
+      <article class="idpax-insight-card" style="--idpax-accent:${accent};--pax-accent:${accent}">
+        <div class="idpax-card-head">
+          <div class="pax-icon-bubble" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
+          </div>
+          <div class="idpax-card-name">${idpaxEsc(item.label)}</div>
+        </div>
         <div class="idpax-card-value">${idpaxFmt(item.peak)}</div>
         <div class="idpax-card-sub">${idpaxEsc(item.metric_label || 'Peak Pax / min')}</div>
         <div class="idpax-card-row">

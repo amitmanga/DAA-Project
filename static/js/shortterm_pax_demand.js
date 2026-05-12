@@ -22,8 +22,25 @@ const STPAX_ACCENT = {
   ok: '#10b981',
 };
 
+const STPAX_TOUCHPOINT_ICONS = {
+  check: '<path d="M3 7h18"/><path d="M5 7l2-4h10l2 4"/><path d="M6 11h12"/><path d="M8 15h8"/><path d="M10 19h4"/>',
+  security: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-5"/>',
+  cbp: '<path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/>',
+  lounge: '<path d="M4 11h16"/><path d="M5 11l1 8h12l1-8"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  boarding: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>',
+  immigration: '<path d="M16 21v-2a4 4 0 0 0-8 0v2"/><circle cx="12" cy="7" r="4"/><path d="M4 3h16v18H4z"/>',
+  baggage: '<rect x="5" y="7" width="14" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M9 11v5"/><path d="M15 11v5"/>',
+  default: '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-7"/>',
+};
+
 function stpaxFormat(value) {
   return Number(value || 0).toLocaleString();
+}
+
+function stpaxEsc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
 }
 
 function stpaxSetText(id, value) {
@@ -35,24 +52,42 @@ function stpaxDayShort(label) {
   return String(label || '').split(' ').slice(1).join(' ');
 }
 
+function stpaxIconFor(label) {
+  const value = String(label || '').toLowerCase();
+  if (value.includes('check')) return STPAX_TOUCHPOINT_ICONS.check;
+  if (value.includes('security')) return STPAX_TOUCHPOINT_ICONS.security;
+  if (value.includes('cbp') || value.includes('preclearance')) return STPAX_TOUCHPOINT_ICONS.cbp;
+  if (value.includes('lounge') || value.includes('retail')) return STPAX_TOUCHPOINT_ICONS.lounge;
+  if (value.includes('boarding') || value.includes('gate')) return STPAX_TOUCHPOINT_ICONS.boarding;
+  if (value.includes('immigration')) return STPAX_TOUCHPOINT_ICONS.immigration;
+  if (value.includes('baggage') || value.includes('reclaim')) return STPAX_TOUCHPOINT_ICONS.baggage;
+  return STPAX_TOUCHPOINT_ICONS.default;
+}
+
 function stpaxRenderInsights(data) {
   const grid = document.getElementById('stpax-insight-grid');
   if (!grid) return;
 
   grid.innerHTML = (data.insights || []).map(item => {
     const accent = STPAX_ACCENT[item.accent] || STPAX_ACCENT.info;
+    const icon = stpaxIconFor(item.label);
     return `
-      <article class="stpax-insight-card" style="--stpax-accent:${accent}">
-        <div class="stpax-card-name">${item.label}</div>
+      <article class="stpax-insight-card" style="--stpax-accent:${accent};--pax-accent:${accent}">
+        <div class="stpax-card-head">
+          <div class="pax-icon-bubble" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>
+          </div>
+          <div class="stpax-card-name">${stpaxEsc(item.label)}</div>
+        </div>
         <div class="stpax-card-value">${stpaxFormat(item.peak)}</div>
-        <div class="stpax-card-sub">${item.metric_label || 'Peak Pax / 15-min'}</div>
+        <div class="stpax-card-sub">${stpaxEsc(item.metric_label || 'Peak Pax / 15-min')}</div>
         <div class="stpax-card-row">
           <span>Peak Window</span>
-          <strong>${item.peak_time || '--'}</strong>
+          <strong>${stpaxEsc(item.peak_time || '--')}</strong>
         </div>
         <div class="stpax-card-row">
-          <span>${item.secondary_label || ''}</span>
-          <strong>${item.secondary_value || '--'}</strong>
+          <span>${stpaxEsc(item.secondary_label || '')}</span>
+          <strong>${stpaxEsc(item.secondary_value || '--')}</strong>
         </div>
       </article>
     `;
