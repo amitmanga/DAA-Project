@@ -95,7 +95,7 @@ def parse_date(s, fmt='%d-%m-%y'):
     return None
 
 # ---------------------------------------------------------------------------
-# Skill Normalization: Maps Staff_schedule names to Config.csv names
+# Skill Normalization: Maps staff skill names to passenger-task names.
 # ---------------------------------------------------------------------------
 SKILL_MAP = {
     'GNIB':                 'GNIB / Immigration',
@@ -234,7 +234,7 @@ def get_weekly_absence_impact():
 
 
 # ---------------------------------------------------------------------------
-# Per-movement staff-minutes derived directly from Config.csv task rules.
+# Legacy per-movement staff-minute constants retained for compatibility.
 # Key: (Flight_Category, Status)
 #
 # DEPARTURES apply: GNIB / Immigration + Ramp / Marshalling + Bussing (22% remote stands)
@@ -280,7 +280,7 @@ SKILL_SPLIT = {
     ('Cargo',                    'Arrival'):   {'Ramp / Marshalling': 1.0},
 }
 
-# Fixed posts from Config.csv — run regardless of flight volume.
+# Fixed posts that run regardless of passenger volume.
 # FTE = (staff_count × duration_mins × operating_days) / NET_WORKING_MINS_PER_WEEK
 # NET_WORKING_MINS_PER_WEEK = 630 min/shift × 5 days = 3150
 #
@@ -1676,7 +1676,7 @@ def lt_four_week_roster():
 
     # ── 4. Current-week partial block ──────────────────────────────────────
     #   Intraday  = today
-    #   Short-term = today + 0..3  (4-day CSV: Flights_schedule_4days.csv)
+    #   Short-term = today + 0..3
     #   Roster-only = today+4 .. Sunday of current ISO week
     today_date = today.date() if hasattr(today, 'date') else today
     today_d    = today if not hasattr(today, 'date') else today.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1690,7 +1690,7 @@ def lt_four_week_roster():
     cur_week_avail         = _staff_avail_all.get(cur_wk_key, 0)
 
     # Short term covers 4 days: today (day 0) through today+3
-    ST_WINDOW = 4  # days covered by Flights_schedule_4days.csv
+    ST_WINDOW = 4  # days covered by the short-term passenger profile
 
     current_week_days = []
     curr_d = today_d  # start from today itself
@@ -1980,7 +1980,7 @@ TASK_SKILL = {
     'boarding':              'Boarding',
     'immigration':           'Immigration',
     'baggage':               'Baggage',
-    # New Config.csv task names
+    # Passenger task names
     'GNIB':                  'GNIB',
     'Gate 335':              'Gate 335',
     'Departures':            'Departures',
@@ -2635,22 +2635,12 @@ _st_custom_constraints_by_date = {}
 # ---------------------------------------------------------------------------
 
 def read_csv_flights():
-    """Read Flights_schedule_4days.csv with cp1252 encoding, strip \xa0 from all values."""
-    path = os.path.join(BASE_DIR, 'data', 'Flights_schedule_4days.csv')
-    stands_map = get_stands_map()
-    with open(path, encoding='cp1252') as f:
-        reader = csv.DictReader(f)
-        rows = []
-        for row in reader:
-            clean = {k: v.replace('\xa0', '').strip() for k, v in row.items()}
-            if any(clean.values()):
-                gate = clean.get('gate', '').strip()
-                stand_info = stands_map.get(gate, {})
-                # If stands map assigns this to the Cargo terminal, exclude it
-                if stand_info.get('terminal', '').lower() == 'cargo':
-                    continue
-                rows.append(clean)
-    return rows
+    """Return flight rows for map consumers.
+
+    Flight schedules are no longer a demand source; tactical views are driven by
+    passenger profiles, so no external flight schedule file is read here.
+    """
+    return []
 
 
 def parse_time(s):
@@ -2687,57 +2677,15 @@ def icao_to_haul(icao_cat, cbp_flag):
 
 
 def load_config_rules():
-    """Parse Config.csv (new multi-column format) and cache in _config_rules.
+    """Return legacy flight-task rules.
 
-    Columns: Task, Terminal 1, Terminal 2, Pier 1-4, Priority,
-             Short Haul, Long Haul, Arrival, Departure,
-             Max Staff Count, Dependent on Flights/Terminal
+    Rule-file based flight task generation is disabled; tactical demand is
+    generated from passenger profiles instead.
     """
     global _config_rules
     if _config_rules is not None:
         return _config_rules
-    path = os.path.join(BASE_DIR, 'data', 'Config.csv')
-    with open(path, encoding='utf-8-sig') as f:
-        rows = list(csv.DictReader(f))
-    rules = []
-    for r in rows:
-        task = r.get('Task', '').strip()
-        if not task:
-            continue
-
-        def _yes(col):
-            return r.get(col, '').strip().lower() == 'yes'
-
-        applicable_terminals = []
-        if _yes('Terminal 1'): applicable_terminals.append('T1')
-        if _yes('Terminal 2'): applicable_terminals.append('T2')
-
-        applicable_piers = []
-        if _yes('Pier 1'): applicable_piers.append('P1')
-        if _yes('Pier 2'): applicable_piers.append('P2')
-        if _yes('Pier 3'): applicable_piers.append('P3')
-        if _yes('Pier 4'): applicable_piers.append('P4')
-
-        count_raw = r.get('Max Staff Count', '1').strip()
-        try:
-            import math as _math
-            max_staff_count = max(1, _math.ceil(float(count_raw)))
-        except (ValueError, TypeError):
-            max_staff_count = 1
-
-        rules.append({
-            'task':                   task,
-            'applicable_terminals':   applicable_terminals,
-            'applicable_piers':       applicable_piers,
-            'priority':               r.get('Priority', 'Medium').strip(),
-            'applies_to_short_haul':  _yes('Short Haul'),
-            'applies_to_long_haul':   _yes('Long Haul'),
-            'applies_to_arrivals':    _yes('Arrival'),
-            'applies_to_departures':  _yes('Departure'),
-            'max_staff_count':        max_staff_count,
-            'scope':                  r.get('Dependent on Flights/Terminal', 'All Flights').strip(),
-        })
-    _config_rules = rules
+    _config_rules = []
     return _config_rules
 
 
@@ -2782,7 +2730,7 @@ def _infer_pier(gate: str) -> str:
 _PIER_NORM = {'1': 'P1', '2': 'P2', '3': 'P3', '4': 'P4'}
 
 def _norm_pier_value(p: str) -> str:
-    """Normalise Stands.csv pier values ('1'-'4') to 'P1'-'P4'.
+    """Normalise pier values ('1'-'4') to 'P1'-'P4'.
     Non-numeric labels (North, Central …) are returned unchanged.
     """
     return _PIER_NORM.get(p, p)
@@ -2791,28 +2739,13 @@ def _norm_pier_value(p: str) -> str:
 def get_stands_map():
     """Return {stand_id: {'type': str, 'terminal': str, 'pier': str}}, cached.
 
-    Reads Stands.csv.  Pier values are normalised: '1'→'P1', '2'→'P2', etc.
-    so they match the 'P1'-'P4' format used in Config.csv rules.
+    Stand-file based routing is disabled; passenger profiles do not require a
+    stand map.
     """
     global _stands_map
     if _stands_map is not None:
         return _stands_map
-    path = os.path.join(BASE_DIR, 'data', 'Stands.csv')
-    with open(path, encoding='utf-8-sig') as f:
-        rows = list(csv.DictReader(f))
     _stands_map = {}
-    for r in rows:
-        sid   = r.get('stand_id', '').strip()
-        stype = r.get('stand_type', '').strip() or 'Contact'
-        term  = (r.get('terminal', '') or r.get('Terminal', '')).strip()
-        pier  = (r.get('pier',     '') or r.get('Pier',     '')).strip()
-        if sid:
-            raw_pier = pier or _infer_pier(sid)
-            _stands_map[sid] = {
-                'type':     stype,
-                'terminal': term or _infer_terminal(sid),
-                'pier':     _norm_pier_value(raw_pier),
-            }
     return _stands_map
 
 
@@ -2918,41 +2851,24 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
     sh_options = custom_constraints.get('permitted_shifts')
 
     # ── Density-based shift allocation ──────────────────────────────────────
-    # Only allocate shifts WHEN THERE ARE FLIGHTS.
-    # Empty 30-minute windows are excluded from candidates entirely.
-    # Busier windows attract proportionally more staff.
+    # Use passenger-profile demand density. Empty 30-minute windows are excluded
+    # from candidates entirely; busier windows attract proportionally more staff.
     density_shifts = None
     if not sh_options:
         try:
-            flt_path     = os.path.join(BASE_DIR, 'data', 'Flights_schedule_4days.csv')
-            flt_date_key = d.strftime('%d-%b-%y')
-            flight_times = []
-            with open(flt_path, encoding='cp1252') as ff:
-                for row in csv.DictReader(ff):
-                    clean = {k: v.replace('\xa0', '').strip() for k, v in row.items()}
-                    if clean.get('date', '') == flt_date_key:
-                        t = parse_time(clean.get('sta', ''))
-                        if t is not None:
-                            flight_times.append(t)
-
             # 30-minute blocks: 0..47
-            # block_density now stores WEIGHTED demand (proxy for FTE)
             block_density = [0.0] * 48
-            with open(flt_path, encoding='cp1252') as ff:
-                for row in csv.DictReader(ff):
-                    clean = {k: v.replace('\xa0', '').strip() for k, v in row.items()}
-                    if clean.get('date', '') == flt_date_key:
-                        t = parse_time(clean.get('sta', ''))
-                        if t is not None:
-                            # Proxy for task demand: higher weight for larger aircraft categories
-                            # Cat C (~1.0), Cat E (~2.0), Cat F (~3.0)
-                            cat = clean.get('icao_cat', 'C').upper()
-                            weight = 1.0
-                            if cat == 'D':   weight = 1.5
-                            elif cat == 'E': weight = 2.0
-                            elif cat == 'F': weight = 3.0
-                            
-                            block_density[min(47, int(t) // TASK_SLOT_MINS)] += weight
+            for task in build_pax_demand_tasks(date_str):
+                start = int(task.get('start_mins', 0) or 0)
+                end = int(task.get('end_mins', start + PAX_DEMAND_SLOT_MINS) or start)
+                demand = float(task.get('staff_needed', 0) or 0)
+                if demand <= 0:
+                    continue
+                start_block = max(0, min(47, start // TASK_SLOT_MINS))
+                end_block = max(start_block, min(47, (max(end, start + 1) - 1) // TASK_SLOT_MINS))
+                spread = demand / (end_block - start_block + 1)
+                for bi in range(start_block, end_block + 1):
+                    block_density[bi] += spread
 
             # Find the span of active blocks
             active_blocks = [bi for bi, cnt in enumerate(block_density) if cnt > 0]
@@ -2984,7 +2900,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
                     total_density = sum(c['density'] for c in candidates)
                     n_staff_count = len(day_staff)
                     density_shifts = []
-                    # Proportionally allocate staff based on weighted demand
+                    # Proportionally allocate staff based on passenger demand
                     for cand in sorted(candidates, key=lambda x: -x['density']):
                         n_alloc = max(0, round(n_staff_count * cand['density'] / total_density))
                         for _ in range(n_alloc):
@@ -3655,7 +3571,7 @@ def _partial_staff_count(total_pax: int) -> int:
 
 def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
                         window_mins: int = SHARING_WINDOW_MINS) -> list:
-    """Generate all per-day tasks driven by Config.csv rules.
+    """Generate legacy per-day flight tasks from in-memory rules.
 
     Each rule carries: task, applicable_terminals, applicable_piers, scope,
     applies_to_short_haul, applies_to_long_haul, applies_to_arrivals,
@@ -3884,7 +3800,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     date_label      = d.strftime('%A %d %b %Y')
 
     # Short-term and intraday optimisation is passenger-driven only.
-    # Flight schedules, gates, stands, and Config.csv task generation are not
+    # Flight schedules, gates, stands, and rule-file task generation are not
     # used as tactical demand inputs.
     flights_raw = []
     delay_map = {}
@@ -4053,7 +3969,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             '_raw':      flight,
         })
 
-    # ── Generate flight tasks from Config.csv rules ───────────────────────────
+    # ── Legacy flight task generation disabled ───────────────────────────────
     all_tasks = []
 
     # ── CBP hall task — session-level, driven by US/Canada departures ────────
@@ -4091,7 +4007,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
             'time_window':     f"{mins_to_time(cbp_start)}-{mins_to_time(cbp_end)}",
         })
 
-    # ── Fixed duties — generated from Config.csv rows with scope='Fixed' ──────
+    # ── Legacy fixed duties — disabled unless in-memory rules are supplied ───
     # Each Fixed rule runs two standard shifts (AM 04:00-12:00 / PM 12:00-20:00).
     # Mezz Operation is included as a 24-hour fixed post.
     _fixed_rules = [r for r in rules if r['scope'] == 'Fixed']
@@ -4100,9 +4016,9 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         _task   = _fr['task']
         _skill  = TASK_SKILL.get(_task, _task)
         _pri    = 'Critical' if _task == 'Mezz Operation' else (_fr['priority'] or 'Medium')
-        # Use the configured max_staff_count as the required headcount for
+        # Use the rule max_staff_count as the required headcount for
         # fixed duties so Mezz Operation slots can be manned by multiple
-        # workers concurrently (e.g., max 3 as defined in Config.csv).
+            # workers concurrently.
         _needed = _fr['max_staff_count']
         _cap    = _fr['max_staff_count']
         
@@ -4301,7 +4217,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
 
     # Sort tasks for assignment.
     # Key objectives in order:
-    #   1. Priority (Critical → High → Medium → Low) from Config.csv
+    #   1. Priority (Critical → High → Medium → Low)
     #   2. Coverage breadth: tasks covering more flights processed first so shared
     #      resources are allocated where they deliver the most coverage.
     #   3. Terminal/pier spread: tasks serving multiple terminals ahead of single-terminal
@@ -6308,32 +6224,8 @@ def delete_scenario(sid):
 def update_csv_dates_to_current():
     """Auto-update CSV dates to start from today."""
     now = datetime.now()
-    
-    # 1. Update Flights_schedule_4days.csv
-    flights_path = os.path.join(BASE_DIR, 'data', 'Flights_schedule_4days.csv')
-    if os.path.exists(flights_path):
-        with open(flights_path, encoding='cp1252') as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
-            fieldnames = reader.fieldnames
-        if rows:
-            raw_dates = set(r.get('date', '').strip() for r in rows if r.get('date', '').strip())
-            parsed = [(parse_date(d), d) for d in raw_dates if parse_date(d)]
-            parsed.sort(key=lambda x: x[0])
-            
-            if parsed:
-                date_map = {}
-                for i, (d_obj, d_str) in enumerate(parsed):
-                    date_map[d_str] = (now + timedelta(days=i)).strftime('%d-%b-%y')
-                for r in rows:
-                    if r.get('date', '').strip() in date_map:
-                        r['date'] = date_map[r.get('date', '').strip()]
-                with open(flights_path, 'w', encoding='cp1252', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerows(rows)
 
-    # 2. Update Staff_schedule.csv
+    # 1. Update Staff_schedule.csv
     staff_path = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
     if os.path.exists(staff_path):
         with open(staff_path, encoding='utf-8-sig') as f:
@@ -6357,7 +6249,7 @@ def update_csv_dates_to_current():
                     writer.writeheader()
                     writer.writerows(rows)
 
-    # 3. Update short term PAX workbook timestamps (shift to start from today)
+    # 2. Update short term PAX workbook timestamps (shift to start from today)
     pax_path = os.path.join(BASE_DIR, 'data', 'short term PAX.xlsx')
     if os.path.exists(pax_path):
         try:

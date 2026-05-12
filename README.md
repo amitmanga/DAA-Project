@@ -4,25 +4,25 @@ AeroSched is an advanced, intelligence-driven operations platform designed for t
 
 ## 🚀 Overview
 
-AeroSched transforms flight forecast data and staff availability into actionable schedules. It helps operations managers predict staffing gaps, optimize rosters, and respond to real-time disruptions like flight delays and cancellations.
+AeroSched transforms passenger forecast data and staff availability into actionable schedules. It helps operations managers predict staffing gaps, optimize rosters, and respond to real-time operational changes.
 
 ## ✨ Key Features
 
 ### 1. Strategic Planning (Long-Term)
-*   **12-Month Forecast**: Visualize seasonal trends and annual flight volumes for 2026.
+*   **12-Month Forecast**: Visualize seasonal trends and annual passenger footfall for 2026.
 *   **Gap Analysis**: Automatically identify weeks where staff demand exceeds available capacity.
 *   **Annual Allocation**: Detailed breakdown of FTE requirements by role (GNIB, CBP, Ramp, etc.) and airport pier.
 *   **Scenario Planning**: Perform **Monte Carlo simulations** to stress-test your workforce against demand surges, punctuality drops, and staff absence rates.
 
 ### 2. Tactical Planning (Short-Term)
 *   **3-Day Rolling Window**: Manage detailed scheduling for the upcoming 3 days.
-*   **Task Generation**: Automatically decomposes flight movements into specific tasks (Bussing, Marshalling, Immigration) based on complex rules defined in `Config.csv`.
+*   **Task Generation**: Converts passenger demand profiles into staffing tasks for passenger-processing roles.
 *   **Staff Roster**: View assignments, break schedules, and individual utilization rates.
-*   **Gate Timeline**: A high-level visual Gantt chart of flight occupancy across all contact and remote stands.
+*   **Demand Timeline**: A high-level visual view of passenger-driven staffing demand.
 
 ### 3. Live Operations (Intraday)
 *   **Real-Time Optimization**: A live view of today's operations with current time indicators.
-*   **Disruption Management**: Apply delays or cancellations to flights and watch the system re-calculate task timings and staff assignments instantly.
+*   **Disruption Management**: Adjust operational assumptions and watch the system re-calculate task timings and staff assignments instantly.
 *   **Manual Overrides**: Drag-and-drop staff onto tasks to cover last-minute gaps.
 
 ## 🛠️ Technology Stack
@@ -40,11 +40,10 @@ The application is powered by a set of CSV files located in the `data/` director
 | :--- | :--- |
 | `forecast_pax_results_2026.csv` | Weekly P10/P50/P90 passenger forecast used for the long-term view. |
 | `historical_pax_data.csv` | Historical weekly passenger footfall used for actuals in the long-term trend chart. |
-| `Flights_schedule_4days.csv` | Tactical flight movement data for the next 4 days. |
 | `Staff_schedule.csv` | Daily roster showing which staff members are on duty. |
 | `Staff_absence_schedule.csv` | Tracks approved leave and sickness. |
-| `Config.csv` | The "brain" of the system—contains rules for task offsets, durations, and staff requirements. |
-| `Stands.csv` | Mapping of gates to terminals, piers, and stand types (Contact vs. Remote). |
+| `short term PAX.xlsx` | Short-term passenger demand profile used for tactical and intraday staffing. |
+| `PAX Config.xlsx` | Passenger-handling productivity rates used to convert footfall into staffing demand. |
 
 > [!NOTE]
 > The platform includes **Self-Healing Data Automation**. On startup, the app automatically updates operational schedule dates to the current day.
