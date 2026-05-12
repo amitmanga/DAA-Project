@@ -138,24 +138,44 @@ function destroyChart(id) {
   if (CHARTS[id]) { CHARTS[id].destroy(); delete CHARTS[id]; }
 }
 
-document.querySelectorAll('.nav-btn').forEach(btn => {
+function navSectionForView(view) {
+  if (view.startsWith('long-term')) return 'long-term';
+  if (view.startsWith('short-term')) return 'short-term';
+  if (view.startsWith('intraday')) return 'intraday';
+  if (view === 'config') return 'config';
+  return '';
+}
+
+function switchView(view) {
+  const target = document.getElementById(`view-${view}`);
+  if (!target) return;
+
+  document.body.classList.toggle('is-home-view', view === 'home');
+  document.body.dataset.navSection = navSectionForView(view);
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  target.classList.add('active');
+
+  const section = navSectionForView(view);
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.classList.toggle('active',
+      (btn.dataset.view && btn.dataset.view === view) ||
+      (btn.dataset.section && btn.dataset.section === section)
+    );
+  });
+  document.querySelectorAll('.nav-subitem').forEach(item => {
+    item.classList.toggle('active', item.dataset.view === view);
+  });
+
+  if (view === 'short-term' && typeof initShortTerm === 'function') initShortTerm();
+  if (view === 'intraday'   && typeof initIntraday   === 'function') initIntraday();
+  if (view === 'config'     && typeof initConfig     === 'function') initConfig();
+  if (view === 'long-term') refreshAllCharts();
+}
+
+document.querySelectorAll('[data-view]').forEach(btn => {
   btn.addEventListener('click', () => {
     if (btn.disabled) return;
-    const view = btn.dataset.view;
-
-    // View switching
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(`view-${view}`).classList.add('active');
-
-    // Data initialization
-    if (view === 'short-term' && typeof initShortTerm === 'function') initShortTerm();
-    if (view === 'intraday'   && typeof initIntraday   === 'function') initIntraday();
-    if (view === 'config'     && typeof initConfig     === 'function') initConfig();
-
-    // Refresh charts if needed (e.g. for theme-aware colors)
-    if (view === 'long-term') refreshAllCharts();
+    switchView(btn.dataset.view);
   });
 });
 
@@ -971,6 +991,9 @@ async function loadSkillCharts() {
 // ═════════════════════════════════════════════════════════════
 async function boot() {
   setLiveDate();
+  const activeView = document.querySelector('.view.active')?.id?.replace('view-', '') || 'home';
+  document.body.classList.toggle('is-home-view', activeView === 'home');
+  document.body.dataset.navSection = navSectionForView(activeView);
 
   // Load heatmap first so ALL_WEEKS is populated for dependent charts
   await loadCalendarHeatmap();

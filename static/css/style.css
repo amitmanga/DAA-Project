@@ -317,6 +317,18 @@ body {
   padding-right: 24px;
   border-right: 1px solid rgba(255,255,255,0.12);
 }
+.header-brand.home-link {
+  appearance: none;
+  background: transparent;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+  color: inherit;
+  font-family: var(--font);
+  padding: 0 24px 0 0;
+  cursor: pointer;
+}
 .logo-mark {
   width: 42px; height: 42px;
   background: linear-gradient(135deg, #bf4e0a 0%, var(--accent) 55%, #fbac42 100%);
@@ -345,6 +357,12 @@ body {
   gap: 4px;
   flex: 1;
 }
+.nav-menu {
+  position: relative;
+  height: 58px;
+  display: flex;
+  align-items: center;
+}
 .nav-btn {
   background: transparent;
   border: none;
@@ -371,9 +389,56 @@ body {
 }
 .nav-btn:hover { color: rgba(255,255,255,0.9); }
 .nav-btn.active { color: #ffffff; font-weight: 600; }
-.nav-btn.active::after { transform: scaleX(1); }
+.nav-btn.active::after { transform: scaleX(0); }
+body[data-nav-section="long-term"] .nav-btn[data-section="long-term"]::after,
+body[data-nav-section="short-term"] .nav-btn[data-section="short-term"]::after,
+body[data-nav-section="intraday"] .nav-btn[data-section="intraday"]::after,
+body[data-nav-section="config"] .nav-btn[data-view="config"]::after {
+  transform: scaleX(1);
+}
 .nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .nav-btn:disabled::after { display: none; }
+.nav-submenu {
+  position: absolute;
+  top: 58px;
+  left: 8px;
+  min-width: 180px;
+  padding: 8px;
+  background: var(--navy-2);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+  z-index: 900;
+}
+.nav-menu:hover .nav-submenu,
+.nav-menu:focus-within .nav-submenu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.nav-subitem {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255,255,255,0.74);
+  cursor: pointer;
+  display: block;
+  font-family: var(--font);
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 10px 12px;
+  text-align: left;
+}
+.nav-subitem:hover,
+.nav-subitem.active {
+  background: rgba(249,115,22,0.14);
+  color: #ffffff;
+}
 
 /* Header meta */
 .header-meta {
@@ -383,6 +448,9 @@ body {
   flex-shrink: 0;
   font-size: 0.78rem;
   color: rgba(255,255,255,0.5);
+}
+body.is-home-view .header-meta {
+  display: none;
 }
 #live-date {
   background: rgba(255,255,255,0.08);
@@ -442,6 +510,41 @@ body {
 /* Views */
 .view { display: none; }
 .view.active { display: block; }
+
+/* Home */
+.home-hero {
+  min-height: calc(100vh - 102px);
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  position: relative;
+  background:
+    linear-gradient(90deg, rgba(26,39,68,0.86) 0%, rgba(26,39,68,0.58) 42%, rgba(26,39,68,0.08) 100%),
+    url('/static/home_page.jpg') center center / cover no-repeat;
+  overflow: hidden;
+}
+.home-hero-copy {
+  position: relative;
+  z-index: 1;
+  padding: min(18vh, 150px) 6vw 0;
+  max-width: 760px;
+}
+.home-hero-copy h1 {
+  color: #ffffff;
+  font-size: clamp(2.9rem, 5vw, 5.4rem);
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+.home-hero-copy p {
+  color: rgba(255,255,255,0.88);
+  font-size: clamp(1rem, 1.3vw, 1.25rem);
+  line-height: 1.55;
+  margin-top: 24px;
+  max-width: 640px;
+}
+.blank-workspace {
+  padding: 32px;
+}
 
 /* ══════════════════════════════════════════════
    KPI CARDS
