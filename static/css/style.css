@@ -4160,3 +4160,35 @@ canvas { display: block; }
   background: transparent !important;
   opacity: 0.5;
 }
+
+/* ── Config tab ─────────────────────────────────────────────────────────── */
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.btn-primary:hover:not(:disabled) { opacity: .85; }
+.btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn-outline {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.btn-outline:hover { border-color: var(--text-2); color: var(--text-2); }
+
+.cfg-rate-input:focus { border-color: var(--info) !important; outline: none; }
+.cfg-rate-input.cfg-dirty { border-color: var(--warn) !important; color: var(--warn); }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

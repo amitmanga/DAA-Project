@@ -2082,6 +2082,7 @@ _intraday_overrides = {}   # {flight_no: {delay_mins: int, cancelled: bool}}
 _manual_assigns = {}       # {date_key: {task_id: [extra_staff_ids]}}
 _manual_unassigns = {}     # {date_key: {task_id: [blocked_staff_ids]}}
 _manual_block_assigns = {} # {date_key: {block_key: {skill, terminal, block_start, block_end, staff_ids}}}
+_intraday_result_cache = {} # {date_key: result_dict} — live state for manual operations
 
 
 def _apply_manual_unassigns_to_result(result, date_key):
@@ -2199,6 +2200,40 @@ def _manual_block_key(skill, terminal, blk_start, blk_end):
     return f'{skill}|{terminal}|{int(blk_start)}|{int(blk_end)}'
 
 
+def _snapshot_all_optimizer_blocks(result, date_key):
+    """Freeze optimizer-allocated crews for all blocks not yet manually touched.
+
+    Creates one snapshot entry per (skill, terminal, 60-min-block) so that the
+    keys always match what the terminal-specific heatmap cells will send.  Blocks
+    already in _manual_block_assigns are never overwritten so prior manual changes
+    are always preserved.
+    """
+    blocks = _manual_block_assigns.setdefault(date_key, {})
+    seen_keys = set()
+    for task in result.get('tasks', []):
+        skill = task.get('skill')
+        if not skill:
+            continue
+        start    = int(task.get('start_mins') or 0)
+        blk_start = (start // 60) * 60
+        blk_end   = blk_start + 60
+        terminal  = task.get('terminal') or 'ALL'
+        key = _manual_block_key(skill, terminal, blk_start, blk_end)
+        if key in blocks or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        tasks = _matching_block_tasks(result, skill, terminal, blk_start, blk_end)
+        if not tasks:
+            continue
+        blocks[key] = {
+            'skill':       skill,
+            'terminal':    terminal,
+            'block_start': blk_start,
+            'block_end':   blk_end,
+            'staff_ids':   list(_block_assigned_staff(tasks)),
+        }
+
+
 def _sync_flight_tasks_from_task_lookup(result, task_lookup):
     for flight in result.get('flights', []):
         for task in flight.get('tasks', []):
@@ -2249,11 +2284,7 @@ def _apply_manual_block_assigns_to_result(result, date_key):
             if sid not in preferred:
                 preferred.append(sid)
 
-        carry_forward = [
-            sid for sid, _count in sorted(existing_counts.items(), key=lambda item: (-item[1], item[0]))
-            if sid not in preferred and sid in staff_by_id
-        ]
-        crew = (preferred + carry_forward)[:required]
+        crew = preferred[:required]
 
         task_ids = {t.get('id') for t in tasks}
         for staff in staff_by_id.values():
@@ -3401,13 +3432,19 @@ def refill_unassigned_tasks(result):
         if task.get('is_past'):
             continue
         # Re-evaluate existing assignments: drop any staff who are no longer
-        # able to cover the task due to a shift change (or missing staff).
+        # able to cover the task due to a shift change, missing staff, or a
+        # skill mismatch (e.g. carried over from a prior manual-assign bug).
         orig_assigned = list(dict.fromkeys(task.get('assigned') or []))
         assigned = []
+        task_skill = task.get('skill', '')
         for sid in orig_assigned:
             s = staff_by_id.get(sid)
             if not s:
                 # Staff not present for this date
+                continue
+            # Drop if skill no longer matches — same gate as new-assignment path.
+            if not has_skill(s, task_skill):
+                s['assignments'] = [a for a in (s.get('assignments') or []) if a.get('task_id') != task.get('id')]
                 continue
             # If the staff's shift no longer covers the task window, remove the
             # assignment from both the task and the staff member.
@@ -4972,13 +5009,26 @@ def intraday_get():
     now = datetime.now()
     today_str = now.strftime('%Y-%m-%d')
     man = _manual_assigns.get(today_str, {})
-    current_time_mins = now.hour * 60 + now.minute
+    # Run optimizer without current_time_mins so ALL hours (including early morning)
+    # receive staff assignments. is_past is applied afterward for UI display only.
     result = optimize_day(today_str, _intraday_overrides, man,
-                          current_time_mins=current_time_mins,
+                          current_time_mins=None,
                           prefer_early=True,
                           custom_constraints=_intraday_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
+    # Mark past tasks for UI display after full optimization (does not affect assignments).
+    current_time_mins = now.hour * 60 + now.minute
+    for task in result.get('tasks', []):
+        if task.get('end_mins', 0) <= current_time_mins:
+            task['is_past'] = True
+        else:
+            task.pop('is_past', None)
+    # Snapshot all blocks then re-apply any saved manual changes so the cached
+    # result already reflects the user's manual state on every (re)load.
+    _snapshot_all_optimizer_blocks(result, today_str)
+    _apply_manual_block_assigns_to_result(result, today_str)
+    _intraday_result_cache[today_str] = result
     return jsonify(result)
 
 
@@ -4995,13 +5045,23 @@ def intraday_delay():
     now = datetime.now()
     today_str = now.strftime('%Y-%m-%d')
     man = _manual_assigns.get(today_str, {})
-    current_time_mins = now.hour * 60 + now.minute
+    # Same as intraday_get: optimize all hours, mark is_past afterward for UI only.
     result = optimize_day(today_str, _intraday_overrides, man,
-                          current_time_mins=current_time_mins,
+                          current_time_mins=None,
                           prefer_early=True,
                           custom_constraints=_intraday_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
+    current_time_mins = now.hour * 60 + now.minute
+    for task in result.get('tasks', []):
+        if task.get('end_mins', 0) <= current_time_mins:
+            task['is_past'] = True
+        else:
+            task.pop('is_past', None)
+    # Flight delay is a real schedule change — re-snapshot and update cache.
+    _snapshot_all_optimizer_blocks(result, today_str)
+    _apply_manual_block_assigns_to_result(result, today_str)
+    _intraday_result_cache[today_str] = result
     return jsonify(result)
 
 
@@ -5016,6 +5076,7 @@ def intraday_reset():
         _manual_unassigns.pop(today_str, None)
     if today_str in _manual_block_assigns:
         _manual_block_assigns.pop(today_str, None)
+    _intraday_result_cache.pop(today_str, None)
     return intraday_get()
 
 
@@ -5050,14 +5111,19 @@ def intraday_assign():
             blocked.append(staff_id)
     _manual_assigns[today_str][task_id] = existing
     _manual_unassigns[today_str][task_id] = blocked
-    
+
     current_time_mins = now.hour * 60 + now.minute
     result = optimize_day(today_str, _intraday_overrides, _manual_assigns.get(today_str, {}),
-                          current_time_mins=current_time_mins,
+                          current_time_mins=None,
                           prefer_early=True,
                           custom_constraints=_intraday_custom_constraints)
     if 'error' in result:
         return jsonify(result), 404
+    for task in result.get('tasks', []):
+        if task.get('end_mins', 0) <= current_time_mins:
+            task['is_past'] = True
+        else:
+            task.pop('is_past', None)
     return jsonify(result)
 
 
@@ -5071,6 +5137,9 @@ def intraday_assign_block():
     blk_start  = int(body.get('block_start', 0))
     blk_end    = int(body.get('block_end', blk_start + 60))
     action     = body.get('action', 'assign')   # 'assign' | 'unassign' | legacy 'remove'
+    # IDs the client currently shows as assigned — used as authoritative crew base
+    # for first-touch blocks so we don't override with a fresh optimizer snapshot.
+    client_assigned = [str(x).strip() for x in (body.get('current_assigned') or []) if x]
     if action == 'remove':
         action = 'unassign'
     if not staff_id:
@@ -5084,11 +5153,23 @@ def intraday_assign_block():
         _manual_unassigns[today_str] = {}
     if today_str not in _manual_block_assigns:
         _manual_block_assigns[today_str] = {}
-    # Find all matching task IDs by running a quick schedule pass
-    _tmp = optimize_day(today_str, _intraday_overrides,
-                        _manual_assigns.get(today_str, {}),
-                        current_time_mins=cur_mins, prefer_early=True,
-                        custom_constraints=_intraday_custom_constraints)
+    # Use the cached optimizer result — the optimizer must NOT re-run for manual
+    # assign/remove operations.  It only runs on page load and Refresh.
+    _tmp = _intraday_result_cache.get(today_str)
+    if _tmp is None:
+        # Cache not populated yet (e.g. direct API call before page load).
+        # Run optimizer once as a fallback, snapshot, and cache.
+        _tmp = optimize_day(today_str, _intraday_overrides, {},
+                            current_time_mins=None, prefer_early=True,
+                            custom_constraints=_intraday_custom_constraints)
+        for _t in _tmp.get('tasks', []):
+            if _t.get('end_mins', 0) <= cur_mins:
+                _t['is_past'] = True
+            else:
+                _t.pop('is_past', None)
+        _snapshot_all_optimizer_blocks(_tmp, today_str)
+        _apply_manual_block_assigns_to_result(_tmp, today_str)
+        _intraday_result_cache[today_str] = _tmp
     staff_member = next((s for s in _tmp.get('staff', []) if str(s.get('id', '')) == staff_id), None)
     if action == 'assign':
         if not staff_member:
@@ -5103,14 +5184,12 @@ def intraday_assign_block():
     matched_ids = [t.get('id') for t in matching_tasks if t.get('id')]
     if not matched_ids:
         return jsonify({'error': 'No matching tasks found for this block.'}), 404
-    hour_tasks = [
-        t for t in _tmp.get('tasks', [])
-        if (t.get('start_mins') or 0) < blk_end and (t.get('end_mins') or 0) > blk_start
-    ]
 
     if action == 'assign':
         block_required = _block_required_fte(matching_tasks)
-        block_assigned = _block_assigned_staff(matching_tasks)
+        # Prefer the client's visible crew for the "already full" check so the
+        # server and panel agree on how many are currently assigned.
+        block_assigned = set(client_assigned) if client_assigned else _block_assigned_staff(matching_tasks)
         if staff_id not in block_assigned and len(block_assigned) >= block_required:
             return jsonify({'error': f'Selected block already has required FTE ({block_required}). Use extra FTE on another gap block.'}), 409
         busy_elsewhere = _staff_busy_outside_tasks(_tmp, staff_id, matched_ids, blk_start, blk_end)
@@ -5119,6 +5198,7 @@ def intraday_assign_block():
             return jsonify({'error': f'Staff is still assigned to {busy.get("skill", "another task")} {busy.get("start", "")}-{busy.get("end", "")}. Remove them there first.'}), 409
 
     block_key = _manual_block_key(skill, terminal, blk_start, blk_end)
+    is_new_block = block_key not in _manual_block_assigns[today_str]
     block_entry = _manual_block_assigns[today_str].setdefault(block_key, {
         'skill': skill,
         'terminal': terminal,
@@ -5126,50 +5206,118 @@ def intraday_assign_block():
         'block_end': blk_end,
         'staff_ids': [],
     })
+    if is_new_block:
+        # Use what the client currently shows as the crew base so the heatmap
+        # always reflects the user's visible state, not a fresh optimizer snapshot
+        # that may differ due to reassignment across other blocks.
+        block_entry['staff_ids'] = client_assigned if client_assigned else list(_block_assigned_staff(matching_tasks))
     if action == 'assign' and staff_id not in block_entry['staff_ids']:
         block_entry['staff_ids'].append(staff_id)
     elif action == 'unassign':
         block_entry['staff_ids'] = [sid for sid in block_entry.get('staff_ids', []) if sid != staff_id]
 
-    tasks_to_update = matching_tasks if action == 'assign' else hour_tasks
-    for _t in tasks_to_update:
-            tid = _t['id']
-            existing = list(_manual_assigns[today_str].get(tid, []))
-            blocked = list(_manual_unassigns[today_str].get(tid, []))
-            if action == 'assign':
-                before_existing = list(existing)
-                before_blocked = list(blocked)
-                blocked = [x for x in blocked if x != staff_id]
-                if staff_id not in existing:
-                    existing.append(staff_id)
-                if existing != before_existing or blocked != before_blocked:
-                    changed_ids.append(tid)
-            elif action == 'unassign':
-                before_existing = list(existing)
-                before_blocked = list(blocked)
-                existing = [x for x in existing if x != staff_id]
-                if staff_id not in blocked:
-                    blocked.append(staff_id)
-                if existing != before_existing or blocked != before_blocked:
-                    changed_ids.append(tid)
-            _manual_assigns[today_str][tid] = existing
-            _manual_unassigns[today_str][tid] = blocked
-    result = optimize_day(today_str, _intraday_overrides,
-                          _manual_assigns.get(today_str, {}),
-                          current_time_mins=cur_mins, prefer_early=True,
-                          custom_constraints=_intraday_custom_constraints)
-    if 'error' in result:
-        return jsonify(result), 404
+    # Persist for page-refresh — _manual_assigns / _manual_unassigns still drive
+    # the post-processing steps inside optimize_day when the full page reloads.
+    # Both assign and unassign must be scoped to matching_tasks (the specific
+    # skill+terminal block) to avoid polluting other touchpoints' task records.
+    tasks_to_persist = matching_tasks
+    for _t in tasks_to_persist:
+        tid = _t['id']
+        existing = list(_manual_assigns[today_str].get(tid, []))
+        blocked  = list(_manual_unassigns[today_str].get(tid, []))
+        if action == 'assign':
+            blocked   = [x for x in blocked if x != staff_id]
+            if staff_id not in existing:
+                existing.append(staff_id)
+                changed_ids.append(tid)
+        else:
+            existing = [x for x in existing if x != staff_id]
+            if staff_id not in blocked:
+                blocked.append(staff_id)
+                changed_ids.append(tid)
+        _manual_assigns[today_str][tid]   = existing
+        _manual_unassigns[today_str][tid] = blocked
+
+    # Apply the change directly to _tmp — no second optimizer run, no auto-fill.
+    # block_entry['staff_ids'] is the single source of truth for what should be
+    # assigned: it is either the client's visible crew (new block) or the
+    # previously-snapshotted manual crew (existing block), already updated above.
+    final_crew = list(block_entry['staff_ids'])
+    result = _tmp
+    task_lookup_r  = {t.get('id'): t for t in result.get('tasks', [])}
+    staff_by_id_r  = {str(s.get('id', '')): s for s in result.get('staff', []) if s.get('id')}
+    tasks_to_modify = [task_lookup_r[t.get('id')] for t in matching_tasks if task_lookup_r.get(t.get('id'))]
+    modified_task_ids = set()
+    for task in tasks_to_modify:
+        task['assigned'] = final_crew
+        _set_task_status(task)
+        modified_task_ids.add(task.get('id'))
+
+    # Sync staff.assignments for the changed person
+    s_member = staff_by_id_r.get(str(staff_id))
+    if s_member:
+        if action == 'unassign':
+            s_member['assignments'] = [
+                a for a in (s_member.get('assignments') or [])
+                if a.get('task_id') not in modified_task_ids
+            ]
+        else:
+            existing_ids = {a.get('task_id') for a in (s_member.get('assignments') or [])}
+            for task in tasks_to_modify:
+                if task.get('id') not in existing_ids:
+                    _append_staff_assignment(s_member, task)
+
+    # Recalculate KPIs
+    all_tasks = result.get('tasks', [])
+    tasks_covered = sum(1 for t in all_tasks if not t.get('alert'))
+    tasks_total   = len(all_tasks)
+    result['kpis']['tasks_covered']          = tasks_covered
+    result['kpis']['demand_windows_covered'] = tasks_covered
+    total_windows = result['kpis'].get('demand_windows_total') or tasks_total
+    result['kpis']['coverage_pct'] = round(tasks_covered / total_windows * 100, 1) if total_windows else 100.0
+
+    # Rebuild alerts list (no rec_staff since we're outside optimize_day scope)
+    new_alerts = []
+    for task in all_tasks:
+        if task.get('alert'):
+            needed         = int(task.get('staff_needed') or 0)
+            assigned_count = len(task.get('assigned') or [])
+            gap            = max(0, needed - assigned_count)
+            new_alerts.append({
+                'task_id':         task.get('id', ''),
+                'flight_no':       task.get('flight_no', ''),
+                'flights_covered': task.get('flights_covered', []),
+                'covered_flights': task.get('covered_flights', []),
+                'task':            task.get('task', ''),
+                'skill':           task.get('skill', ''),
+                'priority':        task.get('priority', 'Normal'),
+                'start':           task.get('start', ''),
+                'end':             task.get('end', ''),
+                'staff_needed':    needed,
+                'assigned_count':  assigned_count,
+                'assigned_staff':  task.get('assigned', []),
+                'gap':             gap,
+                'message':         task.get('alert', ''),
+                'rec_staff':       [],
+                'sharing_mode':    task.get('sharing_mode', 'dedicated'),
+                'terminal':        task.get('terminal', ''),
+                'pier':            task.get('pier', ''),
+                'time_window':     task.get('time_window', ''),
+                'passengers':      task.get('passengers', 0),
+                'pax_rate':        task.get('pax_rate', 0),
+            })
+    result['alerts'] = new_alerts
+
     verified_count = _count_staff_in_block(result, staff_id, skill, terminal, blk_start, blk_end)
     result['move_status'] = {
-        'action': action,
-        'staff_id': staff_id,
-        'skill': skill,
-        'terminal': terminal,
-        'block_start': blk_start,
-        'block_end': blk_end,
-        'matched_tasks': len(matched_ids),
-        'changed_tasks': len(changed_ids),
+        'action':                 action,
+        'staff_id':               staff_id,
+        'skill':                  skill,
+        'terminal':               terminal,
+        'block_start':            blk_start,
+        'block_end':              blk_end,
+        'matched_tasks':          len(matched_ids),
+        'changed_tasks':          len(changed_ids),
         'verified_assigned_tasks': verified_count,
         'applied': verified_count > 0 if action == 'assign' else verified_count == 0,
     }
@@ -5251,11 +5399,16 @@ def intraday_optimise():
         man = _manual_assigns.get(today_str, {})
         current_time_mins = now.hour * 60 + now.minute
         result = optimize_day(today_str, _intraday_overrides, man,
-                              current_time_mins=current_time_mins,
+                              current_time_mins=None,
                               prefer_early=True,
                               custom_constraints=_intraday_custom_constraints)
         if 'error' in result:
             return jsonify(result), 404
+        for task in result.get('tasks', []):
+            if task.get('end_mins', 0) <= current_time_mins:
+                task['is_past'] = True
+            else:
+                task.pop('is_past', None)
 
         roster_info = {'roster_available': False, 'solver_used': 'none'}
 
@@ -6527,6 +6680,139 @@ def simulation_status():
             else "simulation_engine.py not found. Ensure it is in the project root."
         ),
     })
+
+
+# ---------------------------------------------------------------------------
+# Configuration tab API endpoints
+# ---------------------------------------------------------------------------
+
+@app.route('/api/config/pax', methods=['GET'])
+def get_pax_config_api():
+    """Return PAX productivity rates for the Config tab UI."""
+    cfg = load_pax_config() or {}
+    rows = []
+    for col, rate in sorted(cfg.items()):
+        work = _pax_work_from_col(col)
+        skill = PAX_WORK_SKILL_MAP.get(work, work.title())
+        terminal = col.split('_', 1)[0] if '_' in col else col
+        rows.append({
+            'col': col,
+            'terminal': terminal,
+            'work_type': work,
+            'skill': skill,
+            'rate': rate,
+        })
+    return jsonify({
+        'rows': rows,
+        'skill_options': sorted(PAX_WORK_SKILL_MAP.keys()),
+    })
+
+
+@app.route('/api/config/pax', methods=['POST'])
+def save_pax_config_api():
+    """Save updated PAX productivity rates to PAX Config.xlsx and clear cache."""
+    global PAX_CONFIG_CACHE
+    body = request.get_json(force=True) or {}
+    updates = body.get('updates', {})   # {col_name: new_rate_float}
+    if not updates:
+        return jsonify({'ok': True, 'message': 'Nothing to save.'})
+
+    path = os.path.join(BASE_DIR, 'data', 'PAX Config.xlsx')
+    if not os.path.exists(path):
+        return jsonify({'error': 'PAX Config.xlsx not found on server.'}), 404
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path)
+        ws = wb.active
+        headers = [
+            str(v).strip() if v is not None else ''
+            for v in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+        ]
+        changed = 0
+        for col_idx, header in enumerate(headers, start=1):
+            if header in updates:
+                ws.cell(row=2, column=col_idx).value = float(updates[header])
+                changed += 1
+        wb.save(path)
+        PAX_CONFIG_CACHE = None
+        updated = load_pax_config()
+        rows = []
+        for col, rate in sorted(updated.items()):
+            work = _pax_work_from_col(col)
+            skill = PAX_WORK_SKILL_MAP.get(work, work.title())
+            terminal = col.split('_', 1)[0] if '_' in col else col
+            rows.append({'col': col, 'terminal': terminal, 'work_type': work, 'skill': skill, 'rate': rate})
+        return jsonify({'ok': True, 'changed': changed, 'rows': rows})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/config/staff-skills', methods=['GET'])
+def get_staff_skills_api():
+    """Return all staff rows with their skill assignments."""
+    staff = load_staff()
+    rows = [
+        {
+            'id':              s.get('EMPLOYEE NUMBER', ''),
+            'skill1':          s.get('Skill1', ''),
+            'skill2':          s.get('Skill2', ''),
+            'skill3':          s.get('Skill3', ''),
+            'skill4':          s.get('Skill4', ''),
+            'employment_type': s.get('EMPLOYMENT TYPE', ''),
+        }
+        for s in sorted(staff, key=lambda x: x.get('EMPLOYEE NUMBER', ''))
+    ]
+    return jsonify({
+        'staff': rows,
+        'valid_skills': sorted(PAX_WORK_SKILL_MAP.keys()),
+    })
+
+
+@app.route('/api/config/staff-skills', methods=['POST'])
+def save_staff_skills_api():
+    """Persist skill changes back to Staff_schedule.csv."""
+    body = request.get_json(force=True) or {}
+    updates = {u['id']: u for u in (body.get('updates') or []) if u.get('id')}
+    if not updates:
+        return jsonify({'ok': True, 'changed': 0})
+
+    path = os.path.join(BASE_DIR, 'data', 'Staff_schedule.csv')
+    try:
+        with open(path, encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            fieldnames = list(reader.fieldnames or [])
+            rows = list(reader)
+
+        changed = 0
+        for row in rows:
+            emp = clean_employee_id(row.get('EMPLOYEE NUMBER', ''))
+            if emp in updates:
+                upd = updates[emp]
+                row['Skill1'] = upd.get('skill1', row.get('Skill1', ''))
+                row['Skill2'] = upd.get('skill2', row.get('Skill2', ''))
+                row['Skill3'] = upd.get('skill3', row.get('Skill3', ''))
+                row['Skill4'] = upd.get('skill4', row.get('Skill4', ''))
+                changed += 1
+
+        with open(path, 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
+        return jsonify({'ok': True, 'changed': changed})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/config/reload', methods=['POST'])
+def config_reload_api():
+    """Clear all server-side data caches so every view reloads fresh data."""
+    global PAX_CONFIG_CACHE, PAX_PROFILE_CACHE, _config_rules
+    PAX_CONFIG_CACHE = None
+    PAX_PROFILE_CACHE = None
+    _config_rules = None
+    return jsonify({'ok': True})
 
 
 # Auto-update CSV dates on start-up (ensures compatibility with WSGI servers like Gunicorn/Render)

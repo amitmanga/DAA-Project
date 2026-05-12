@@ -38,6 +38,7 @@
         <button class="nav-btn active" data-view="long-term">Long Term</button>
         <button class="nav-btn" data-view="short-term">Short Term</button>
         <button class="nav-btn" data-view="intraday">Intraday</button>
+        <button class="nav-btn" data-view="config">Config</button>
       </nav>
       <div class="header-meta">
         <span style="color:rgba(255,255,255,0.45);font-size:0.75rem">142 Gates &middot; 12 Roles &middot; MIP + CP-SAT</span>
@@ -385,6 +386,18 @@
       </div>
     </section>
 
+    <!-- ===== CONFIG VIEW ===== -->
+    <section id="view-config" class="view">
+      <div class="page-header">
+        <h1 class="page-title">Configuration</h1>
+        <span class="sep">—</span>
+        <p class="page-sub">PAX productivity assumptions &amp; staff skill assignments</p>
+      </div>
+      <div id="config-content">
+        <div class="empty-state">Loading configuration…</div>
+      </div>
+    </section>
+
   </main>
 
   <footer class="app-footer">
@@ -396,5 +409,6 @@
   <script src="/static/js/shortterm.js"></script>
   <script src="/static/js/intraday.js"></script>
   <script src="/static/js/scenario.js"></script>
+  <script src="/static/js/config.js"></script>
 </body>
 </html>

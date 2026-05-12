@@ -256,7 +256,7 @@ function renderIntradayPage() {
     <div class="sub-tabs" style="margin-top:20px">
       <button class="sub-tab ${ID_ACTIVE_TAB==='staff-timeline'?'active':''}" data-idtab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='demand'?'active':''}" data-idtab="demand">PAX Demand</button>
-      <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Optimization</button>
+      <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Staff Reallocation</button>
     </div>
     <div id="id-sub-content"></div>
     <div id="id-flight-detail" class="flight-detail-panel"></div>
@@ -1013,7 +1013,7 @@ function renderIDSubContent() {
 }
 
 const _idReallocLog = [];   // persists across full tab re-renders
-let _idReallocSelection = { skill: null, block: null, taskId: null };
+let _idReallocSelection = { skill: null, terminal: null, block: null, taskId: null };
 
 function renderIDDemandTab(container) {
   const tasks = ID_DATA.tasks || [];
@@ -2097,19 +2097,25 @@ async function renderIDOptimization(container) {
   }
 
   function buildMatrixData() {
-    // matrix[skill][blockId] = {req, asgn, gap, pct, terms:Set, tasks:[]}
+    // matrix[rowKey][blockId] = {req, asgn, gap, pct, skill, terminal, terms:Set, tasks:[]}
+    // rowKey = skill + '||' + terminal  (one row per skill × terminal combination)
     const matrix = {};
     tasks.forEach(t => {
-      const sk  = t.skill || t.skill1 || 'Unknown';
-      const bId = _blockForMins(t.start_mins || 0);
-      if (!matrix[sk]) matrix[sk] = {};
-      if (!matrix[sk][bId]) matrix[sk][bId] = { req:0, _slotReq:{}, _staffSet:new Set(), terms:new Set(), tasks:[] };
-      const cell = matrix[sk][bId];
+      const sk   = t.skill || t.skill1 || 'Unknown';
+      const term = t.terminal || 'ALL';
+      const rowKey = sk + '||' + term;
+      const bId  = _blockForMins(t.start_mins || 0);
+      if (!matrix[rowKey]) matrix[rowKey] = {};
+      if (!matrix[rowKey][bId]) matrix[rowKey][bId] = {
+        req:0, _slotReq:{}, _staffSet:new Set(),
+        skill:sk, terminal:term, terms:new Set(), tasks:[]
+      };
+      const cell = matrix[rowKey][bId];
       cell.tasks.push(t);
       const sm = t.start_mins || 0;
       cell._slotReq[sm] = (cell._slotReq[sm] || 0) + (t.staff_needed || 0);
       (t.assigned || []).filter(Boolean).forEach(id => cell._staffSet.add(String(id)));
-      if (t.terminal) cell.terms.add(t.terminal);
+      cell.terms.add(term);
     });
     // Finalise req/asgn/gap/pct
     Object.values(matrix).forEach(byBlock => {
@@ -2138,10 +2144,11 @@ async function renderIDOptimization(container) {
 
   function buildGapList(matrix) {
     const list = [];
-    Object.entries(matrix).forEach(([sk, byBlock]) => {
+    Object.entries(matrix).forEach(([rowKey, byBlock]) => {
+      const [sk, term] = rowKey.split('||');
       Object.entries(byBlock).forEach(([bId, cell]) => {
         if (cell.gap > 0) {
-          list.push({ skill:sk, blockId:bId, ...cell });
+          list.push({ rowKey, skill:sk, terminal:term, blockId:bId, ...cell });
         }
       });
     });
@@ -2183,11 +2190,12 @@ async function renderIDOptimization(container) {
     )[0];
   }
 
-  function _setSelection(skill, block, taskId) {
-    _selSkill = skill;
-    _selBlock = block;
-    _selTaskId = taskId || null;
-    _idReallocSelection = { skill: _selSkill, block: _selBlock, taskId: _selTaskId };
+  function _setSelection(skill, terminal, block, taskId) {
+    _selSkill    = skill;
+    _selTerminal = terminal;
+    _selBlock    = block;
+    _selTaskId   = taskId || null;
+    _idReallocSelection = { skill, terminal, block, taskId: _selTaskId };
   }
 
   function _staffSkills(s) {
@@ -2210,13 +2218,19 @@ async function renderIDOptimization(container) {
     ? Math.round(allCells.reduce((a,c) => a + Math.min(c.pct, 100), 0) / allCells.length)
     : 100;
   const totalGaps = allCells.reduce((a,c) => a + c.gap, 0);
-  const skills    = Object.keys(matrix).sort();
+  // rowKeys sorted skill-first then terminal so rows appear grouped
+  const rowKeys  = Object.keys(matrix).sort((a, b) => {
+    const [ska, ta] = a.split('||');
+    const [skb, tb] = b.split('||');
+    return ska.localeCompare(skb) || ta.localeCompare(tb);
+  });
   const allBlocks = _RL_HOUR_BLOCKS;
 
   // ── State ─────────────────────────────────────────────────────────
-  let _selSkill = _idReallocSelection.skill;
-  let _selBlock = _idReallocSelection.block;
-  let _selTaskId = _idReallocSelection.taskId;
+  let _selSkill    = _idReallocSelection.skill;
+  let _selTerminal = _idReallocSelection.terminal;
+  let _selBlock    = _idReallocSelection.block;
+  let _selTaskId   = _idReallocSelection.taskId;
 
   // ── Render shell ──────────────────────────────────────────────────
   container.innerHTML = `
@@ -2228,9 +2242,6 @@ async function renderIDOptimization(container) {
         <div style="font-size:1.25rem;font-weight:700;color:var(--text);">Live Staff Reallocation</div>
         <div style="font-size:0.8rem;color:var(--muted);margin-top:2px;">Click a cell to select a skill x hour gap, then assign or remove staff from the right panel</div>
       </div>
-      <button id="rl-refresh" style="display:flex;align-items:center;gap:6px;padding:7px 14px;background:var(--info);color:#fff;border:none;border-radius:6px;font-size:0.82rem;font-weight:600;cursor:pointer;flex-shrink:0;">
-        ↻ Refresh
-      </button>
     </div>
 
     <!-- KPI strip -->
@@ -2318,35 +2329,60 @@ async function renderIDOptimization(container) {
   function renderMatrix(mx) {
     const tbody = document.getElementById('rl-matrix-body');
     if (!tbody) return;
-    tbody.innerHTML = skills.map(sk => {
-      const byBlock = mx[sk] || {};
-      const skColor = _skillColor(sk);
-      const cells = allBlocks.map(b => {
-        const cell = byBlock[b.id];
-        if (!cell) return `<td style="padding:4px 2px;text-align:center;"><span style="font-size:0.65rem;color:var(--muted);opacity:.4;">—</span></td>`;
-        const c = _cellColor(cell.pct, cell.gap);
-        const isSel = (_selSkill === sk && _selBlock === b.id);
-        return `<td style="padding:3px 2px;text-align:center;">
-          <div class="rl-cell${isSel?' rl-cell-sel':''}"
-            data-skill="${_escAttr(sk)}" data-block="${b.id}"
-            style="display:inline-block;min-width:40px;padding:4px 4px;border-radius:5px;
-              background:${c.bg};border:1px solid ${isSel?'#fff':c.border};
-              color:${c.text};font-size:0.7rem;font-weight:700;cursor:pointer;
-              transition:transform .1s;${isSel?'transform:scale(1.08);box-shadow:0 0 0 2px #fff4;':''}">
-            ${cell.req}/${cell.asgn}
-          </div>
-        </td>`;
-      }).join('');
-      return `<tr style="border-bottom:1px solid var(--border)05;">
-        <td class="rl-skill-cell" style="color:${skColor};" title="${sk}">${sk}</td>
-        ${cells}
-      </tr>`;
-    }).join('');
+
+    // Group rowKeys by skill for visual separation between groups
+    const skillOrder = [...new Set(rowKeys.map(rk => rk.split('||')[0]))];
+    let html = '';
+
+    for (const sk of skillOrder) {
+      const skColor   = _skillColor(sk);
+      const termRows  = rowKeys.filter(rk => rk.split('||')[0] === sk);
+      const multiTerm = termRows.length > 1;
+
+      termRows.forEach((rowKey, idx) => {
+        const term    = rowKey.split('||')[1];
+        const byBlock = mx[rowKey] || {};
+        const isFirst = idx === 0;
+
+        const cells = allBlocks.map(b => {
+          const cell = byBlock[b.id];
+          if (!cell) return `<td style="padding:4px 2px;text-align:center;"><span style="font-size:0.65rem;color:var(--muted);opacity:.4;">—</span></td>`;
+          const c     = _cellColor(cell.pct, cell.gap);
+          const isSel = (_selSkill === sk && _selTerminal === term && _selBlock === b.id);
+          return `<td style="padding:3px 2px;text-align:center;">
+            <div class="rl-cell${isSel?' rl-cell-sel':''}"
+              data-skill="${_escAttr(sk)}" data-terminal="${_escAttr(term)}" data-block="${b.id}"
+              style="display:inline-block;min-width:40px;padding:4px 4px;border-radius:5px;
+                background:${c.bg};border:1px solid ${isSel?'#fff':c.border};
+                color:${c.text};font-size:0.7rem;font-weight:700;cursor:pointer;
+                transition:transform .1s;${isSel?'transform:scale(1.08);box-shadow:0 0 0 2px #fff4;':''}">
+              ${cell.req}/${cell.asgn}
+            </div>
+          </td>`;
+        }).join('');
+
+        // Left label always shows skill name in color + terminal badge when multi-terminal
+        const termBadge = multiTerm
+          ? ` <span style="font-size:0.6rem;font-weight:700;background:${skColor}25;color:${skColor};
+                border:1px solid ${skColor}50;border-radius:3px;padding:1px 5px;margin-left:4px;">${term}</span>`
+          : '';
+        const rowLabel = `<span style="color:${skColor};font-weight:600;">${sk}</span>${termBadge}`;
+
+        // Add a top border before the first row of each skill group
+        const topBorder = isFirst ? 'border-top:1px solid var(--border);' : '';
+
+        html += `<tr style="border-bottom:1px solid var(--border)05;${topBorder}">
+          <td class="rl-skill-cell" title="${sk}${multiTerm?' — '+term:''}">${rowLabel}</td>
+          ${cells}
+        </tr>`;
+      });
+    }
+    tbody.innerHTML = html;
 
     // Click handlers
     tbody.querySelectorAll('.rl-cell').forEach(el => {
       el.addEventListener('click', () => {
-        _setSelection(el.dataset.skill, el.dataset.block, null);
+        _setSelection(el.dataset.skill, el.dataset.terminal, el.dataset.block, null);
         renderMatrix(mx);
         renderStaffPanel(mx);
         renderGapList(gapList);
@@ -2359,17 +2395,17 @@ async function renderIDOptimization(container) {
     if (!el) return;
     if (!gl.length) { el.innerHTML = `<div style="padding:10px 4px;font-size:0.78rem;color:var(--ok);">✓ No gaps — all blocks covered</div>`; return; }
     el.innerHTML = gl.slice(0, 12).map(g => {
-      const b = allBlocks.find(x => x.id === g.blockId) || {};
-      const c = _cellColor(g.pct, g.gap);
-      const isSel = (_selSkill === g.skill && _selBlock === g.blockId);
+      const b     = allBlocks.find(x => x.id === g.blockId) || {};
+      const c     = _cellColor(g.pct, g.gap);
+      const isSel = (_selSkill === g.skill && _selTerminal === g.terminal && _selBlock === g.blockId);
       return `<div class="rl-gap-item${isSel?' rl-gap-sel':''}"
-        data-skill="${_escAttr(g.skill)}" data-block="${g.blockId}"
+        data-skill="${_escAttr(g.skill)}" data-terminal="${_escAttr(g.terminal)}" data-block="${g.blockId}"
         style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:3px;cursor:pointer;
           background:${isSel?'var(--surface-3,#2a2a2a)':'transparent'};border:1px solid ${isSel?'var(--border)':'transparent'};">
         <div style="width:7px;height:7px;border-radius:50%;background:${c.border};flex-shrink:0;"></div>
         <div style="flex:1;min-width:0;">
           <div style="font-size:0.72rem;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${g.skill}</div>
-          <div style="font-size:0.65rem;color:var(--muted);">${b.label||g.blockId}</div>
+          <div style="font-size:0.65rem;color:var(--muted);">${b.label||g.blockId} · ${g.terminal}</div>
         </div>
         <div style="text-align:right;flex-shrink:0;">
           <div style="font-size:0.72rem;font-weight:700;color:${c.text};">${g.req}/${g.asgn}</div>
@@ -2380,7 +2416,7 @@ async function renderIDOptimization(container) {
 
     el.querySelectorAll('.rl-gap-item').forEach(el2 => {
       el2.addEventListener('click', () => {
-        _setSelection(el2.dataset.skill, el2.dataset.block, null);
+        _setSelection(el2.dataset.skill, el2.dataset.terminal, el2.dataset.block, null);
         renderMatrix(mx);
         renderStaffPanel(mx);
         renderGapList(gl);
@@ -2390,9 +2426,10 @@ async function renderIDOptimization(container) {
 
   function renderStaffPanel(mx) {
     const panel = document.getElementById('rl-staff-panel');
-    if (!panel || !_selSkill || !_selBlock) return;
+    if (!panel || !_selSkill || !_selTerminal || !_selBlock) return;
 
-    const cell = (mx[_selSkill] || {})[_selBlock];
+    const rowKey = _selSkill + '||' + _selTerminal;
+    const cell = (mx[rowKey] || {})[_selBlock];
     const blk  = allBlocks.find(b => b.id === _selBlock) || {};
 
     if (!cell) {
@@ -2400,7 +2437,7 @@ async function renderIDOptimization(container) {
       return;
     }
 
-    _setSelection(_selSkill, _selBlock, null);
+    _setSelection(_selSkill, _selTerminal, _selBlock, null);
 
     const c = _cellColor(cell.pct, cell.gap);
     const assignedIds = new Set(cell._staffSet);
@@ -2427,7 +2464,7 @@ async function renderIDOptimization(container) {
     });
     const assignedList = allStaff.filter(s => assignedIds.has(String(s.id || s['EMPLOYEE NUMBER'] || '')));
 
-    const terms = [...cell.terms].join(', ') || '—';
+    const terms = _selTerminal || [...cell.terms].join(', ') || '—';
     const coverBar = Math.min(cell.pct, 100);
 
     panel.innerHTML = `
@@ -2539,17 +2576,21 @@ async function renderIDOptimization(container) {
   }
 
   async function _doMove(action, staffId, staffName) {
-    const blk = allBlocks.find(b => b.id === _selBlock) || {};
-    const cell = (matrix[_selSkill] || {})[_selBlock];
+    const blk    = allBlocks.find(b => b.id === _selBlock) || {};
+    const rowKey = _selSkill + '||' + _selTerminal;
+    const cell   = (matrix[rowKey] || {})[_selBlock];
     if (!cell) return;
-    const terms = [...cell.terms];
+    // Send the currently-visible assigned IDs so the server uses them as the
+    // authoritative crew base instead of snapshotting from a fresh optimizer run.
+    const currentAssigned = [...(cell._staffSet || [])].map(String);
     const payload = {
-      staff_id:    staffId,
-      skill:       _selSkill,
-      terminal:    terms.length === 1 ? terms[0] : 'ALL',
-      block_start: blk.start,
-      block_end:   blk.end,
-      action:      action,
+      staff_id:         staffId,
+      skill:            _selSkill,
+      terminal:         _selTerminal,
+      block_start:      blk.start,
+      block_end:        blk.end,
+      action:           action,
+      current_assigned: currentAssigned,
     };
 
     // Disable all action buttons while in-flight
@@ -2569,22 +2610,40 @@ async function renderIDOptimization(container) {
       // Persist log entry
       _idReallocLog.push({
         action, staffId, staffName,
-        skill: _selSkill,
-        blockLabel: `${blk.label || _selBlock} ${payload.terminal !== 'ALL' ? payload.terminal : ''}`.trim(),
+        skill: `${_selSkill} (${_selTerminal})`,
+        blockLabel: blk.label || _selBlock,
         time: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
       });
 
-      // Update global data
+      // Update global data and refresh all intraday tabs instantly
       ID_DATA = data;
       try { renderIDKPIs(data.kpis); } catch (_) {}
       try { renderIDAlerts(data.alerts); } catch (_) {}
 
-      // Full re-render of this tab, then restore selection
-      const savedSelection = { skill: _selSkill, block: _selBlock, taskId: null };
+      // Re-render every non-opt sub-tab so Roster Timeline and PAX Demand
+      // reflect the change immediately without requiring a manual tab switch.
+      const prevTab = ID_ACTIVE_TAB;
+      const subContent = document.getElementById('id-sub-content');
+      if (subContent) {
+        ['staff-timeline', 'demand'].forEach(tab => {
+          if (tab !== prevTab) {
+            ID_ACTIVE_TAB = tab;
+            try { renderIDSubContent(); } catch (_) {}
+          }
+        });
+        ID_ACTIVE_TAB = prevTab;
+      }
+
+      // Re-render the Staff Reallocation heatmap and restore the selected cell
+      const savedSelection = { skill: _selSkill, terminal: _selTerminal, block: _selBlock, taskId: null };
       _idReallocSelection = savedSelection;
       renderIDOptimization(container);
       setTimeout(() => {
-        const cell = container.querySelector(`.rl-cell[data-skill="${CSS.escape(savedSelection.skill)}"][data-block="${savedSelection.block}"]`);
+        const cell = container.querySelector(
+          `.rl-cell[data-skill="${CSS.escape(savedSelection.skill)}"]` +
+          `[data-terminal="${CSS.escape(savedSelection.terminal)}"]` +
+          `[data-block="${savedSelection.block}"]`
+        );
         if (cell) cell.click();
       }, 60);
 
@@ -2605,22 +2664,10 @@ async function renderIDOptimization(container) {
   renderMatrix(matrix);
   renderGapList(gapList);
   renderLog();
-  if (_selSkill && _selBlock) {
+  if (_selSkill && _selTerminal && _selBlock) {
     renderStaffPanel(matrix);
   }
 
-  // Refresh button
-  document.getElementById('rl-refresh')?.addEventListener('click', async () => {
-    const btn = document.getElementById('rl-refresh');
-    if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    try {
-      const data = await fetch('/api/intraday').then(r => r.json());
-      ID_DATA = data;
-      try { renderIDKPIs(data.kpis); } catch (_) {}
-      try { renderIDAlerts(data.alerts); } catch (_) {}
-    } catch (_) {}
-    renderIDOptimization(container);
-  });
 }
 
 function renderIDRosterTimeline() {

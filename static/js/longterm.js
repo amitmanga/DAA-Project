@@ -152,7 +152,8 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     // Data initialization
     if (view === 'short-term' && typeof initShortTerm === 'function') initShortTerm();
     if (view === 'intraday'   && typeof initIntraday   === 'function') initIntraday();
-    
+    if (view === 'config'     && typeof initConfig     === 'function') initConfig();
+
     // Refresh charts if needed (e.g. for theme-aware colors)
     if (view === 'long-term') refreshAllCharts();
   });
