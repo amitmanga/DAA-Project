@@ -2,7 +2,7 @@
 
 let IDPAX_DATA = null;
 let IDPAX_CHART = null;
-let IDPAX_SIM_ACTIVE = false;
+let IDPAX_CURRENT_SCENARIO = 'flight_delay';
 
 const IDPAX_SERIES = [
   { key: 'checkin', label: 'Check-in', color: '#0ea5e9', axis: 'y' },
@@ -40,14 +40,87 @@ function idpaxSetText(id, value) {
   if (el) el.textContent = value;
 }
 
-function idpaxPopulateFlights(payload) {
-  const select = document.getElementById('idpax-flight-select');
-  if (!select) return;
-  select.innerHTML = (payload.flights || []).map(f => {
+function idpaxFlightOptions(payload) {
+  const options = (payload.flights || []).map(f => {
     const time = f.etd || f.eta || '--';
-    const label = `${f.flight_no} · ${f.type} · ${time} · ${f.terminal || ''}`;
+    const label = `${f.flight_no} - ${f.type} - ${time} - ${f.terminal || ''}`;
     return `<option value="${idpaxEsc(f.flight_no)}">${idpaxEsc(label)}</option>`;
   }).join('');
+  return options || '<option value="">Loading flights...</option>';
+}
+
+function idpaxRenderScenarioForm(payload) {
+  const target = document.getElementById('idpax-sim-params');
+  if (!target) return;
+
+  const forms = {
+    flight_delay: `
+      <label>
+        <span>Select Flight</span>
+        <select id="idpax-flight-select">${idpaxFlightOptions(payload)}</select>
+      </label>
+      <label>
+        <span>Delay (Minutes)</span>
+        <input id="idpax-delay-mins" type="number" min="5" max="180" step="5" value="30">
+      </label>
+    `,
+    ground_stop: `
+      <label>
+        <span>Stop Start Time</span>
+        <input id="idpax-gs-start" type="time" value="07:30">
+      </label>
+      <label>
+        <span>Duration (Minutes)</span>
+        <input id="idpax-gs-duration" type="number" min="10" max="120" step="5" value="45">
+      </label>
+    `,
+    security_reduction: `
+      <label>
+        <span>Throughput Reduction (%)</span>
+        <input id="idpax-sec-pct" type="number" min="10" max="90" step="5" value="40">
+      </label>
+      <label>
+        <span>From</span>
+        <input id="idpax-sec-start" type="time" value="06:00">
+      </label>
+      <label>
+        <span>Until</span>
+        <input id="idpax-sec-end" type="time" value="08:30">
+      </label>
+    `,
+    checkin_reduction: `
+      <label>
+        <span>Desk Capacity Reduction (%)</span>
+        <input id="idpax-chk-pct" type="number" min="10" max="90" step="5" value="40">
+      </label>
+      <label>
+        <span>From</span>
+        <input id="idpax-chk-start" type="time" value="06:00">
+      </label>
+      <label>
+        <span>Until</span>
+        <input id="idpax-chk-end" type="time" value="08:00">
+      </label>
+    `,
+  };
+  target.innerHTML = forms[IDPAX_CURRENT_SCENARIO] || forms.flight_delay;
+}
+
+function idpaxCollectParams() {
+  const val = id => document.getElementById(id)?.value || '';
+  if (IDPAX_CURRENT_SCENARIO === 'flight_delay') {
+    return { flight_no: val('idpax-flight-select'), delay_min: val('idpax-delay-mins') };
+  }
+  if (IDPAX_CURRENT_SCENARIO === 'ground_stop') {
+    return { start: val('idpax-gs-start'), duration_min: val('idpax-gs-duration') };
+  }
+  if (IDPAX_CURRENT_SCENARIO === 'security_reduction') {
+    return { reduction_pct: val('idpax-sec-pct'), start: val('idpax-sec-start'), end: val('idpax-sec-end') };
+  }
+  if (IDPAX_CURRENT_SCENARIO === 'checkin_reduction') {
+    return { reduction_pct: val('idpax-chk-pct'), start: val('idpax-chk-start'), end: val('idpax-chk-end') };
+  }
+  return {};
 }
 
 function idpaxRenderTable(payload) {
@@ -91,16 +164,15 @@ function idpaxRenderInsights(payload) {
   }).join('');
 }
 
-function idpaxBuildDatasets(series, simulatedSeries = null) {
-  const src = simulatedSeries || series;
+function idpaxBuildDatasets(series, isSimulated = false) {
   return IDPAX_SERIES.map(item => ({
-    label: simulatedSeries ? `${item.label} (Sim)` : item.label,
-    data: src[item.key] || [],
+    label: isSimulated ? `${item.label} (Sim)` : item.label,
+    data: series[item.key] || [],
     borderColor: item.color,
-    backgroundColor: `${item.color}${simulatedSeries ? '2c' : '22'}`,
+    backgroundColor: `${item.color}${isSimulated ? '2c' : '22'}`,
     fill: true,
     tension: 0.32,
-    borderWidth: simulatedSeries ? 2.4 : 2,
+    borderWidth: isSimulated ? 2.4 : 2,
     pointRadius: 0,
     hitRadius: 8,
     hoverRadius: 3,
@@ -109,21 +181,7 @@ function idpaxBuildDatasets(series, simulatedSeries = null) {
   }));
 }
 
-function idpaxShiftSeries(series, delayMins) {
-  const shift = Math.max(0, Math.round(Number(delayMins || 0)));
-  const shifted = { labels: series.labels };
-  IDPAX_SERIES.forEach(item => {
-    const arr = series[item.key] || [];
-    if (item.key === 'lounge' || item.key === 'boarding') {
-      shifted[item.key] = arr.map((_, idx) => idx >= shift ? arr[idx - shift] : 0);
-    } else {
-      shifted[item.key] = arr.slice();
-    }
-  });
-  return shifted;
-}
-
-function idpaxRenderChart(payload, simulatedSeries = null) {
+function idpaxRenderChart(payload) {
   const canvas = document.getElementById('idpax-pulse-chart');
   if (!canvas || !window.Chart) return;
 
@@ -134,11 +192,12 @@ function idpaxRenderChart(payload, simulatedSeries = null) {
 
   const series = payload.series || {};
   const labels = series.labels || [];
+  const isSimulated = !!payload.simulation?.active;
   IDPAX_CHART = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: {
       labels,
-      datasets: idpaxBuildDatasets(series, simulatedSeries),
+      datasets: idpaxBuildDatasets(series, isSimulated),
     },
     options: {
       responsive: true,
@@ -161,11 +220,7 @@ function idpaxRenderChart(payload, simulatedSeries = null) {
       scales: {
         x: {
           grid: { color: 'rgba(148, 163, 184, 0.11)' },
-          ticks: {
-            maxRotation: 0,
-            autoSkip: true,
-            maxTicksLimit: 13,
-          },
+          ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 13 },
         },
         y: {
           min: 0,
@@ -183,38 +238,91 @@ function idpaxRenderChart(payload, simulatedSeries = null) {
   });
 }
 
-function idpaxAttachActions() {
-  const run = document.getElementById('idpax-run-sim');
-  const clear = document.getElementById('idpax-clear-sim');
-  if (run && !run.dataset.bound) {
-    run.dataset.bound = '1';
-    run.addEventListener('click', () => {
-      if (!IDPAX_DATA) return;
-      const mins = document.getElementById('idpax-delay-mins')?.value || 30;
-      IDPAX_SIM_ACTIVE = true;
-      idpaxRenderChart(IDPAX_DATA, idpaxShiftSeries(IDPAX_DATA.series, mins));
-      run.textContent = 'Simulation Applied';
-    });
+function idpaxRenderStatus(payload) {
+  const status = document.getElementById('idpax-sim-status');
+  if (!status) return;
+  const cascade = payload.simulation?.cascade || [];
+  if (!payload.simulation?.active || cascade.length === 0) {
+    status.hidden = true;
+    status.innerHTML = '';
+    return;
   }
-  if (clear && !clear.dataset.bound) {
-    clear.dataset.bound = '1';
-    clear.addEventListener('click', () => {
-      if (!IDPAX_DATA) return;
-      IDPAX_SIM_ACTIVE = false;
-      idpaxRenderChart(IDPAX_DATA);
-      if (run) run.textContent = 'Run Simulation';
-    });
-  }
+  status.hidden = false;
+  status.innerHTML = cascade.map(item => `<div>${idpaxEsc(item)}</div>`).join('');
 }
 
 function idpaxRender(payload) {
   idpaxSetText('idpax-title', payload.summary?.title || 'Intra-Day Tactical Pulse');
   idpaxSetText('idpax-subtitle', payload.summary?.subtitle || '');
-  idpaxPopulateFlights(payload);
-  idpaxRenderChart(payload, IDPAX_SIM_ACTIVE ? idpaxShiftSeries(payload.series, document.getElementById('idpax-delay-mins')?.value || 30) : null);
+  idpaxRenderScenarioForm(IDPAX_DATA || payload);
+  idpaxRenderChart(payload);
   idpaxRenderTable(payload);
   idpaxRenderInsights(payload);
+  idpaxRenderStatus(payload);
   idpaxAttachActions();
+}
+
+async function idpaxRunSimulation() {
+  if (!IDPAX_DATA) return;
+  const run = document.getElementById('idpax-run-sim');
+  if (run) {
+    run.disabled = true;
+    run.textContent = 'Processing...';
+  }
+  try {
+    const res = await fetch('/api/intraday/pax-demand/simulate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario: IDPAX_CURRENT_SCENARIO, params: idpaxCollectParams() }),
+    });
+    const payload = await res.json();
+    if (!res.ok || payload.error) throw new Error(payload.error || `Simulation failed: ${res.status}`);
+    idpaxRender(payload);
+    if (run) run.textContent = 'Simulation Applied';
+  } catch (err) {
+    console.error(err);
+    const status = document.getElementById('idpax-sim-status');
+    if (status) {
+      status.hidden = false;
+      status.innerHTML = `<div>${idpaxEsc(err.message)}</div>`;
+    }
+    if (run) run.textContent = 'Run Simulation';
+  } finally {
+    if (run) run.disabled = false;
+  }
+}
+
+function idpaxAttachActions() {
+  document.querySelectorAll('.idpax-scenario').forEach(btn => {
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => {
+      IDPAX_CURRENT_SCENARIO = btn.dataset.scenario || 'flight_delay';
+      document.querySelectorAll('.idpax-scenario').forEach(item => {
+        item.classList.toggle('active', item === btn);
+      });
+      idpaxRenderScenarioForm(IDPAX_DATA || {});
+      const run = document.getElementById('idpax-run-sim');
+      if (run) run.textContent = 'Run Simulation';
+    });
+  });
+
+  const run = document.getElementById('idpax-run-sim');
+  if (run && !run.dataset.bound) {
+    run.dataset.bound = '1';
+    run.addEventListener('click', idpaxRunSimulation);
+  }
+
+  const clear = document.getElementById('idpax-clear-sim');
+  if (clear && !clear.dataset.bound) {
+    clear.dataset.bound = '1';
+    clear.addEventListener('click', () => {
+      if (!IDPAX_DATA) return;
+      const runBtn = document.getElementById('idpax-run-sim');
+      if (runBtn) runBtn.textContent = 'Run Simulation';
+      idpaxRender(IDPAX_DATA);
+    });
+  }
 }
 
 async function initIntradayPaxDemand(options = {}) {

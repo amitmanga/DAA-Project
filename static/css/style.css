@@ -929,9 +929,14 @@ body.is-home-view .header-meta {
 }
 .idpax-sim-controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(160px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: end;
+}
+.idpax-sim-params {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 12px;
 }
 .idpax-sim-controls label {
   display: flex;
@@ -957,6 +962,22 @@ body.is-home-view .header-meta {
 .idpax-sim-actions {
   display: flex;
   gap: 8px;
+}
+.idpax-sim-status {
+  background: var(--warn-light);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+.idpax-sim-status div + div {
+  border-top: 1px solid rgba(245, 158, 11, 0.18);
+  margin-top: 6px;
+  padding-top: 6px;
 }
 .idpax-run,
 .idpax-clear {
@@ -1116,6 +1137,7 @@ body.is-home-view .header-meta {
   .idpax-brand-row,
   .idpax-section-title { align-items: flex-start; flex-direction: column; gap: 8px; }
   .idpax-sim-controls { grid-template-columns: 1fr; }
+  .idpax-sim-params { grid-template-columns: 1fr; }
   .idpax-sim-actions { justify-content: flex-start; }
   .idpax-chart-wrap {
     height: 320px;

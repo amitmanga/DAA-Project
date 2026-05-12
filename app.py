@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 from long_term_pax_demand import build_long_term_pax_forecast
-from intraday_pax_demand import build_intraday_pax_pulse
+from intraday_pax_demand import build_intraday_pax_pulse, simulate_intraday_pax
 from short_term_pax_demand import build_short_term_pax_outlook
 
 # CP-SAT optimiser (optional — falls back to greedy if OR-Tools is absent)
@@ -1328,6 +1328,16 @@ def st_pax_demand_strategic_outlook():
 @app.route('/api/intraday/pax-demand/tactical-pulse')
 def id_pax_demand_tactical_pulse():
     return jsonify(build_intraday_pax_pulse(BASE_DIR))
+
+
+@app.route('/api/intraday/pax-demand/simulate', methods=['POST'])
+def id_pax_demand_simulate():
+    body = request.get_json(force=True) or {}
+    scenario = body.get('scenario', '')
+    params = body.get('params') or {}
+    if not scenario:
+        return jsonify({'error': 'No scenario specified'}), 400
+    return jsonify(simulate_intraday_pax(BASE_DIR, scenario, params))
 
 
 @app.route('/api/long-term/gap-skill-data')

@@ -528,25 +528,19 @@
             <span>What-if engine</span>
           </div>
           <div class="idpax-scenario-tabs">
-            <button class="idpax-scenario active" type="button">Flight Delay</button>
-            <button class="idpax-scenario" type="button" disabled>Weather Ground Stop</button>
-            <button class="idpax-scenario" type="button" disabled>Security Lane Closure</button>
-            <button class="idpax-scenario" type="button" disabled>Check-In Reduction</button>
+            <button class="idpax-scenario active" type="button" data-scenario="flight_delay">Flight Delay</button>
+            <button class="idpax-scenario" type="button" data-scenario="ground_stop">Weather Ground Stop</button>
+            <button class="idpax-scenario" type="button" data-scenario="security_reduction">Security Lane Closure</button>
+            <button class="idpax-scenario" type="button" data-scenario="checkin_reduction">Check-In Reduction</button>
           </div>
           <div class="idpax-sim-controls">
-            <label>
-              <span>Select Flight</span>
-              <select id="idpax-flight-select"></select>
-            </label>
-            <label>
-              <span>Delay (Minutes)</span>
-              <input id="idpax-delay-mins" type="number" min="0" step="5" value="30">
-            </label>
+            <div id="idpax-sim-params" class="idpax-sim-params"></div>
             <div class="idpax-sim-actions">
               <button class="btn-primary idpax-run" id="idpax-run-sim" type="button">Run Simulation</button>
               <button class="btn-outline idpax-clear" id="idpax-clear-sim" type="button">Clear</button>
             </div>
           </div>
+          <div class="idpax-sim-status" id="idpax-sim-status" hidden></div>
         </section>
 
         <section class="idpax-section-title">
