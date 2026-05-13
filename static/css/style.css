@@ -1228,11 +1228,33 @@ body.is-home-view .header-meta {
   line-height: 1.25;
 }
 .idpax-card-value {
+  align-items: center;
   color: var(--text);
+  display: flex;
+  flex-wrap: wrap;
   font-size: 1.55rem;
+  gap: 6px;
   font-weight: 900;
   line-height: 1.1;
   margin-top: 8px;
+}
+.idpax-delta-badge {
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.62rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+.idpax-delta-up {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+}
+.idpax-delta-down {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
 }
 .idpax-card-sub {
   color: var(--idpax-accent, var(--info));

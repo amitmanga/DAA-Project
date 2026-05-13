@@ -332,6 +332,30 @@ def _build_insights(series):
     ]
 
 
+def _build_impact(baseline, simulated):
+    impact = {}
+    for key in TOUCHPOINTS:
+        base_vals = _numbers(baseline.get(key))
+        sim_vals = _numbers(simulated.get(key))
+        base_peak = max(base_vals) if base_vals else 0
+        sim_peak = max(sim_vals) if sim_vals else 0
+        delta = sim_peak - base_peak
+        delta_pct = round((delta / base_peak) * 100, 1) if base_peak > 0 else 0
+        if abs(delta_pct) < 0.5 and base_peak > 0 and base_vals and sim_vals:
+            paired = zip(base_vals, sim_vals)
+            local_delta = max((s - b for b, s in paired), key=lambda v: abs(v), default=0)
+            if abs(local_delta) > 0:
+                delta = local_delta
+                delta_pct = round((local_delta / base_peak) * 100, 1)
+        impact[key] = {
+            'baseline_peak': round(base_peak, 1),
+            'simulated_peak': round(sim_peak, 1),
+            'delta': round(delta, 1),
+            'delta_pct': delta_pct,
+        }
+    return impact
+
+
 def _base_payload(base_dir):
     pulse = _load_json(base_dir, PULSE_FILE)
     labels = pulse.get('labels', [])
@@ -463,6 +487,7 @@ def _cap_series(arr, start_idx, end_idx, reduction_pct):
 
 def simulate_intraday_pax(base_dir, scenario, params):
     base = build_intraday_pax_pulse(base_dir)
+    baseline_series = deepcopy(base['series'])
     series = deepcopy(base['series'])
     labels = series.get('labels', [])
     cascade = []
@@ -480,8 +505,15 @@ def simulate_intraday_pax(base_dir, scenario, params):
 
         if selected and selected.get('etd'):
             etd = _mins(str(selected['etd']))
+            eta = _mins(str(selected.get('eta') or '0')) if selected.get('eta') else None
             cbp_req = str(selected.get('cbp_required') or '').strip().lower() == 'true'
             affected_terminal = _terminal_for_flight(selected)
+
+            # Upstream departure windows: delay moves the selected flight's
+            # check-in/security demand later alongside the departure.
+            checkin_start_idx = _time_index(labels, _mins_to_hhmm(max(0, etd - 180)))
+            security_start_idx = _time_index(labels, _mins_to_hhmm(max(0, etd - 165)))
+            pre_board_end_idx = _time_index(labels, _mins_to_hhmm(max(0, etd - 30)))
 
             # Boarding window: 90 min lead up to departure
             board_start_idx = _time_index(labels, _mins_to_hhmm(max(0, etd - 90)))
@@ -493,10 +525,20 @@ def simulate_intraday_pax(base_dir, scenario, params):
             # Move only the selected flight's estimated passenger contribution.
             # The same component deducted from the original window is added to
             # the delayed window, preserving passenger volume by touchpoint.
+            checkin_share = _flight_touchpoint_share(flights, selected, 'checkin')
+            security_share = _flight_touchpoint_share(flights, selected, 'security')
             boarding_share = _flight_touchpoint_share(flights, selected, 'boarding')
             lounge_share = _flight_touchpoint_share(flights, selected, 'lounge')
+            series['checkin'] = _shift_component(series['checkin'], checkin_start_idx, pre_board_end_idx, shift, checkin_share)
+            series['security'] = _shift_component(series['security'], security_start_idx, board_start_idx, shift, security_share)
             series['boarding'] = _shift_component(series['boarding'], board_start_idx, board_end_idx, shift, boarding_share)
             series['lounge'] = _shift_component(series['lounge'], lc_start_idx, board_end_idx, shift, lounge_share)
+            if checkin_share > 0:
+                affected_touchpoints.add('checkin')
+                _add_shift_windows(affected_windows, 'checkin', labels, checkin_start_idx, pre_board_end_idx, shift)
+            if security_share > 0:
+                affected_touchpoints.add('security')
+                _add_shift_windows(affected_windows, 'security', labels, security_start_idx, board_start_idx, shift)
             if boarding_share > 0:
                 affected_touchpoints.add('boarding')
                 _add_shift_windows(affected_windows, 'boarding', labels, board_start_idx, board_end_idx, shift)
@@ -509,6 +551,19 @@ def simulate_intraday_pax(base_dir, scenario, params):
                 if cbp_share > 0:
                     affected_touchpoints.add('cbp')
                     _add_shift_windows(affected_windows, 'cbp', labels, lc_start_idx, board_end_idx, shift)
+            if eta is not None and _flight_serves_touchpoint(selected, 'immigration'):
+                arr_start_idx = _time_index(labels, _mins_to_hhmm(eta))
+                arr_end_idx = _time_index(labels, _mins_to_hhmm(min(1439, eta + 90)))
+                immigration_share = _flight_touchpoint_share(flights, selected, 'immigration')
+                baggage_share = _flight_touchpoint_share(flights, selected, 'baggage')
+                series['immigration'] = _shift_component(series['immigration'], arr_start_idx, arr_end_idx, shift, immigration_share)
+                series['baggage'] = _shift_component(series['baggage'], arr_start_idx, arr_end_idx, shift, baggage_share)
+                if immigration_share > 0:
+                    affected_touchpoints.add('immigration')
+                    _add_shift_windows(affected_windows, 'immigration', labels, arr_start_idx, arr_end_idx, shift)
+                if baggage_share > 0:
+                    affected_touchpoints.add('baggage')
+                    _add_shift_windows(affected_windows, 'baggage', labels, arr_start_idx, arr_end_idx, shift)
         else:
             for key in ('boarding', 'lounge', 'cbp'):
                 series[key] = _shift_range(series[key], 0, len(labels), shift)
@@ -578,6 +633,10 @@ def simulate_intraday_pax(base_dir, scenario, params):
     return {
         **base,
         'series': series,
+        'labels': series.get('labels', []),
+        'baseline': {key: baseline_series.get(key, []) for key in TOUCHPOINTS},
+        'simulated': {key: series.get(key, []) for key in TOUCHPOINTS},
+        'impact': _build_impact(baseline_series, series),
         'table': {
             'columns': base['table']['columns'],
             'rows': _table_from_series(series),

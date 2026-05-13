@@ -46,6 +46,42 @@ function idpaxFmt(value) {
   return Number(value || 0).toLocaleString();
 }
 
+function idpaxSeriesPeak(values) {
+  const nums = (values || []).map(v => Number(v || 0)).filter(Number.isFinite);
+  return nums.length ? Math.max(...nums) : 0;
+}
+
+function idpaxBuildImpact(baseline, simulated) {
+  const impact = {};
+  IDPAX_SERIES.forEach(item => {
+    const basePeak = idpaxSeriesPeak(baseline?.[item.key]);
+    const simPeak = idpaxSeriesPeak(simulated?.[item.key]);
+    const delta = simPeak - basePeak;
+    let displayDelta = delta;
+    let deltaPct = basePeak > 0 ? Math.round((delta / basePeak) * 1000) / 10 : 0;
+    if (Math.abs(deltaPct) < 0.5 && basePeak > 0) {
+      const baseVals = baseline?.[item.key] || [];
+      const simVals = simulated?.[item.key] || [];
+      let localDelta = 0;
+      for (let i = 0; i < Math.min(baseVals.length, simVals.length); i += 1) {
+        const d = Number(simVals[i] || 0) - Number(baseVals[i] || 0);
+        if (Math.abs(d) > Math.abs(localDelta)) localDelta = d;
+      }
+      if (Math.abs(localDelta) > 0) {
+        displayDelta = localDelta;
+        deltaPct = Math.round((localDelta / basePeak) * 1000) / 10;
+      }
+    }
+    impact[item.key] = {
+      baseline_peak: Math.round(basePeak * 10) / 10,
+      simulated_peak: Math.round(simPeak * 10) / 10,
+      delta: Math.round(displayDelta * 10) / 10,
+      delta_pct: deltaPct,
+    };
+  });
+  return impact;
+}
+
 function idpaxIconFor(label) {
   const value = String(label || '').toLowerCase();
   if (value.includes('check')) return IDPAX_TOUCHPOINT_ICONS.check;
@@ -167,6 +203,25 @@ function idpaxRenderTable(payload) {
 function idpaxRenderInsights(payload) {
   const grid = document.getElementById('idpax-insight-grid');
   if (!grid) return;
+  const isSimulated = !!payload.simulation?.active;
+  const baselineSeries = payload.baseline || IDPAX_DATA?.series || {};
+  const simulatedSeries = payload.simulated || payload.series || {};
+  const impact = Object.keys(payload.impact || {}).length
+    ? payload.impact
+    : idpaxBuildImpact(baselineSeries, simulatedSeries);
+  const deltaBadge = key => {
+    const d = Number(impact[key]?.delta_pct || 0);
+    if (!isSimulated || Math.abs(d) < 0.5) return '';
+    const cls = d > 0 ? 'idpax-delta-up' : 'idpax-delta-down';
+    const arrow = d > 0 ? '&#9650;' : '&#9660;';
+    return `<span class="idpax-delta-badge ${cls}">${arrow} ${Math.abs(d).toFixed(1)}%</span>`;
+  };
+  const metricLabel = item => {
+    if (!isSimulated) return item.metric_label || 'Peak Pax / min';
+    if (item.key === 'lounge') return 'Simulated Concurrent';
+    return 'Simulated Peak Pax/min';
+  };
+
   grid.innerHTML = (payload.insights || []).map(item => {
     const accent = idpaxAccent(item.accent);
     const icon = idpaxIconFor(item.label);
@@ -178,8 +233,8 @@ function idpaxRenderInsights(payload) {
           </div>
           <div class="idpax-card-name">${idpaxEsc(item.label)}</div>
         </div>
-        <div class="idpax-card-value">${idpaxFmt(item.peak)}</div>
-        <div class="idpax-card-sub">${idpaxEsc(item.metric_label || 'Peak Pax / min')}</div>
+        <div class="idpax-card-value">${idpaxFmt(item.peak)}${deltaBadge(item.key)}</div>
+        <div class="idpax-card-sub">${idpaxEsc(metricLabel(item))}</div>
         <div class="idpax-card-row">
           <span>Peak Window</span>
           <strong>${idpaxEsc(item.peak_time || '--')}</strong>
@@ -193,15 +248,49 @@ function idpaxRenderInsights(payload) {
   }).join('');
 }
 
-function idpaxBuildDatasets(series, isSimulated = false) {
+function idpaxBuildDatasets(series, isSimulated = false, baselineSeries = null) {
+  if (isSimulated) {
+    const base = baselineSeries || IDPAX_DATA?.series || {};
+    const sim = series || {};
+    const baselineDatasets = IDPAX_SERIES.map(item => ({
+      label: `${item.label} (Baseline)`,
+      data: base[item.key] || [],
+      borderColor: `${item.color}66`,
+      backgroundColor: 'transparent',
+      fill: false,
+      tension: 0.32,
+      borderWidth: 1.5,
+      pointRadius: 0,
+      hitRadius: 8,
+      hoverRadius: 3,
+      yAxisID: item.axis,
+      borderDash: item.dash || [],
+    }));
+    const simulatedDatasets = IDPAX_SERIES.map(item => ({
+      label: `${item.label} (Sim)`,
+      data: sim[item.key] || [],
+      borderColor: item.color,
+      backgroundColor: `${item.color}${item.axis === 'y1' ? '20' : '22'}`,
+      fill: true,
+      tension: 0.32,
+      borderWidth: 2.8,
+      pointRadius: 0,
+      hitRadius: 8,
+      hoverRadius: 3,
+      yAxisID: item.axis,
+      borderDash: [7, 3],
+    }));
+    return [...baselineDatasets, ...simulatedDatasets];
+  }
+
   return IDPAX_SERIES.map(item => ({
-    label: isSimulated ? `${item.label} (Sim)` : item.label,
+    label: item.label,
     data: series[item.key] || [],
     borderColor: item.color,
-    backgroundColor: `${item.color}${isSimulated ? '2c' : '22'}`,
+    backgroundColor: `${item.color}22`,
     fill: true,
     tension: 0.32,
-    borderWidth: isSimulated ? 2.4 : 2,
+    borderWidth: 2,
     pointRadius: 0,
     hitRadius: 8,
     hoverRadius: 3,
@@ -222,11 +311,13 @@ function idpaxRenderChart(payload) {
   const series = payload.series || {};
   const labels = series.labels || [];
   const isSimulated = !!payload.simulation?.active;
+  const baselineSeries = payload.baseline || IDPAX_DATA?.series || null;
+  const simulatedSeries = payload.simulated || series;
   IDPAX_CHART = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: {
       labels,
-      datasets: idpaxBuildDatasets(series, isSimulated),
+      datasets: idpaxBuildDatasets(simulatedSeries, isSimulated, baselineSeries),
     },
     options: {
       responsive: true,
