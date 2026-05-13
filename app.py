@@ -414,32 +414,88 @@ def _load_pax_workbook_profile(filename):
     return {'dates': dates, 'rows_by_date': dict(rows_by_date)}
 
 
+def _load_simulated_pax_overlay_windows(filename='simulated_intraday_PAX.xlsx'):
+    """Return explicit overlay windows from the workbook metadata sheet.
+
+    Zero-valued cells inside these windows are meaningful reductions. Zeroes
+    outside these windows are ignored, which lets the simulation file keep the
+    unaffected terminal at 0 without wiping its baseline demand.
+    """
+    path = os.path.join(BASE_DIR, 'data', filename)
+    if not os.path.exists(path):
+        return {}
+
+    windows = defaultdict(lambda: defaultdict(list))
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        if '_overlay_meta' not in wb.sheetnames:
+            return {}
+        ws = wb['_overlay_meta']
+        headers = [str(v).strip() if v is not None else '' for v in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
+        for vals in ws.iter_rows(min_row=2, values_only=True):
+            row = dict(zip(headers, vals))
+            raw_date = row.get('Date')
+            if isinstance(raw_date, datetime):
+                overlay_date = raw_date.date()
+            elif hasattr(raw_date, 'year') and hasattr(raw_date, 'month') and hasattr(raw_date, 'day'):
+                overlay_date = raw_date
+            else:
+                try:
+                    overlay_date = datetime.fromisoformat(str(raw_date)).date()
+                except Exception:
+                    continue
+            col = str(row.get('Column') or '').strip()
+            if not col:
+                continue
+            try:
+                start = int(float(row.get('StartMinute') or 0))
+                end = int(float(row.get('EndMinute') or 0))
+            except (TypeError, ValueError):
+                continue
+            if end > start:
+                windows[overlay_date][col].append((max(0, start), min(1440, end)))
+    except Exception:
+        return {}
+
+    return {dt: dict(cols) for dt, cols in windows.items()}
+
+
+def _minute_in_overlay_windows(minute, windows):
+    interval_end = minute + 15
+    return any(minute < end and interval_end > start for start, end in (windows or []))
+
+
 def _merge_simulated_pax_overlay(base_profile):
     overlay = _load_pax_workbook_profile('simulated_intraday_PAX.xlsx')
     if not overlay.get('dates'):
         return base_profile
+    explicit_windows = _load_simulated_pax_overlay_windows()
 
     merged_by_date = {
         dt: [dict(row) for row in rows]
         for dt, rows in (base_profile.get('rows_by_date') or {}).items()
     }
     for overlay_date, overlay_rows in (overlay.get('rows_by_date') or {}).items():
+        date_windows = explicit_windows.get(overlay_date) or {}
         active_minutes = []
-        for overlay_row in overlay_rows:
-            ts = overlay_row.get('Timestamp')
-            if not isinstance(ts, datetime):
-                continue
-            for col, value in overlay_row.items():
-                if col == 'Timestamp':
+        overlay_start = overlay_end = None
+        if not date_windows:
+            for overlay_row in overlay_rows:
+                ts = overlay_row.get('Timestamp')
+                if not isinstance(ts, datetime):
                     continue
-                try:
-                    if float(value or 0) > 0:
-                        active_minutes.append(ts.hour * 60 + ts.minute)
-                        break
-                except (TypeError, ValueError):
-                    continue
-        overlay_start = min(active_minutes) if active_minutes else None
-        overlay_end = max(active_minutes) if active_minutes else None
+                for col, value in overlay_row.items():
+                    if col == 'Timestamp':
+                        continue
+                    try:
+                        if float(value or 0) > 0:
+                            active_minutes.append(ts.hour * 60 + ts.minute)
+                            break
+                    except (TypeError, ValueError):
+                        continue
+            overlay_start = min(active_minutes) if active_minutes else None
+            overlay_end = max(active_minutes) if active_minutes else None
 
         base_rows = merged_by_date.setdefault(overlay_date, [])
         by_minute = {}
@@ -471,7 +527,11 @@ def _merge_simulated_pax_overlay(base_profile):
                     pax = float(value or 0)
                 except (TypeError, ValueError):
                     pax = 0.0
-                if in_overlay_window or pax > 0:
+                if date_windows:
+                    should_apply = _minute_in_overlay_windows(minute, date_windows.get(col))
+                else:
+                    should_apply = in_overlay_window or pax > 0
+                if should_apply:
                     target[col] = pax
                     target['__sim_overlay'] = True
 

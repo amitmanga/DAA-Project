@@ -8,6 +8,8 @@ from datetime import datetime, time
 PULSE_FILE = 'intraday_pax_pulse.json'
 FLIGHTS_FILE = 'intraday_pax_flights.csv'
 TOUCHPOINTS = ('checkin', 'security', 'cbp', 'lounge', 'boarding', 'immigration', 'baggage')
+PAX_BY_ICAO = {'A': 20, 'B': 50, 'C': 180, 'D': 260, 'E': 330, 'F': 500}
+PAX_DEFAULT = 150
 
 
 def _data_path(base_dir, filename):
@@ -77,6 +79,8 @@ def _load_flights(base_dir):
                 'type': str(row.get('Type') or '').strip(),
                 'eta': str(row.get('ETA') or '').strip(),
                 'etd': str(row.get('ETD') or '').strip(),
+                'aircraft_type': str(row.get('Aircraft_Type') or row.get('Aircraft Type') or row.get('Aircraft') or '').strip(),
+                'icao_cat': str(row.get('ICAO_Cat') or row.get('ICAO Cat') or row.get('Category') or '').strip(),
                 'airline': str(row.get('Airline') or '').strip(),
                 'terminal': str(row.get('Terminal') or '').strip(),
                 'cbp_required': str(row.get('CBP_Required') or '').strip(),
@@ -84,9 +88,37 @@ def _load_flights(base_dir):
     return flights
 
 
+def _pax_for_flight(flight):
+    icao = str(flight.get('icao_cat') or '').strip().upper()
+    return PAX_BY_ICAO.get(icao, PAX_DEFAULT)
+
+
 def _terminal_for_flight(flight):
     terminal = str(flight.get('terminal') or '').strip().upper()
     return terminal if terminal in ('T1', 'T2') else None
+
+
+def _flight_serves_touchpoint(flight, touchpoint):
+    flow_type = str(flight.get('type') or '').strip().upper()
+    is_departure_flow = flow_type in ('DEP', 'TURN')
+    is_arrival_flow = flow_type in ('ARR', 'TURN')
+
+    if touchpoint in ('immigration', 'baggage'):
+        return is_arrival_flow
+    if touchpoint == 'cbp':
+        return is_departure_flow and str(flight.get('cbp_required') or '').strip().lower() == 'true'
+    return is_departure_flow
+
+
+def _flight_touchpoint_share(flights, selected, touchpoint):
+    if not selected or not _flight_serves_touchpoint(selected, touchpoint):
+        return 0.0
+
+    eligible = [f for f in flights if _flight_serves_touchpoint(f, touchpoint)]
+    total_pax = sum(_pax_for_flight(f) for f in eligible)
+    if total_pax <= 0:
+        return 0.0
+    return min(1.0, max(0.0, _pax_for_flight(selected) / total_pax))
 
 
 def _terminal_weights(flights, touchpoint):
@@ -96,18 +128,10 @@ def _terminal_weights(flights, touchpoint):
         if not terminal:
             continue
 
-        flow_type = str(flight.get('type') or '').strip().upper()
-        is_departure_flow = flow_type in ('DEP', 'TURN')
-        is_arrival_flow = flow_type in ('ARR', 'TURN')
-
-        if touchpoint in ('immigration', 'baggage') and not is_arrival_flow:
-            continue
-        if touchpoint not in ('immigration', 'baggage') and not is_departure_flow:
-            continue
-        if touchpoint == 'cbp' and str(flight.get('cbp_required') or '').strip().lower() != 'true':
+        if not _flight_serves_touchpoint(flight, touchpoint):
             continue
 
-        counts[terminal] += 1.0
+        counts[terminal] += _pax_for_flight(flight)
 
     total = counts['T1'] + counts['T2']
     if total <= 0:
@@ -132,6 +156,14 @@ def _aggregate_to_15_minutes(labels, values, touchpoint):
         else:
             aggregated[minute] = round(sum(bucket_values))
     return aggregated
+
+
+def _interval_overlaps_windows(interval_start, windows):
+    interval_end = interval_start + 15
+    for start, end in windows or []:
+        if interval_start < int(end) and interval_end > int(start):
+            return True
+    return False
 
 
 def _simulation_export_date(base_dir):
@@ -174,6 +206,8 @@ def save_intraday_pax_simulation(base_dir, payload):
 
     simulation_meta = payload.get('simulation') or {}
     affected_terminal = simulation_meta.get('affected_terminal')  # e.g. 'T1', 'T2', or None
+    affected_touchpoints = set(simulation_meta.get('affected_touchpoints') or [])
+    affected_windows = simulation_meta.get('affected_windows') or {}
 
     flights = _load_flights(base_dir)
     weights = {touchpoint: _terminal_weights(flights, touchpoint) for touchpoint in TOUCHPOINTS}
@@ -216,19 +250,39 @@ def save_intraday_pax_simulation(base_dir, payload):
             sim_val = aggregated[touchpoint].get(interval_start, 0)
 
             if baseline_aggregated and affected_terminal:
-                base_val = baseline_aggregated[touchpoint].get(interval_start, 0)
-                delta = sim_val - base_val
-                if terminal == affected_terminal:
-                    # Apply full PAX delta to the affected terminal's column
+                in_affected_window = _interval_overlaps_windows(
+                    interval_start,
+                    affected_windows.get(touchpoint) or [],
+                )
+                if terminal == affected_terminal and touchpoint in affected_touchpoints and in_affected_window:
+                    base_val = baseline_aggregated[touchpoint].get(interval_start, 0)
+                    delta = sim_val - base_val
                     value = max(0, round(base_val * w + delta))
                 else:
-                    # Unaffected terminal stays at its baseline proportion
-                    value = max(0, round(base_val * w))
+                    # A terminal-specific delay overlay writes only the affected
+                    # terminal/touchpoints. Other terminal columns remain zero in
+                    # the workbook and are ignored by overlay metadata at load time.
+                    value = 0
             else:
                 value = max(0, round(sim_val * w))
 
             row.append(value)
         ws.append(row)
+
+    if baseline_aggregated and affected_terminal:
+        meta = wb.create_sheet('_overlay_meta')
+        meta.sheet_state = 'hidden'
+        meta.append(['Date', 'Column', 'StartMinute', 'EndMinute'])
+        header_by_touchpoint = {
+            touchpoint: f"{affected_terminal}_{touchpoint.title() if touchpoint != 'cbp' else 'CBP'}"
+            for touchpoint in TOUCHPOINTS
+        }
+        for touchpoint in sorted(affected_touchpoints):
+            col_name = header_by_touchpoint.get(touchpoint)
+            if not col_name:
+                continue
+            for start, end in affected_windows.get(touchpoint) or []:
+                meta.append([base_date.isoformat(), col_name, int(start), int(end)])
 
     for cell in ws['A'][1:]:
         cell.number_format = 'YYYY-MM-DD HH:MM:SS'
@@ -348,6 +402,45 @@ def _shift_range(arr, start_idx, end_idx, shift):
     return out
 
 
+def _shift_component(arr, start_idx, end_idx, shift, share):
+    out = arr[:]
+    if shift <= 0 or share <= 0:
+        return out
+
+    start_idx = max(0, min(len(out), int(start_idx)))
+    end_idx = max(start_idx, min(len(out), int(end_idx)))
+    component = [max(0.0, out[idx] * share) for idx in range(start_idx, end_idx)]
+
+    for offset, val in enumerate(component):
+        src = start_idx + offset
+        out[src] = max(0.0, out[src] - val)
+        dest = min(len(out) - 1, src + shift)
+        out[dest] += val
+    return out
+
+
+def _window_minutes(labels, start_idx, end_idx, shift=0):
+    if not labels:
+        return None
+    start_idx = max(0, min(len(labels) - 1, int(start_idx)))
+    end_idx = max(start_idx + 1, min(len(labels), int(end_idx)))
+    start_min = _mins(labels[start_idx]) + int(shift)
+    if end_idx < len(labels):
+        end_min = _mins(labels[end_idx]) + int(shift)
+    else:
+        end_min = _mins(labels[-1]) + 1 + int(shift)
+    return [max(0, start_min), min(1440, max(start_min + 1, end_min))]
+
+
+def _add_shift_windows(target, touchpoint, labels, start_idx, end_idx, shift):
+    original = _window_minutes(labels, start_idx, end_idx, 0)
+    shifted = _window_minutes(labels, start_idx, end_idx, shift)
+    target.setdefault(touchpoint, [])
+    for window in (original, shifted):
+        if window and window not in target[touchpoint]:
+            target[touchpoint].append(window)
+
+
 def _cap_series(arr, start_idx, end_idx, reduction_pct):
     out = arr[:]
     window = out[start_idx:end_idx + 1]
@@ -373,6 +466,9 @@ def simulate_intraday_pax(base_dir, scenario, params):
     series = deepcopy(base['series'])
     labels = series.get('labels', [])
     cascade = []
+    affected_terminal = None
+    affected_touchpoints = set()
+    affected_windows = {}
 
     if scenario == 'flight_delay':
         delay = int(float(params.get('delay_min') or 30))
@@ -382,7 +478,6 @@ def simulate_intraday_pax(base_dir, scenario, params):
         flights = _load_flights(base_dir)
         selected = next((f for f in flights if f['flight_no'] == flight_no), None)
 
-        affected_terminal = None
         if selected and selected.get('etd'):
             etd = _mins(str(selected['etd']))
             cbp_req = str(selected.get('cbp_required') or '').strip().lower() == 'true'
@@ -395,14 +490,30 @@ def simulate_intraday_pax(base_dir, scenario, params):
             # Lounge/CBP window: 180 min lead up to departure
             lc_start_idx = _time_index(labels, _mins_to_hhmm(max(0, etd - 180)))
 
-            # Deduct passengers from the original flight window and add them to the shifted window
-            series['boarding'] = _shift_range(series['boarding'], board_start_idx, board_end_idx, shift)
-            series['lounge'] = _shift_range(series['lounge'], lc_start_idx, board_end_idx, shift)
+            # Move only the selected flight's estimated passenger contribution.
+            # The same component deducted from the original window is added to
+            # the delayed window, preserving passenger volume by touchpoint.
+            boarding_share = _flight_touchpoint_share(flights, selected, 'boarding')
+            lounge_share = _flight_touchpoint_share(flights, selected, 'lounge')
+            series['boarding'] = _shift_component(series['boarding'], board_start_idx, board_end_idx, shift, boarding_share)
+            series['lounge'] = _shift_component(series['lounge'], lc_start_idx, board_end_idx, shift, lounge_share)
+            if boarding_share > 0:
+                affected_touchpoints.add('boarding')
+                _add_shift_windows(affected_windows, 'boarding', labels, board_start_idx, board_end_idx, shift)
+            if lounge_share > 0:
+                affected_touchpoints.add('lounge')
+                _add_shift_windows(affected_windows, 'lounge', labels, lc_start_idx, board_end_idx, shift)
             if cbp_req:
-                series['cbp'] = _shift_range(series['cbp'], lc_start_idx, board_end_idx, shift)
+                cbp_share = _flight_touchpoint_share(flights, selected, 'cbp')
+                series['cbp'] = _shift_component(series['cbp'], lc_start_idx, board_end_idx, shift, cbp_share)
+                if cbp_share > 0:
+                    affected_touchpoints.add('cbp')
+                    _add_shift_windows(affected_windows, 'cbp', labels, lc_start_idx, board_end_idx, shift)
         else:
             for key in ('boarding', 'lounge', 'cbp'):
                 series[key] = _shift_range(series[key], 0, len(labels), shift)
+                affected_touchpoints.add(key)
+                affected_windows[key] = [[0, 1440]]
 
         cascade = [
             f"{flight_no} delayed by {delay} minutes; boarding and lounge demand shift later.",
@@ -461,6 +572,8 @@ def simulate_intraday_pax(base_dir, scenario, params):
     }
     if scenario == 'flight_delay' and affected_terminal:
         sim_meta['affected_terminal'] = affected_terminal
+        sim_meta['affected_touchpoints'] = sorted(affected_touchpoints)
+        sim_meta['affected_windows'] = affected_windows
 
     return {
         **base,

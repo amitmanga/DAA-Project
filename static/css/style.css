@@ -4619,16 +4619,22 @@ canvas { display: block; }
   grid-template-columns: minmax(420px, 1fr) auto;
   gap: 12px;
   margin-bottom: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 .sim-dash-timeline {
   background: var(--surface);
   border: 1px solid rgba(255,255,255,0.07);
   border-radius: 10px;
+  display: flex;
+  flex-direction: column;
   padding: 12px 14px;
   min-width: 0;
 }
-.sim-dash-timeline .sim-chart-canvas-wrap { height: 210px; }
+.sim-dash-timeline .sim-chart-canvas-wrap {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 300px;
+}
 
 /* Heatmap — sizes to its table content; no empty stretch */
 .sim-dash-heatmap {
@@ -4743,7 +4749,7 @@ canvas { display: block; }
   overflow-y: auto;
 }
 .rl-staff-panel {
-  min-height: 360px;
+  min-height: clamp(220px, 28vh, 320px);
   padding: 16px;
 }
 .rl-skill-head {
