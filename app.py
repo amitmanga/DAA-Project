@@ -1508,6 +1508,30 @@ def id_pax_demand_load_simulation():
     })
 
 
+@app.route('/api/intraday/pax-demand/remove-simulation', methods=['POST'])
+def id_pax_demand_remove_simulation():
+    """Deactivate the intraday simulation overlay and return to baseline allocation."""
+    global INTRADAY_PAX_SIM_OVERLAY_ACTIVE, PAX_PROFILE_CACHE
+
+    INTRADAY_PAX_SIM_OVERLAY_ACTIVE = False
+    if isinstance(PAX_PROFILE_CACHE, dict):
+        PAX_PROFILE_CACHE.pop('sim_overlay', None)
+    else:
+        PAX_PROFILE_CACHE = {}
+
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    _intraday_result_cache.pop(today_str, None)
+    _manual_assigns.pop(today_str, None)
+    _manual_unassigns.pop(today_str, None)
+    _manual_block_assigns.pop(today_str, None)
+
+    return jsonify({
+        'ok': True,
+        'simulation_overlay_active': False,
+        'source_file': 'short term PAX.xlsx',
+    })
+
+
 @app.route('/api/long-term/gap-skill-data')
 def lt_merged_gap_skill():
     demand, staff_req, skill_req, staff_avail, skill_avail = get_data()
@@ -4974,6 +4998,219 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     return result
 
 
+def _optimizer_fte_summary(result):
+    by_skill = {}
+    for task in result.get('tasks', []) or []:
+        skill = str(task.get('skill') or task.get('role') or 'Unknown')
+        entry = by_skill.setdefault(skill, {
+            'skill': skill,
+            'required': 0,
+            'assigned': 0,
+            'gap': 0,
+            'passengers': 0,
+            'windows': 0,
+        })
+        required = int(task.get('staff_needed') or 0)
+        assigned = len([sid for sid in (task.get('assigned') or []) if sid])
+        entry['required'] += required
+        entry['assigned'] += assigned
+        entry['gap'] += max(0, required - assigned)
+        entry['passengers'] += int(round(float(task.get('passengers') or 0)))
+        entry['windows'] += 1
+
+    totals = {
+        'required': sum(item['required'] for item in by_skill.values()),
+        'assigned': sum(item['assigned'] for item in by_skill.values()),
+        'gap': sum(item['gap'] for item in by_skill.values()),
+        'passengers': sum(item['passengers'] for item in by_skill.values()),
+        'windows': sum(item['windows'] for item in by_skill.values()),
+    }
+    totals['coverage_pct'] = round((totals['assigned'] / totals['required']) * 100, 1) if totals['required'] else 100.0
+    for item in by_skill.values():
+        item['coverage_pct'] = round((item['assigned'] / item['required']) * 100, 1) if item['required'] else 100.0
+    return {'totals': totals, 'by_skill': by_skill}
+
+
+def _optimizer_time_summary(result):
+    by_skill_time = {}
+    for task in result.get('tasks', []) or []:
+        skill = str(task.get('skill') or task.get('role') or 'Unknown')
+        start_mins = int(task.get('start_mins') or 0)
+        end_mins = int(task.get('end_mins') or min(1440, start_mins + PAX_DEMAND_SLOT_MINS))
+        terminal = str(task.get('terminal') or 'ALL')
+        key = (start_mins, terminal)
+        skill_rows = by_skill_time.setdefault(skill, {})
+        entry = skill_rows.setdefault(key, {
+            'skill': skill,
+            'terminal': terminal,
+            'start_mins': start_mins,
+            'end_mins': end_mins,
+            'time': f"{mins_to_time(start_mins)}-{mins_to_time(end_mins)}",
+            'required': 0,
+            'assigned': 0,
+            'gap': 0,
+            'passengers': 0,
+            'windows': 0,
+        })
+        required = int(task.get('staff_needed') or 0)
+        assigned = len([sid for sid in (task.get('assigned') or []) if sid])
+        entry['required'] += required
+        entry['assigned'] += assigned
+        entry['gap'] += max(0, required - assigned)
+        entry['passengers'] += int(round(float(task.get('passengers') or 0)))
+        entry['windows'] += 1
+    return by_skill_time
+
+
+def _changed_time_rows_for_skill(skill, before_time, after_time):
+    before_rows = before_time.get(skill, {})
+    after_rows = after_time.get(skill, {})
+    keys = sorted(set(before_rows) | set(after_rows), key=lambda k: (k[0], k[1]))
+    rows = []
+    for key in keys:
+        start_mins, terminal = key
+        b = before_rows.get(key, {
+            'skill': skill, 'terminal': terminal, 'start_mins': start_mins,
+            'end_mins': min(1440, start_mins + PAX_DEMAND_SLOT_MINS),
+            'time': f"{mins_to_time(start_mins)}-{mins_to_time(min(1440, start_mins + PAX_DEMAND_SLOT_MINS))}",
+            'required': 0, 'assigned': 0, 'gap': 0, 'passengers': 0, 'windows': 0,
+        })
+        a = after_rows.get(key, {
+            'skill': skill, 'terminal': terminal, 'start_mins': start_mins,
+            'end_mins': b.get('end_mins', min(1440, start_mins + PAX_DEMAND_SLOT_MINS)),
+            'time': b.get('time') or f"{mins_to_time(start_mins)}-{mins_to_time(min(1440, start_mins + PAX_DEMAND_SLOT_MINS))}",
+            'required': 0, 'assigned': 0, 'gap': 0, 'passengers': 0, 'windows': 0,
+        })
+        delta_required = a['required'] - b['required']
+        delta_assigned = a['assigned'] - b['assigned']
+        delta_gap = a['gap'] - b['gap']
+        delta_passengers = a['passengers'] - b['passengers']
+        if not any((delta_required, delta_assigned, delta_gap, delta_passengers)):
+            continue
+        rows.append({
+            'time': a.get('time') or b.get('time'),
+            'terminal': terminal,
+            'before': b,
+            'after': a,
+            'delta_required': delta_required,
+            'delta_assigned': delta_assigned,
+            'delta_gap': delta_gap,
+            'delta_passengers': delta_passengers,
+        })
+    return rows
+
+
+def _build_overlay_fte_comparison(before_result, after_result):
+    before = _optimizer_fte_summary(before_result)
+    after = _optimizer_fte_summary(after_result)
+    before_time = _optimizer_time_summary(before_result)
+    after_time = _optimizer_time_summary(after_result)
+    skills = sorted(set(before['by_skill']) | set(after['by_skill']), key=lambda s: s.lower())
+    rows = []
+    for skill in skills:
+        b = before['by_skill'].get(skill, {
+            'skill': skill, 'required': 0, 'assigned': 0, 'gap': 0,
+            'passengers': 0, 'windows': 0, 'coverage_pct': 100.0,
+        })
+        a = after['by_skill'].get(skill, {
+            'skill': skill, 'required': 0, 'assigned': 0, 'gap': 0,
+            'passengers': 0, 'windows': 0, 'coverage_pct': 100.0,
+        })
+        rows.append({
+            'skill': skill,
+            'before': b,
+            'after': a,
+            'delta_required': a['required'] - b['required'],
+            'delta_assigned': a['assigned'] - b['assigned'],
+            'delta_gap': a['gap'] - b['gap'],
+            'delta_passengers': a['passengers'] - b['passengers'],
+            'times': _changed_time_rows_for_skill(skill, before_time, after_time),
+        })
+    rows.sort(key=lambda r: (abs(r['delta_required']) + abs(r['delta_assigned']) + abs(r['delta_gap']) + len(r['times'])), reverse=True)
+    return {
+        'active': True,
+        'before_source': 'short term PAX.xlsx',
+        'after_source': 'simulated_intraday_PAX.xlsx overlay',
+        'before': before['totals'],
+        'after': after['totals'],
+        'delta_required': after['totals']['required'] - before['totals']['required'],
+        'delta_assigned': after['totals']['assigned'] - before['totals']['assigned'],
+        'delta_gap': after['totals']['gap'] - before['totals']['gap'],
+        'delta_passengers': after['totals']['passengers'] - before['totals']['passengers'],
+        'skills': rows[:8],
+    }
+
+
+def _refresh_overlay_comparison_after(result):
+    comparison = result.get('overlay_comparison')
+    if not comparison:
+        return result
+    after = _optimizer_fte_summary(result)
+    after_time = _optimizer_time_summary(result)
+    before_total = comparison.get('before') or {}
+    comparison['after'] = after['totals']
+    comparison['delta_required'] = after['totals']['required'] - int(before_total.get('required') or 0)
+    comparison['delta_assigned'] = after['totals']['assigned'] - int(before_total.get('assigned') or 0)
+    comparison['delta_gap'] = after['totals']['gap'] - int(before_total.get('gap') or 0)
+    comparison['delta_passengers'] = after['totals']['passengers'] - int(before_total.get('passengers') or 0)
+    before_by_skill = {
+        row.get('skill'): row.get('before', {})
+        for row in comparison.get('skills', [])
+        if row.get('skill')
+    }
+    before_time_by_skill = {}
+    for row in comparison.get('skills', []):
+        skill = row.get('skill')
+        if not skill:
+            continue
+        before_time_by_skill[skill] = {}
+        for time_row in row.get('times', []):
+            before = time_row.get('before') or {}
+            try:
+                start_mins = int(before.get('start_mins') or 0)
+            except (TypeError, ValueError):
+                start_mins = 0
+            terminal = str(before.get('terminal') or time_row.get('terminal') or 'ALL')
+            before_time_by_skill[skill][(start_mins, terminal)] = before
+    rows = []
+    for skill, a in after['by_skill'].items():
+        b = before_by_skill.get(skill, {
+            'skill': skill, 'required': 0, 'assigned': 0, 'gap': 0,
+            'passengers': 0, 'windows': 0, 'coverage_pct': 100.0,
+        })
+        rows.append({
+            'skill': skill,
+            'before': b,
+            'after': a,
+            'delta_required': a['required'] - int(b.get('required') or 0),
+            'delta_assigned': a['assigned'] - int(b.get('assigned') or 0),
+            'delta_gap': a['gap'] - int(b.get('gap') or 0),
+            'delta_passengers': a['passengers'] - int(b.get('passengers') or 0),
+            'times': _changed_time_rows_for_skill(skill, before_time_by_skill, after_time),
+        })
+    rows.sort(key=lambda r: (abs(r['delta_required']) + abs(r['delta_assigned']) + abs(r['delta_gap']) + len(r['times'])), reverse=True)
+    comparison['skills'] = rows[:8]
+    return result
+
+
+def _attach_intraday_overlay_comparison(result, date_str, manual_assigns):
+    if not INTRADAY_PAX_SIM_OVERLAY_ACTIVE:
+        result.pop('overlay_comparison', None)
+        return result
+    baseline = optimize_day(
+        date_str,
+        _intraday_overrides,
+        manual_assigns,
+        current_time_mins=None,
+        prefer_early=True,
+        custom_constraints=_intraday_custom_constraints,
+        use_sim_overlay=False,
+    )
+    if 'error' not in baseline:
+        result['overlay_comparison'] = _build_overlay_fte_comparison(baseline, result)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Short-term & Intraday Flask endpoints
 # ---------------------------------------------------------------------------
@@ -5439,6 +5676,7 @@ def intraday_get():
     # result already reflects the user's manual state on every (re)load.
     _snapshot_all_optimizer_blocks(result, today_str)
     _apply_manual_block_assigns_to_result(result, today_str)
+    _attach_intraday_overlay_comparison(result, today_str, man)
     _intraday_result_cache[today_str] = result
     return jsonify(result)
 
@@ -5473,6 +5711,7 @@ def intraday_delay():
     # Flight delay is a real schedule change — re-snapshot and update cache.
     _snapshot_all_optimizer_blocks(result, today_str)
     _apply_manual_block_assigns_to_result(result, today_str)
+    _attach_intraday_overlay_comparison(result, today_str, man)
     _intraday_result_cache[today_str] = result
     return jsonify(result)
 
@@ -5541,6 +5780,7 @@ def intraday_assign():
             task['is_past'] = True
         else:
             task.pop('is_past', None)
+    _attach_intraday_overlay_comparison(result, today_str, _manual_assigns.get(today_str, {}))
     return jsonify(result)
 
 
@@ -5587,6 +5827,7 @@ def intraday_assign_block():
                 _t.pop('is_past', None)
         _snapshot_all_optimizer_blocks(_tmp, today_str)
         _apply_manual_block_assigns_to_result(_tmp, today_str)
+        _attach_intraday_overlay_comparison(_tmp, today_str, _manual_assigns.get(today_str, {}))
         _intraday_result_cache[today_str] = _tmp
     staff_member = next((s for s in _tmp.get('staff', []) if str(s.get('id', '')) == staff_id), None)
     if action == 'assign':
@@ -5725,6 +5966,8 @@ def intraday_assign_block():
                 'pax_rate':        task.get('pax_rate', 0),
             })
     result['alerts'] = new_alerts
+    if INTRADAY_PAX_SIM_OVERLAY_ACTIVE:
+        _attach_intraday_overlay_comparison(result, today_str, _manual_assigns.get(today_str, {}))
 
     verified_count = _count_staff_in_block(result, staff_id, skill, terminal, blk_start, blk_end)
     result['move_status'] = {
@@ -5828,6 +6071,7 @@ def intraday_optimise():
                 task['is_past'] = True
             else:
                 task.pop('is_past', None)
+        _attach_intraday_overlay_comparison(result, today_str, man)
 
         roster_info = {'roster_available': False, 'solver_used': 'none'}
 

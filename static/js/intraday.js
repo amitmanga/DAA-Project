@@ -2209,6 +2209,143 @@ async function renderIDOptimization(container) {
     return _staffSkills(s).some(sk => sk.toLowerCase() === selected);
   }
 
+  function _fmtInt(value) {
+    return Math.round(Number(value || 0)).toLocaleString();
+  }
+
+  function _fmtDelta(value) {
+    const n = Math.round(Number(value || 0));
+    return `${n >= 0 ? '+' : ''}${n.toLocaleString()}`;
+  }
+
+  function _deltaColor(value, inverse = false) {
+    const n = Number(value || 0);
+    if (n === 0) return 'var(--muted)';
+    const isGood = inverse ? n < 0 : n > 0;
+    return isGood ? 'var(--ok)' : 'var(--crit)';
+  }
+
+  function renderOverlayComparisonPanel() {
+    const cmp = ID_DATA?.overlay_comparison;
+    if (!cmp?.active) return '';
+
+    const before = cmp.before || {};
+    const after = cmp.after || {};
+    const maxReq = Math.max(Number(before.required || 0), Number(after.required || 0), 1);
+    const maxAssigned = Math.max(Number(before.assigned || 0), Number(after.assigned || 0), 1);
+    const reqBeforeW = Math.max(4, Math.round((Number(before.required || 0) / maxReq) * 100));
+    const reqAfterW = Math.max(4, Math.round((Number(after.required || 0) / maxReq) * 100));
+    const asgBeforeW = Math.max(4, Math.round((Number(before.assigned || 0) / maxAssigned) * 100));
+    const asgAfterW = Math.max(4, Math.round((Number(after.assigned || 0) / maxAssigned) * 100));
+    const skillRows = (cmp.skills || []).slice(0, 8).map(row => {
+      const skillColor = _skillColor(row.skill);
+      const times = row.times || [];
+      const maxSkillReq = Math.max(Number(row.before?.required || 0), Number(row.after?.required || 0), 1);
+      const beforeSkillW = Math.max(4, Math.round((Number(row.before?.required || 0) / maxSkillReq) * 100));
+      const afterSkillW = Math.max(4, Math.round((Number(row.after?.required || 0) / maxSkillReq) * 100));
+      const timeCards = times.map(timeRow => {
+        const maxTimeReq = Math.max(Number(timeRow.before?.required || 0), Number(timeRow.after?.required || 0), 1);
+        const beforeTimeW = Math.max(4, Math.round((Number(timeRow.before?.required || 0) / maxTimeReq) * 100));
+        const afterTimeW = Math.max(4, Math.round((Number(timeRow.after?.required || 0) / maxTimeReq) * 100));
+        return `
+          <div class="rl-impact-time-card">
+            <div class="rl-impact-time-main">
+              <strong>${_escAttr(timeRow.time || '')}</strong>
+              <span>${_escAttr(timeRow.terminal || 'ALL')}</span>
+            </div>
+            <div class="rl-impact-time-bars">
+              <div><span style="width:${beforeTimeW}%;background:rgba(148,163,184,0.58);"></span></div>
+              <div><span style="width:${afterTimeW}%;background:${skillColor};"></span></div>
+            </div>
+            <div class="rl-impact-time-metrics">
+              <span>Req <b>${_fmtInt(timeRow.before?.required)} -> ${_fmtInt(timeRow.after?.required)}</b> <em style="color:${_deltaColor(timeRow.delta_required)};">${_fmtDelta(timeRow.delta_required)}</em></span>
+              <span>Asgn <b>${_fmtInt(timeRow.before?.assigned)} -> ${_fmtInt(timeRow.after?.assigned)}</b> <em style="color:${_deltaColor(timeRow.delta_assigned)};">${_fmtDelta(timeRow.delta_assigned)}</em></span>
+              <span>Gap <b>${_fmtInt(timeRow.before?.gap)} -> ${_fmtInt(timeRow.after?.gap)}</b> <em style="color:${_deltaColor(timeRow.delta_gap, true)};">${_fmtDelta(timeRow.delta_gap)}</em></span>
+            </div>
+          </div>`;
+      }).join('');
+      return `
+        <details class="rl-impact-skill-card">
+          <summary>
+            <div class="rl-impact-skill-main">
+              <span class="rl-impact-skill-name"><span class="rl-impact-skill-dot" style="background:${skillColor};"></span>${_escAttr(row.skill)}</span>
+              <span class="rl-impact-change-count">${times.length} changed time${times.length === 1 ? '' : 's'}</span>
+            </div>
+            <div class="rl-impact-skill-bars">
+              <span style="width:${beforeSkillW}%;background:rgba(148,163,184,0.58);"></span>
+              <span style="width:${afterSkillW}%;background:${skillColor};"></span>
+            </div>
+            <div class="rl-impact-skill-metrics">
+              <span>Req <b>${_fmtInt(row.before?.required)} -> ${_fmtInt(row.after?.required)}</b> <em style="color:${_deltaColor(row.delta_required)};">${_fmtDelta(row.delta_required)}</em></span>
+              <span>Asgn <b>${_fmtInt(row.before?.assigned)} -> ${_fmtInt(row.after?.assigned)}</b> <em style="color:${_deltaColor(row.delta_assigned)};">${_fmtDelta(row.delta_assigned)}</em></span>
+              <span>Gap <b>${_fmtInt(row.before?.gap)} -> ${_fmtInt(row.after?.gap)}</b> <em style="color:${_deltaColor(row.delta_gap, true)};">${_fmtDelta(row.delta_gap)}</em></span>
+            </div>
+          </summary>
+          <div class="rl-impact-time-wrap">
+            ${timeCards || '<div class="rl-impact-empty">No hourly changes for this skill.</div>'}
+          </div>
+        </details>`;
+    }).join('');
+
+    return `
+      <div class="rl-impact-panel">
+        <div class="rl-impact-head">
+          <div>
+            <div class="rl-impact-title">Simulation Overlay Impact</div>
+            <div class="rl-impact-sub">Before: ${_escAttr(cmp.before_source || 'short term PAX.xlsx')} | After: ${_escAttr(cmp.after_source || 'simulated_intraday_PAX.xlsx')}</div>
+          </div>
+          <div class="rl-impact-actions">
+            <div class="rl-impact-badge">Overlay Active</div>
+            <button class="rl-remove-overlay-btn" type="button">Remove Overlay</button>
+          </div>
+        </div>
+        <div class="rl-impact-grid">
+          <div class="rl-impact-card">
+            <div class="rl-impact-label">FTE Required</div>
+            <div class="rl-impact-values"><strong>${_fmtInt(before.required)}</strong><span>before</span><strong>${_fmtInt(after.required)}</strong><span>after</span><b style="color:${_deltaColor(cmp.delta_required)};">${_fmtDelta(cmp.delta_required)}</b></div>
+            <div class="rl-impact-bars"><span style="width:${reqBeforeW}%;background:rgba(148,163,184,0.55);"></span><span style="width:${reqAfterW}%;background:var(--info);"></span></div>
+          </div>
+          <div class="rl-impact-card">
+            <div class="rl-impact-label">FTE Assigned</div>
+            <div class="rl-impact-values"><strong>${_fmtInt(before.assigned)}</strong><span>before</span><strong>${_fmtInt(after.assigned)}</strong><span>after</span><b style="color:${_deltaColor(cmp.delta_assigned)};">${_fmtDelta(cmp.delta_assigned)}</b></div>
+            <div class="rl-impact-bars"><span style="width:${asgBeforeW}%;background:rgba(148,163,184,0.55);"></span><span style="width:${asgAfterW}%;background:var(--ok);"></span></div>
+          </div>
+          <div class="rl-impact-card rl-impact-gap-card">
+            <div class="rl-impact-label">Open Gap</div>
+            <div class="rl-impact-values"><strong>${_fmtInt(before.gap)}</strong><span>before</span><strong>${_fmtInt(after.gap)}</strong><span>after</span><b style="color:${_deltaColor(cmp.delta_gap, true)};">${_fmtDelta(cmp.delta_gap)}</b></div>
+            <div class="rl-impact-note">Lower is better after the optimizer reallocates against simulated demand.</div>
+          </div>
+        </div>
+        ${skillRows ? `
+          <div class="rl-impact-skill-cards">
+            ${skillRows}
+          </div>` : ''}
+      </div>`;
+  }
+
+  async function removeSimulationOverlay() {
+    const btn = container.querySelector('.rl-remove-overlay-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Removing...';
+    }
+    try {
+      const res = await fetch('/api/intraday/pax-demand/remove-simulation', { method: 'POST' });
+      const payload = await res.json();
+      if (!res.ok || payload.error) throw new Error(payload.error || `Remove failed: ${res.status}`);
+      ID_DATA = await fetch('/api/intraday').then(r => r.json());
+      _idReallocSelection = { skill: null, terminal: null, block: null, taskId: null };
+      renderIntradayPage();
+    } catch (err) {
+      console.error(err);
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Remove Overlay';
+      }
+      alert(err.message || 'Unable to remove overlay.');
+    }
+  }
+
   // ── Summary stats ─────────────────────────────────────────────────
   const matrix  = buildMatrixData();
   const gapList = buildGapList(matrix);
@@ -2225,6 +2362,7 @@ async function renderIDOptimization(container) {
     return ska.localeCompare(skb) || ta.localeCompare(tb);
   });
   const allBlocks = _RL_HOUR_BLOCKS;
+  const comparisonHtml = renderOverlayComparisonPanel();
 
   // ── State ─────────────────────────────────────────────────────────
   let _selSkill    = _idReallocSelection.skill;
@@ -2272,6 +2410,8 @@ async function renderIDOptimization(container) {
         <div class="rl-kpi-lbl" style="margin-top:4px;">Legend</div>
       </div>
     </div>
+
+    ${comparisonHtml}
 
     <!-- Main body -->
     <div class="rl-main">
@@ -2664,6 +2804,7 @@ async function renderIDOptimization(container) {
   renderMatrix(matrix);
   renderGapList(gapList);
   renderLog();
+  container.querySelector('.rl-remove-overlay-btn')?.addEventListener('click', removeSimulationOverlay);
   if (_selSkill && _selTerminal && _selBlock) {
     renderStaffPanel(matrix);
   }
