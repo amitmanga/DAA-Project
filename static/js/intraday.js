@@ -2225,101 +2225,182 @@ async function renderIDOptimization(container) {
     return isGood ? 'var(--ok)' : 'var(--crit)';
   }
 
-  function renderOverlayComparisonPanel() {
-    const cmp = ID_DATA?.overlay_comparison;
-    if (!cmp?.active) return '';
+  /* ── Simulation Impact Dashboard ────────────────────────────────── */
+  const _simCharts = {};
 
-    const before = cmp.before || {};
-    const after = cmp.after || {};
-    const maxReq = Math.max(Number(before.required || 0), Number(after.required || 0), 1);
-    const maxAssigned = Math.max(Number(before.assigned || 0), Number(after.assigned || 0), 1);
-    const reqBeforeW = Math.max(4, Math.round((Number(before.required || 0) / maxReq) * 100));
-    const reqAfterW = Math.max(4, Math.round((Number(after.required || 0) / maxReq) * 100));
-    const asgBeforeW = Math.max(4, Math.round((Number(before.assigned || 0) / maxAssigned) * 100));
-    const asgAfterW = Math.max(4, Math.round((Number(after.assigned || 0) / maxAssigned) * 100));
-    const skillRows = (cmp.skills || []).slice(0, 8).map(row => {
-      const skillColor = _skillColor(row.skill);
-      const times = row.times || [];
-      const maxSkillReq = Math.max(Number(row.before?.required || 0), Number(row.after?.required || 0), 1);
-      const beforeSkillW = Math.max(4, Math.round((Number(row.before?.required || 0) / maxSkillReq) * 100));
-      const afterSkillW = Math.max(4, Math.round((Number(row.after?.required || 0) / maxSkillReq) * 100));
-      const timeCards = times.map(timeRow => {
-        const maxTimeReq = Math.max(Number(timeRow.before?.required || 0), Number(timeRow.after?.required || 0), 1);
-        const beforeTimeW = Math.max(4, Math.round((Number(timeRow.before?.required || 0) / maxTimeReq) * 100));
-        const afterTimeW = Math.max(4, Math.round((Number(timeRow.after?.required || 0) / maxTimeReq) * 100));
-        return `
-          <div class="rl-impact-time-card">
-            <div class="rl-impact-time-main">
-              <strong>${_escAttr(timeRow.time || '')}</strong>
-              <span>${_escAttr(timeRow.terminal || 'ALL')}</span>
-            </div>
-            <div class="rl-impact-time-bars">
-              <div><span style="width:${beforeTimeW}%;background:rgba(148,163,184,0.58);"></span></div>
-              <div><span style="width:${afterTimeW}%;background:${skillColor};"></span></div>
-            </div>
-            <div class="rl-impact-time-metrics">
-              <span>Req <b>${_fmtInt(timeRow.before?.required)} -> ${_fmtInt(timeRow.after?.required)}</b> <em style="color:${_deltaColor(timeRow.delta_required)};">${_fmtDelta(timeRow.delta_required)}</em></span>
-              <span>Asgn <b>${_fmtInt(timeRow.before?.assigned)} -> ${_fmtInt(timeRow.after?.assigned)}</b> <em style="color:${_deltaColor(timeRow.delta_assigned)};">${_fmtDelta(timeRow.delta_assigned)}</em></span>
-              <span>Gap <b>${_fmtInt(timeRow.before?.gap)} -> ${_fmtInt(timeRow.after?.gap)}</b> <em style="color:${_deltaColor(timeRow.delta_gap, true)};">${_fmtDelta(timeRow.delta_gap)}</em></span>
-            </div>
-          </div>`;
-      }).join('');
-      return `
-        <details class="rl-impact-skill-card">
-          <summary>
-            <div class="rl-impact-skill-main">
-              <span class="rl-impact-skill-name"><span class="rl-impact-skill-dot" style="background:${skillColor};"></span>${_escAttr(row.skill)}</span>
-              <span class="rl-impact-change-count">${times.length} changed time${times.length === 1 ? '' : 's'}</span>
-            </div>
-            <div class="rl-impact-skill-bars">
-              <span style="width:${beforeSkillW}%;background:rgba(148,163,184,0.58);"></span>
-              <span style="width:${afterSkillW}%;background:${skillColor};"></span>
-            </div>
-            <div class="rl-impact-skill-metrics">
-              <span>Req <b>${_fmtInt(row.before?.required)} -> ${_fmtInt(row.after?.required)}</b> <em style="color:${_deltaColor(row.delta_required)};">${_fmtDelta(row.delta_required)}</em></span>
-              <span>Asgn <b>${_fmtInt(row.before?.assigned)} -> ${_fmtInt(row.after?.assigned)}</b> <em style="color:${_deltaColor(row.delta_assigned)};">${_fmtDelta(row.delta_assigned)}</em></span>
-              <span>Gap <b>${_fmtInt(row.before?.gap)} -> ${_fmtInt(row.after?.gap)}</b> <em style="color:${_deltaColor(row.delta_gap, true)};">${_fmtDelta(row.delta_gap)}</em></span>
-            </div>
-          </summary>
-          <div class="rl-impact-time-wrap">
-            ${timeCards || '<div class="rl-impact-empty">No hourly changes for this skill.</div>'}
+  function _destroySimCharts() {
+    Object.keys(_simCharts).forEach(k => {
+      try { _simCharts[k].destroy(); } catch (_) {}
+      delete _simCharts[k];
+    });
+  }
+
+  function _hmClass(delta) {
+    if (delta === 0) return 'hm-zero';
+    if (delta >= 3)  return 'hm-up3';
+    if (delta >= 1)  return 'hm-up2';
+    if (delta > 0)   return 'hm-up1';
+    if (delta <= -3) return 'hm-dn3';
+    if (delta <= -2) return 'hm-dn2';
+    return 'hm-dn1';
+  }
+
+  function _kpiDeltaCls(delta, inverse) {
+    if (delta === 0) return 'neut';
+    return (inverse ? delta < 0 : delta > 0) ? 'pos' : 'neg';
+  }
+
+  function _simKpi(label, before, after, delta, inverse, barBefore, barAfter) {
+    const maxBar = Math.max(Number(barBefore || 0), Number(barAfter || 0), 1);
+    const bw = Math.max(4, Math.round((Number(barBefore || 0) / maxBar) * 100));
+    const aw = Math.max(4, Math.round((Number(barAfter || 0) / maxBar) * 100));
+    const barColor = inverse
+      ? (delta < 0 ? 'var(--ok)' : delta > 0 ? 'var(--crit)' : 'var(--info)')
+      : (delta > 0 ? 'var(--ok)' : delta < 0 ? 'var(--crit)' : 'var(--info)');
+    return `
+      <div class="sim-kpi">
+        <div class="sim-kpi-label">${label}</div>
+        <div class="sim-kpi-values">
+          <span class="sim-kpi-before">${_fmtInt(before)}</span>
+          <span class="sim-kpi-arrow">→</span>
+          <span class="sim-kpi-after">${_fmtInt(after)}</span>
+          <span class="sim-kpi-delta ${_kpiDeltaCls(delta, inverse)}">${_fmtDelta(delta)}</span>
+        </div>
+        <div class="sim-kpi-bar-wrap">
+          <div class="sim-kpi-bar-row">
+            <span class="sim-kpi-bar-lbl">Before</span>
+            <div class="sim-kpi-bar-track"><div class="sim-kpi-bar-fill" style="width:${bw}%;background:rgba(148,163,184,0.5);"></div></div>
           </div>
-        </details>`;
-    }).join('');
+          <div class="sim-kpi-bar-row">
+            <span class="sim-kpi-bar-lbl">After</span>
+            <div class="sim-kpi-bar-track"><div class="sim-kpi-bar-fill" style="width:${aw}%;background:${barColor};"></div></div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function _buildHeatmap(skills) {
+    if (!skills || !skills.length) return '';
+
+    // Collect all unique time labels across all skills
+    const timeSet = new Set();
+    skills.forEach(row => (row.times || []).forEach(t => timeSet.add(t.time || '')));
+    const times = [...timeSet].sort();
+    if (!times.length) return '';
+
+    const shortTime = t => t.replace(/-\d\d:\d\d/, ''); // "04:00-05:00" → "04:00"
+
+    // Build per-terminal rows: [{skill, terminal, deltas:{time→delta}}]
+    const heatRows = [];
+    skills.forEach(row => {
+      const byTerminal = {};
+      (row.times || []).forEach(t => {
+        const term = t.terminal || 'ALL';
+        if (!byTerminal[term]) byTerminal[term] = {};
+        byTerminal[term][t.time] = (byTerminal[term][t.time] || 0) + (t.delta_required || 0);
+      });
+      const terminals = Object.keys(byTerminal).sort();
+      if (!terminals.length) {
+        heatRows.push({ skill: row.skill, terminal: null, deltas: {}, first: true, span: 1 });
+      } else {
+        terminals.forEach((term, idx) => {
+          heatRows.push({ skill: row.skill, terminal: term, deltas: byTerminal[term], first: idx === 0, span: terminals.length });
+        });
+      }
+    });
+
+    const headCells = times.map(t => `<th title="${_escAttr(t)}">${_escAttr(shortTime(t))}</th>`).join('');
+
+    let bodyHtml = '';
+    heatRows.forEach((hrow, ridx) => {
+      const prevSkill = ridx > 0 ? heatRows[ridx - 1].skill : null;
+      const isNewGroup = hrow.skill !== prevSkill;
+      const rowClass = isNewGroup && ridx > 0 ? ' class="sim-hm-group-sep"' : '';
+
+      // Skill name cell — only emit on first terminal row, with rowspan
+      const skillCell = hrow.first
+        ? `<td class="sim-hm-skill-span${hrow.span > 1 ? ' multi' : ''}" rowspan="${hrow.span}">${_escAttr(hrow.skill)}</td>`
+        : '';
+
+      // Terminal badge cell
+      const termLabel = hrow.terminal ? hrow.terminal : '';
+      const termCell = `<td class="sim-hm-terminal">${_escAttr(termLabel)}</td>`;
+
+      const dataCells = times.map(t => {
+        const d = hrow.deltas[t] || 0;
+        const cls = _hmClass(d);
+        const label = d === 0 ? '·' : _fmtDelta(d);
+        const tip = `${hrow.skill}${hrow.terminal ? ' ' + hrow.terminal : ''} @ ${t}: ${_fmtDelta(d)}`;
+        return `<td class="sim-hm-cell ${cls}" title="${_escAttr(tip)}">${label}</td>`;
+      }).join('');
+
+      bodyHtml += `<tr${rowClass}>${skillCell}${termCell}${dataCells}</tr>`;
+    });
 
     return `
-      <div class="rl-impact-panel">
-        <div class="rl-impact-head">
+      <div class="sim-dash-heatmap">
+        <div class="sim-heatmap-title">Staff Demand Heatmap — FTE Δ by Role, Terminal &amp; Time Slot</div>
+        <div class="sim-heatmap-scroll">
+          <table class="sim-heatmap-table">
+            <thead><tr><th colspan="2"></th>${headCells}</tr></thead>
+            <tbody>${bodyHtml}</tbody>
+          </table>
+        </div>
+        <div class="sim-heatmap-legend">
+          <div class="sim-hm-leg-item"><div class="sim-hm-leg-swatch" style="background:rgba(16,185,129,0.65);"></div>−3+ fewer needed</div>
+          <div class="sim-hm-leg-item"><div class="sim-hm-leg-swatch" style="background:rgba(16,185,129,0.38);"></div>−1/−2</div>
+          <div class="sim-hm-leg-item"><div class="sim-hm-leg-swatch" style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);"></div>No change</div>
+          <div class="sim-hm-leg-item"><div class="sim-hm-leg-swatch" style="background:rgba(239,68,68,0.38);"></div>+1/+2</div>
+          <div class="sim-hm-leg-item"><div class="sim-hm-leg-swatch" style="background:rgba(239,68,68,0.65);"></div>+3+ more needed</div>
+        </div>
+      </div>`;
+  }
+
+  function renderOverlayComparisonPanel() {
+    const cmp = ID_DATA?.overlay_comparison;
+    if (!cmp?.active) { _destroySimCharts(); return ''; }
+
+    const before = cmp.before || {};
+    const after  = cmp.after  || {};
+    const skills  = cmp.skills || [];
+    const _safeCov = v => { const n = Number(v); return (isNaN(n) || !isFinite(n)) ? 100 : Math.max(0, n); };
+    const covBefore = _safeCov(before.coverage_pct);
+    const covAfter  = _safeCov(after.coverage_pct);
+    const covDelta  = covAfter - covBefore;
+
+    const kpis = `
+      <div class="sim-dash-kpis">
+        ${_simKpi('FTE Required',  before.required,  after.required,  cmp.delta_required,  false, before.required,  after.required)}
+        ${_simKpi('FTE Assigned',  before.assigned,  after.assigned,  cmp.delta_assigned,  false, before.assigned,  after.assigned)}
+        ${_simKpi('Open Gap',      before.gap,       after.gap,       cmp.delta_gap,        true,  before.gap,       after.gap)}
+        ${_simKpi('Coverage %',    covBefore,        covAfter,        covDelta.toFixed(1),  false, covBefore, covAfter)}
+      </div>`;
+
+    const timelineCard = `
+      <div class="sim-dash-timeline">
+        <div class="sim-chart-title">FTE Required Over Time — Before vs After</div>
+        <div class="sim-chart-canvas-wrap"><canvas id="sim-fte-timeline-chart"></canvas></div>
+      </div>`;
+
+    const heatmap = _buildHeatmap(skills);
+
+    return `
+      <div class="sim-dash">
+        <div class="sim-dash-head">
           <div>
-            <div class="rl-impact-title">Simulation Overlay Impact</div>
-            <div class="rl-impact-sub">Before: ${_escAttr(cmp.before_source || 'short term PAX.xlsx')} | After: ${_escAttr(cmp.after_source || 'simulated_intraday_PAX.xlsx')}</div>
+            <div class="sim-dash-title">Simulation Overlay Impact</div>
+            <div class="sim-dash-sub">Before: ${_escAttr(cmp.before_source || 'short term PAX.xlsx')} &nbsp;|&nbsp; After: ${_escAttr(cmp.after_source || 'simulated_intraday_PAX.xlsx overlay')}</div>
           </div>
-          <div class="rl-impact-actions">
-            <div class="rl-impact-badge">Overlay Active</div>
+          <div class="sim-dash-actions">
+            <div class="sim-dash-badge">Overlay Active</div>
             <button class="rl-remove-overlay-btn" type="button">Remove Overlay</button>
           </div>
         </div>
-        <div class="rl-impact-grid">
-          <div class="rl-impact-card">
-            <div class="rl-impact-label">FTE Required</div>
-            <div class="rl-impact-values"><strong>${_fmtInt(before.required)}</strong><span>before</span><strong>${_fmtInt(after.required)}</strong><span>after</span><b style="color:${_deltaColor(cmp.delta_required)};">${_fmtDelta(cmp.delta_required)}</b></div>
-            <div class="rl-impact-bars"><span style="width:${reqBeforeW}%;background:rgba(148,163,184,0.55);"></span><span style="width:${reqAfterW}%;background:var(--info);"></span></div>
-          </div>
-          <div class="rl-impact-card">
-            <div class="rl-impact-label">FTE Assigned</div>
-            <div class="rl-impact-values"><strong>${_fmtInt(before.assigned)}</strong><span>before</span><strong>${_fmtInt(after.assigned)}</strong><span>after</span><b style="color:${_deltaColor(cmp.delta_assigned)};">${_fmtDelta(cmp.delta_assigned)}</b></div>
-            <div class="rl-impact-bars"><span style="width:${asgBeforeW}%;background:rgba(148,163,184,0.55);"></span><span style="width:${asgAfterW}%;background:var(--ok);"></span></div>
-          </div>
-          <div class="rl-impact-card rl-impact-gap-card">
-            <div class="rl-impact-label">Open Gap</div>
-            <div class="rl-impact-values"><strong>${_fmtInt(before.gap)}</strong><span>before</span><strong>${_fmtInt(after.gap)}</strong><span>after</span><b style="color:${_deltaColor(cmp.delta_gap, true)};">${_fmtDelta(cmp.delta_gap)}</b></div>
-            <div class="rl-impact-note">Lower is better after the optimizer reallocates against simulated demand.</div>
-          </div>
+        ${kpis}
+        <div class="sim-dash-bottom-row">
+          ${timelineCard}
+          ${heatmap}
         </div>
-        ${skillRows ? `
-          <div class="rl-impact-skill-cards">
-            ${skillRows}
-          </div>` : ''}
       </div>`;
   }
 
@@ -2800,11 +2881,93 @@ async function renderIDOptimization(container) {
     }
   }
 
+  // ── Sim dashboard charts ──────────────────────────────────────────
+  function _initSimDashCharts() {
+    _destroySimCharts();
+    const cmp = ID_DATA?.overlay_comparison;
+    if (!cmp?.active) return;
+
+    const CHART_DEFAULTS = {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
+      plugins: {
+        legend: {
+          display: true,
+          labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 14, padding: 10 },
+        },
+        tooltip: { mode: 'index', intersect: false },
+      },
+      scales: {
+        x: { ticks: { color: '#94a3b8', font: { size: 9 }, maxRotation: 45 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { ticks: { color: '#94a3b8', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.07)' }, beginAtZero: true },
+      },
+    };
+
+    // ── FTE Required over time ──────────────────────────────────────
+    const fteCtx = document.getElementById('sim-fte-timeline-chart');
+    const fteRaw = cmp.fte_timeline || [];
+    // Aggregate T1+T2 per time label
+    const fteByTime = {};
+    fteRaw.forEach(r => {
+      if (!fteByTime[r.time]) fteByTime[r.time] = { br: 0, ar: 0, ba: 0, aa: 0 };
+      fteByTime[r.time].br += r.before_required || 0;
+      fteByTime[r.time].ar += r.after_required  || 0;
+      fteByTime[r.time].ba += r.before_assigned || 0;
+      fteByTime[r.time].aa += r.after_assigned  || 0;
+    });
+    const fteLabels = Object.keys(fteByTime).sort();
+    if (fteCtx && fteLabels.length) {
+      _simCharts.fte = new Chart(fteCtx, {
+        type: 'line',
+        data: {
+          labels: fteLabels,
+          datasets: [
+            {
+              label: 'Required (Before)',
+              data: fteLabels.map(t => fteByTime[t].br),
+              borderColor: 'rgba(148,163,184,0.65)',
+              backgroundColor: 'rgba(148,163,184,0.07)',
+              borderDash: [5, 4],
+              borderWidth: 2,
+              pointRadius: 2,
+              tension: 0.35,
+              fill: false,
+            },
+            {
+              label: 'Required (After)',
+              data: fteLabels.map(t => fteByTime[t].ar),
+              borderColor: '#0ea5e9',
+              backgroundColor: 'rgba(14,165,233,0.12)',
+              borderWidth: 2.5,
+              pointRadius: 2,
+              tension: 0.35,
+              fill: false,
+            },
+            {
+              label: 'Assigned (After)',
+              data: fteLabels.map(t => fteByTime[t].aa),
+              borderColor: '#10b981',
+              backgroundColor: 'rgba(16,185,129,0.08)',
+              borderWidth: 1.8,
+              pointRadius: 0,
+              tension: 0.35,
+              fill: false,
+              borderDash: [3, 3],
+            },
+          ],
+        },
+        options: CHART_DEFAULTS,
+      });
+    }
+  }
+
   // ── Initial paint ─────────────────────────────────────────────────
   renderMatrix(matrix);
   renderGapList(gapList);
   renderLog();
   container.querySelector('.rl-remove-overlay-btn')?.addEventListener('click', removeSimulationOverlay);
+  _initSimDashCharts();
   if (_selSkill && _selTerminal && _selBlock) {
     renderStaffPanel(matrix);
   }

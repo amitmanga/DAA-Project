@@ -5100,12 +5100,108 @@ def _changed_time_rows_for_skill(skill, before_time, after_time):
     return rows
 
 
+def _build_pax_timeline(base_dir):
+    """Return 15-min before/after PAX series for dashboard charts."""
+    import json as _json
+    from intraday_pax_demand import TOUCHPOINTS as _TP
+
+    def _sf(v):
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    before = {tp: {} for tp in _TP}
+    try:
+        with open(os.path.join(base_dir, 'data', 'intraday_pax_pulse.json'), encoding='utf-8') as f:
+            pulse = _json.load(f)
+        labels = pulse.get('labels', [])
+        for tp in _TP:
+            for lbl, val in zip(labels, pulse.get(tp, [])):
+                h, m = str(lbl or '0:0').split(':')[:2]
+                bucket = (int(h) * 60 + int(m)) // 15 * 15
+                v = _sf(val)
+                if tp == 'lounge':
+                    bucket_list = before[tp].setdefault(bucket, [])
+                    bucket_list.append(v)
+                else:
+                    before[tp][bucket] = before[tp].get(bucket, 0) + v
+        for bucket, vals in list(before['lounge'].items()):
+            if isinstance(vals, list):
+                before['lounge'][bucket] = sum(vals) / len(vals) if vals else 0
+    except Exception:
+        pass
+
+    after = {tp: {} for tp in _TP}
+    try:
+        import openpyxl as _xl
+        sim_path = os.path.join(base_dir, 'data', 'simulated_intraday_PAX.xlsx')
+        wb = _xl.load_workbook(sim_path, data_only=True, read_only=True)
+        ws = wb.active
+        hdr = [c for c in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
+        col_map = {}
+        for tp in _TP:
+            tc = tp.capitalize()
+            try:
+                col_map[tp] = (hdr.index(f'T1_{tc}'), hdr.index(f'T2_{tc}'))
+            except ValueError:
+                pass
+        for rv in ws.iter_rows(min_row=2, values_only=True):
+            ts = rv[0]
+            if not isinstance(ts, datetime):
+                continue
+            bucket = ts.hour * 60 + ts.minute
+            for tp, (i1, i2) in col_map.items():
+                v = _sf(rv[i1]) + _sf(rv[i2])
+                after[tp][bucket] = v / 2 if tp == 'lounge' else v
+    except Exception:
+        pass
+
+    all_buckets = set()
+    for tp in _TP:
+        all_buckets |= set(before[tp]) | set(after[tp])
+
+    timeline = []
+    for bucket in sorted(all_buckets):
+        entry = {'time': f"{bucket // 60:02d}:{bucket % 60:02d}", 'start_mins': bucket}
+        for tp in _TP:
+            bv = before[tp].get(bucket, 0)
+            entry[f'before_{tp}'] = round(bv if not isinstance(bv, list) else (sum(bv) / len(bv) if bv else 0))
+            entry[f'after_{tp}'] = round(after[tp].get(bucket, 0))
+        timeline.append(entry)
+    return timeline
+
+
 def _build_overlay_fte_comparison(before_result, after_result):
     before = _optimizer_fte_summary(before_result)
     after = _optimizer_fte_summary(after_result)
     before_time = _optimizer_time_summary(before_result)
     after_time = _optimizer_time_summary(after_result)
     skills = sorted(set(before['by_skill']) | set(after['by_skill']), key=lambda s: s.lower())
+
+    # FTE timeline aggregated per (start_mins, terminal) across all skills
+    all_time_keys = set()
+    for sk_rows in before_time.values():
+        all_time_keys |= set(sk_rows.keys())
+    for sk_rows in after_time.values():
+        all_time_keys |= set(sk_rows.keys())
+    fte_timeline = []
+    for key in sorted(all_time_keys, key=lambda k: (k[0], k[1])):
+        start_mins, terminal = key
+        b_req = sum(before_time.get(sk, {}).get(key, {}).get('required', 0) for sk in skills)
+        a_req = sum(after_time.get(sk, {}).get(key, {}).get('required', 0) for sk in skills)
+        b_asgn = sum(before_time.get(sk, {}).get(key, {}).get('assigned', 0) for sk in skills)
+        a_asgn = sum(after_time.get(sk, {}).get(key, {}).get('assigned', 0) for sk in skills)
+        fte_timeline.append({
+            'time': mins_to_time(start_mins),
+            'terminal': terminal,
+            'before_required': b_req,
+            'after_required': a_req,
+            'before_assigned': b_asgn,
+            'after_assigned': a_asgn,
+            'delta_required': a_req - b_req,
+        })
+
     rows = []
     for skill in skills:
         b = before['by_skill'].get(skill, {
@@ -5127,6 +5223,12 @@ def _build_overlay_fte_comparison(before_result, after_result):
             'times': _changed_time_rows_for_skill(skill, before_time, after_time),
         })
     rows.sort(key=lambda r: (abs(r['delta_required']) + abs(r['delta_assigned']) + abs(r['delta_gap']) + len(r['times'])), reverse=True)
+
+    try:
+        pax_timeline = _build_pax_timeline(BASE_DIR)
+    except Exception:
+        pax_timeline = []
+
     return {
         'active': True,
         'before_source': 'short term PAX.xlsx',
@@ -5138,6 +5240,8 @@ def _build_overlay_fte_comparison(before_result, after_result):
         'delta_gap': after['totals']['gap'] - before['totals']['gap'],
         'delta_passengers': after['totals']['passengers'] - before['totals']['passengers'],
         'skills': rows[:8],
+        'fte_timeline': fte_timeline,
+        'pax_timeline': pax_timeline,
     }
 
 

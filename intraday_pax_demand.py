@@ -172,12 +172,28 @@ def save_intraday_pax_simulation(base_dir, payload):
         ('T2', 'checkin'), ('T2', 'security'), ('T2', 'cbp'), ('T2', 'lounge'), ('T2', 'boarding'), ('T2', 'immigration'), ('T2', 'baggage'),
     ]
 
+    simulation_meta = payload.get('simulation') or {}
+    affected_terminal = simulation_meta.get('affected_terminal')  # e.g. 'T1', 'T2', or None
+
     flights = _load_flights(base_dir)
     weights = {touchpoint: _terminal_weights(flights, touchpoint) for touchpoint in TOUCHPOINTS}
     aggregated = {
         touchpoint: _aggregate_to_15_minutes(labels, series.get(touchpoint), touchpoint)
         for touchpoint in TOUCHPOINTS
     }
+
+    # Load baseline (unshifted) aggregate so we can isolate changes to affected terminal only
+    baseline_aggregated = None
+    if affected_terminal in ('T1', 'T2'):
+        try:
+            pulse = _load_json(base_dir, PULSE_FILE)
+            base_labels = pulse.get('labels', [])
+            baseline_aggregated = {
+                tp: _aggregate_to_15_minutes(base_labels, pulse.get(tp), tp)
+                for tp in TOUCHPOINTS
+            }
+        except Exception:
+            baseline_aggregated = None
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -196,8 +212,22 @@ def save_intraday_pax_simulation(base_dir, payload):
         ts = datetime.combine(base_date, time(hour=interval_start // 60, minute=interval_start % 60))
         row = [ts]
         for terminal, touchpoint in column_touchpoints:
-            value = aggregated[touchpoint].get(interval_start, 0)
-            row.append(round(value * weights[touchpoint][terminal]))
+            w = weights[touchpoint][terminal]
+            sim_val = aggregated[touchpoint].get(interval_start, 0)
+
+            if baseline_aggregated and affected_terminal:
+                base_val = baseline_aggregated[touchpoint].get(interval_start, 0)
+                delta = sim_val - base_val
+                if terminal == affected_terminal:
+                    # Apply full PAX delta to the affected terminal's column
+                    value = max(0, round(base_val * w + delta))
+                else:
+                    # Unaffected terminal stays at its baseline proportion
+                    value = max(0, round(base_val * w))
+            else:
+                value = max(0, round(sim_val * w))
+
+            row.append(value)
         ws.append(row)
 
     for cell in ws['A'][1:]:
@@ -302,6 +332,11 @@ def _mins(hhmm):
     return int(h) * 60 + int(m)
 
 
+def _mins_to_hhmm(total_mins):
+    total_mins = max(0, int(total_mins))
+    return f"{total_mins // 60:02d}:{total_mins % 60:02d}"
+
+
 def _shift_range(arr, start_idx, end_idx, shift):
     out = arr[:]
     segment = out[start_idx:end_idx]
@@ -342,11 +377,35 @@ def simulate_intraday_pax(base_dir, scenario, params):
     if scenario == 'flight_delay':
         delay = int(float(params.get('delay_min') or 30))
         shift = max(0, delay)
-        flight = params.get('flight_no') or 'selected flight'
-        for key in ('boarding', 'lounge', 'cbp'):
-            series[key] = _shift_range(series[key], 0, len(labels), shift)
+        flight_no = params.get('flight_no') or 'selected flight'
+
+        flights = _load_flights(base_dir)
+        selected = next((f for f in flights if f['flight_no'] == flight_no), None)
+
+        affected_terminal = None
+        if selected and selected.get('etd'):
+            etd = _mins(str(selected['etd']))
+            cbp_req = str(selected.get('cbp_required') or '').strip().lower() == 'true'
+            affected_terminal = _terminal_for_flight(selected)
+
+            # Boarding window: 90 min lead up to departure
+            board_start_idx = _time_index(labels, _mins_to_hhmm(max(0, etd - 90)))
+            board_end_idx = _time_index(labels, _mins_to_hhmm(etd))
+
+            # Lounge/CBP window: 180 min lead up to departure
+            lc_start_idx = _time_index(labels, _mins_to_hhmm(max(0, etd - 180)))
+
+            # Deduct passengers from the original flight window and add them to the shifted window
+            series['boarding'] = _shift_range(series['boarding'], board_start_idx, board_end_idx, shift)
+            series['lounge'] = _shift_range(series['lounge'], lc_start_idx, board_end_idx, shift)
+            if cbp_req:
+                series['cbp'] = _shift_range(series['cbp'], lc_start_idx, board_end_idx, shift)
+        else:
+            for key in ('boarding', 'lounge', 'cbp'):
+                series[key] = _shift_range(series[key], 0, len(labels), shift)
+
         cascade = [
-            f"{flight} delayed by {delay} minutes; boarding and lounge demand shift later.",
+            f"{flight_no} delayed by {delay} minutes; boarding and lounge demand shift later.",
             "Gate pressure moves into the next departure wave.",
             "CBP demand is shifted where the selected flight requires preclearance.",
         ]
@@ -395,6 +454,14 @@ def simulate_intraday_pax(base_dir, scenario, params):
     else:
         raise ValueError(f"Unsupported scenario: {scenario}")
 
+    sim_meta = {
+        'active': True,
+        'scenario': scenario,
+        'cascade': cascade,
+    }
+    if scenario == 'flight_delay' and affected_terminal:
+        sim_meta['affected_terminal'] = affected_terminal
+
     return {
         **base,
         'series': series,
@@ -403,9 +470,5 @@ def simulate_intraday_pax(base_dir, scenario, params):
             'rows': _table_from_series(series),
         },
         'insights': _build_insights(series),
-        'simulation': {
-            'active': True,
-            'scenario': scenario,
-            'cascade': cascade,
-        },
+        'simulation': sim_meta,
     }
