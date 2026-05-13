@@ -151,6 +151,16 @@ function navSectionForView(view) {
   return '';
 }
 
+function closeNavSubmenuFrom(el) {
+  const menu = el.closest('.nav-menu');
+  if (!menu) return;
+
+  menu.classList.add('nav-menu-closing');
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
+}
+
 function switchView(view) {
   const target = document.getElementById(`view-${view}`);
   if (!target) return;
@@ -184,6 +194,13 @@ document.querySelectorAll('[data-view]').forEach(btn => {
   btn.addEventListener('click', () => {
     if (btn.disabled) return;
     switchView(btn.dataset.view);
+    closeNavSubmenuFrom(btn);
+  });
+});
+
+document.querySelectorAll('.nav-menu').forEach(menu => {
+  menu.addEventListener('mouseleave', () => {
+    menu.classList.remove('nav-menu-closing');
   });
 });
 

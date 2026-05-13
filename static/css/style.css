@@ -420,6 +420,11 @@ body[data-nav-section="config"] .nav-btn[data-view="config"]::after {
   pointer-events: auto;
   transform: translateY(0);
 }
+.nav-menu.nav-menu-closing .nav-submenu {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(8px);
+}
 .nav-subitem {
   width: 100%;
   border: 0;
