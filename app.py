@@ -864,6 +864,54 @@ def weekly_staff_available():
     return result, skill_result
 
 
+def daily_staff_available(target_date):
+    """Return exact daily available FTE as workforce minus staff on leave."""
+    staff = load_staff()
+    absences = load_absences()
+    total_staff = len(staff)
+    day = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    emp_skills = {}
+    skill_pool = defaultdict(float)
+    for s in staff:
+        emp = s.get('EMPLOYEE NUMBER', '').strip()
+        skills = set()
+        for sk_col in ['Skill1', 'Skill2', 'Skill3', 'Skill4']:
+            sk_name = s.get(sk_col, '').strip()
+            if sk_name:
+                skills.add(normalize_skill(sk_name))
+        emp_skills[emp] = skills
+        if skills == {'Mezz Operation'}:
+            skill_pool['Mezz Operation'] += 1.0
+        elif skills:
+            weight = 1.0 / len(skills)
+            for sk in skills:
+                skill_pool[sk] += weight
+
+    absent_emps = set()
+    for a in absences:
+        emp = a.get('EMPLOYEE NUMBER', '').strip()
+        d_from = parse_date(a.get('DATE FROM', ''))
+        d_to = parse_date(a.get('DATE TO', ''))
+        if d_from and d_to:
+            if d_to < d_from:
+                d_from, d_to = d_to, d_from
+            if d_from <= day <= d_to:
+                absent_emps.add(emp)
+
+    skill_available = dict(skill_pool)
+    for emp_id in absent_emps:
+        skills = emp_skills.get(emp_id, set())
+        if skills == {'Mezz Operation'}:
+            skill_available['Mezz Operation'] = max(0.0, skill_available.get('Mezz Operation', 0.0) - 1.0)
+        elif skills:
+            weight = 1.0 / len(skills)
+            for sname in skills:
+                skill_available[sname] = max(0.0, skill_available.get(sname, 0.0) - weight)
+
+    return total_staff - len(absent_emps), skill_available, len(absent_emps)
+
+
 # Pre-compute (cached at module load)
 _demand = None
 _staff_req = None
@@ -918,6 +966,9 @@ def lt_summary():
     peak_month = datetime(2026, peak_month_num, 1).strftime('%B')
 
     peak_wk = max(weekly_passengers, key=weekly_passengers.get) if weekly_passengers else '2026-W28'
+    peak_week_start = ''
+    if peak_wk in passenger_forecast and passenger_forecast[peak_wk].get('week_start'):
+        peak_week_start = passenger_forecast[peak_wk]['week_start'].strftime('%d %b')
 
     # Staff utilisation: avg (staff_req / staff_avail) across 2026 weeks
     utils = []
@@ -939,6 +990,7 @@ def lt_summary():
         'avg_weekly_passengers': int(round(avg_weekly_passengers)),
         'peak_month': peak_month,
         'peak_week': peak_wk,
+        'peak_week_start': peak_week_start,
         'staff_utilisation_pct': avg_util,
         'total_staff': total_staff,
         'avg_pax_per_fte_per_day': int(avg_pax_per_fte_per_day),
@@ -1621,8 +1673,6 @@ def lt_four_week_roster():
     # Fetch weekly demand data for those weeks
     demand_all = weekly_demand_2026()
     staff_req_all, skill_req_all = weekly_staff_required(demand_all)
-    _staff_avail_all, skill_avail_all = weekly_staff_available()
-
     # Collect all skill names
     all_skills_set = set()
     for wk_data in skill_req_all.values():
@@ -1631,7 +1681,6 @@ def lt_four_week_roster():
 
     # ── 3. Helper: build day objects for a given week ─────────────────────
     def _build_day(date, dow_idx, weekly_skill_fte, weekly_total_fte,
-                   weekly_skill_avail=None, weekly_total_avail=0,
                    coverage='roster_only'):
         weight = dow_weights[dow_idx]
         skill_fte_day = {}
@@ -1640,12 +1689,12 @@ def lt_four_week_roster():
 
         daily_total_fte = round(weekly_total_fte * weight * 7, 2)
 
-        # Availability (same DOW decomposition)
+        # Availability is an exact daily headcount: total workforce minus
+        # employees whose leave window includes this calendar date.
+        daily_total_avail, daily_skill_avail, absent_count = daily_staff_available(date)
         skill_avail_day = {}
-        wsa = weekly_skill_avail or {}
         for sk in all_skills:
-            skill_avail_day[sk] = round(wsa.get(sk, 0) * weight * 7, 2)
-        daily_total_avail = round(weekly_total_avail * weight * 7, 2)
+            skill_avail_day[sk] = round(daily_skill_avail.get(sk, 0), 2)
 
         # Gap = Available − Required  (positive = surplus, negative = shortfall)
         skill_gap_day = {sk: round(skill_avail_day[sk] - skill_fte_day[sk], 2)
@@ -1694,6 +1743,7 @@ def lt_four_week_roster():
             'total_fte':      daily_total_fte,
             'skill_fte':      skill_fte_day,
             'total_avail':    daily_total_avail,
+            'absent_count':   absent_count,
             'skill_avail':    skill_avail_day,
             'total_gap':      daily_total_gap,
             'skill_gap':      skill_gap_day,
@@ -1714,8 +1764,7 @@ def lt_four_week_roster():
 
     cur_weekly_skill_fte   = skill_req_all.get(cur_wk_key, {})
     cur_weekly_total_fte   = staff_req_all.get(cur_wk_key, 0)
-    cur_weekly_skill_avail = skill_avail_all.get(cur_wk_key, {})
-    cur_week_avail         = _staff_avail_all.get(cur_wk_key, 0)
+    cur_week_avail         = sum(daily_staff_available(cur_week_monday + timedelta(days=i))[0] for i in range(7)) / 7
 
     # Short term covers 4 days: today (day 0) through today+3
     ST_WINDOW = 4  # days covered by the short-term passenger profile
@@ -1735,7 +1784,6 @@ def lt_four_week_roster():
         current_week_days.append(
             _build_day(curr_d, dow_idx,
                        cur_weekly_skill_fte, cur_weekly_total_fte,
-                       cur_weekly_skill_avail, cur_week_avail,
                        coverage)
         )
         curr_d += timedelta(days=1)
@@ -1759,15 +1807,13 @@ def lt_four_week_roster():
 
         weekly_skill_fte   = skill_req_all.get(wk_key, {})
         weekly_total_fte   = staff_req_all.get(wk_key, 0)
-        weekly_skill_avail = skill_avail_all.get(wk_key, {})
-        week_avail         = _staff_avail_all.get(wk_key, 0)
+        week_avail         = sum(daily_staff_available(monday + timedelta(days=i))[0] for i in range(7)) / 7
 
         days = []
         for dow_idx in range(7):
             date = monday + timedelta(days=dow_idx)
             days.append(_build_day(date, dow_idx,
                                    weekly_skill_fte, weekly_total_fte,
-                                   weekly_skill_avail, week_avail,
                                    'roster_only'))
 
         weeks_output.append({

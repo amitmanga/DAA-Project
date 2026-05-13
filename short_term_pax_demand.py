@@ -1,8 +1,11 @@
 import json
 import os
+from collections import defaultdict
+from datetime import datetime, timedelta
 
 
 PAX_3DAY_FILE = 'pax_3day_cache.json'
+PAX_PROFILE_FILE = 'short term PAX.xlsx'
 TOUCHPOINTS = ('checkin', 'security', 'cbp', 'lounge', 'boarding', 'immigration', 'baggage')
 
 
@@ -42,6 +45,113 @@ def _pct(part, total):
     return round((part / total) * 100)
 
 
+def _load_pax_workbook_rows(base_dir):
+    path = _data_path(base_dir, PAX_PROFILE_FILE)
+    if not os.path.exists(path):
+        return {'dates': [], 'rows_by_date': {}}
+
+    rows_by_date = defaultdict(list)
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        ws = wb.active
+        headers = [str(v).strip() if v is not None else '' for v in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
+        for vals in ws.iter_rows(min_row=2, values_only=True):
+            row = dict(zip(headers, vals))
+            ts = row.get('Timestamp')
+            if isinstance(ts, datetime):
+                rows_by_date[ts.date()].append(row)
+    except Exception:
+        return {'dates': [], 'rows_by_date': {}}
+
+    return {'dates': sorted(rows_by_date.keys()), 'rows_by_date': dict(rows_by_date)}
+
+
+def _source_date_for_target(target_dt, source_dates):
+    target_date = target_dt.date()
+    if target_date in source_dates:
+        return target_date
+
+    offset = (target_date - datetime.now().date()).days
+    if 0 <= offset < len(source_dates):
+        return source_dates[offset]
+    return None
+
+
+def _touchpoint_value(row, key):
+    total = 0.0
+    suffix = f"_{key}"
+    for col, value in row.items():
+        if str(col or '').strip().lower().endswith(suffix):
+            try:
+                total += float(value or 0)
+            except (TypeError, ValueError):
+                pass
+    return total
+
+
+def _empty_series():
+    data = {'labels': [], 'day_labels': [], 'days_data': []}
+    for key in TOUCHPOINTS:
+        data[key] = []
+    return data
+
+
+def _build_series_from_workbook(base_dir):
+    profile = _load_pax_workbook_rows(base_dir)
+    source_dates = profile.get('dates', [])
+    rows_by_date = profile.get('rows_by_date', {})
+    if not source_dates:
+        return None
+
+    data = _empty_series()
+    today = datetime.now()
+    for offset in (1, 2, 3):
+        target_dt = today + timedelta(days=offset)
+        source_date = _source_date_for_target(target_dt, source_dates)
+        if source_date is None:
+            continue
+
+        day = {
+            'date': target_dt.strftime('%a %d %b %Y'),
+            'labels': [],
+        }
+        for key in TOUCHPOINTS:
+            day[key] = []
+
+        rows = sorted(rows_by_date.get(source_date, []), key=lambda r: r.get('Timestamp'))
+        for row in rows:
+            ts = row.get('Timestamp')
+            if not isinstance(ts, datetime):
+                continue
+
+            label = ts.strftime('%H:%M')
+            day_label = target_dt.strftime('%a %d %b')
+            data['labels'].append(label)
+            data['day_labels'].append(day_label)
+            day['labels'].append(label)
+            for key in TOUCHPOINTS:
+                value = _touchpoint_value(row, key)
+                data[key].append(value)
+                day[key].append(value)
+
+        data['days_data'].append(day)
+
+    return data if data['labels'] else None
+
+
+def _build_series_from_cache(base_dir):
+    source = _load_json(base_dir, PAX_3DAY_FILE)
+    data = {
+        'labels': source.get('labels', []),
+        'day_labels': source.get('day_labels', []),
+        'days_data': source.get('days_data', []),
+    }
+    for key in TOUCHPOINTS:
+        data[key] = _numbers(source.get(key))
+    return data
+
+
 def _peak_time_label(data, values):
     idx = _peak_idx(values)
     time_label = (data.get('labels') or ['--'])[idx] if idx < len(data.get('labels') or []) else '--'
@@ -65,14 +175,7 @@ def _insight(data, key, label, accent, secondary_label, secondary_value, metric_
 
 
 def build_short_term_pax_outlook(base_dir):
-    source = _load_json(base_dir, PAX_3DAY_FILE)
-    data = {
-        'labels': source.get('labels', []),
-        'day_labels': source.get('day_labels', []),
-        'days_data': source.get('days_data', []),
-    }
-    for key in TOUCHPOINTS:
-        data[key] = _numbers(source.get(key))
+    data = _build_series_from_workbook(base_dir) or _build_series_from_cache(base_dir)
 
     max_checkin = max(data['checkin'] or [0])
     max_security = max(data['security'] or [0])

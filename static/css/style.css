@@ -4729,9 +4729,24 @@ canvas { display: block; }
   font-size: 0.75rem;
   font-weight: 700;
 }
-.rdc-gap-ok   { color: var(--ok)  !important; background: var(--ok-light)   !important; }
-.rdc-gap-crit { color: var(--crit)!important; background: var(--crit-light) !important; }
-.rdc-gap-zero { color: var(--muted); }
+.rdc-gap-ok   { color: var(--ok)   !important; background: var(--ok-light)   !important; }
+.rdc-gap-zero { color: var(--warn) !important; background: var(--warn-light) !important; }
+.rdc-gap-crit { color: var(--crit) !important; background: var(--crit-light) !important; }
+.rd-total-row td.rdc-gap-ok,
+.rd-gap-row td.rdc-gap-ok {
+  color: var(--ok) !important;
+  background: var(--ok-light) !important;
+}
+.rd-total-row td.rdc-gap-zero,
+.rd-gap-row td.rdc-gap-zero {
+  color: var(--warn) !important;
+  background: var(--warn-light) !important;
+}
+.rd-total-row td.rdc-gap-crit,
+.rd-gap-row td.rdc-gap-crit {
+  color: var(--crit) !important;
+  background: var(--crit-light) !important;
+}
 
 /* Weekly column sub-labels for skill groups */
 .rdc-req-lbl   { font-size: 0.68rem; color: var(--muted); font-weight: 600; }

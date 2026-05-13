@@ -446,7 +446,7 @@ async function loadKPIs() {
   document.getElementById('v-peak-month').textContent = d.peak_month;
   document.getElementById('kpi-peak-month').querySelector('.kpi-label').textContent     = 'Peak Month';
 
-  document.getElementById('v-peak-week').textContent  = d.peak_week;
+  document.getElementById('v-peak-week').textContent  = d.peak_week_start || d.peak_week || '--';
   document.getElementById('kpi-peak-week').querySelector('.kpi-label').textContent      = 'Peak Week';
 
   document.getElementById('v-util').textContent       = d.staff_utilisation_pct + '%';
