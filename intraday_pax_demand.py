@@ -2,6 +2,7 @@ import csv
 import json
 import os
 from copy import deepcopy
+from datetime import datetime, time
 
 
 PULSE_FILE = 'intraday_pax_pulse.json'
@@ -81,6 +82,133 @@ def _load_flights(base_dir):
                 'cbp_required': str(row.get('CBP_Required') or '').strip(),
             })
     return flights
+
+
+def _terminal_for_flight(flight):
+    terminal = str(flight.get('terminal') or '').strip().upper()
+    return terminal if terminal in ('T1', 'T2') else None
+
+
+def _terminal_weights(flights, touchpoint):
+    counts = {'T1': 0.0, 'T2': 0.0}
+    for flight in flights:
+        terminal = _terminal_for_flight(flight)
+        if not terminal:
+            continue
+
+        flow_type = str(flight.get('type') or '').strip().upper()
+        is_departure_flow = flow_type in ('DEP', 'TURN')
+        is_arrival_flow = flow_type in ('ARR', 'TURN')
+
+        if touchpoint in ('immigration', 'baggage') and not is_arrival_flow:
+            continue
+        if touchpoint not in ('immigration', 'baggage') and not is_departure_flow:
+            continue
+        if touchpoint == 'cbp' and str(flight.get('cbp_required') or '').strip().lower() != 'true':
+            continue
+
+        counts[terminal] += 1.0
+
+    total = counts['T1'] + counts['T2']
+    if total <= 0:
+        return {'T1': 0.5, 'T2': 0.5}
+    return {'T1': counts['T1'] / total, 'T2': counts['T2'] / total}
+
+
+def _aggregate_to_15_minutes(labels, values, touchpoint):
+    buckets = {minute: [] for minute in range(0, 1440, 15)}
+    for label, value in zip(labels or [], _numbers(values)):
+        minute = _mins(label)
+        bucket = (minute // 15) * 15
+        if bucket in buckets:
+            buckets[bucket].append(value)
+
+    aggregated = {}
+    for minute, bucket_values in buckets.items():
+        if not bucket_values:
+            aggregated[minute] = 0
+        elif touchpoint == 'lounge':
+            aggregated[minute] = round(sum(bucket_values) / len(bucket_values))
+        else:
+            aggregated[minute] = round(sum(bucket_values))
+    return aggregated
+
+
+def _simulation_export_date(base_dir):
+    path = _data_path(base_dir, 'short term PAX.xlsx')
+    if os.path.exists(path):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+            ws = wb.active
+            first_ts = ws.cell(2, 1).value
+            if isinstance(first_ts, datetime):
+                return first_ts.date()
+        except Exception:
+            pass
+    return datetime.now().date()
+
+
+def save_intraday_pax_simulation(base_dir, payload):
+    """Write simulated intraday PAX demand in the short term PAX workbook shape."""
+    try:
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+    except ImportError:
+        return {'saved': False, 'error': 'openpyxl is not installed'}
+
+    series = payload.get('series') or {}
+    labels = series.get('labels') or []
+    if not labels:
+        return {'saved': False, 'error': 'Simulation payload has no time labels'}
+
+    headers = [
+        'Timestamp',
+        'T1_Checkin', 'T1_Security', 'T1_CBP', 'T1_Lounge', 'T1_Boarding', 'T1_Immigration', 'T1_Baggage',
+        'T2_Checkin', 'T2_Security', 'T2_CBP', 'T2_Lounge', 'T2_Boarding', 'T2_Immigration', 'T2_Baggage',
+    ]
+    column_touchpoints = [
+        ('T1', 'checkin'), ('T1', 'security'), ('T1', 'cbp'), ('T1', 'lounge'), ('T1', 'boarding'), ('T1', 'immigration'), ('T1', 'baggage'),
+        ('T2', 'checkin'), ('T2', 'security'), ('T2', 'cbp'), ('T2', 'lounge'), ('T2', 'boarding'), ('T2', 'immigration'), ('T2', 'baggage'),
+    ]
+
+    flights = _load_flights(base_dir)
+    weights = {touchpoint: _terminal_weights(flights, touchpoint) for touchpoint in TOUCHPOINTS}
+    aggregated = {
+        touchpoint: _aggregate_to_15_minutes(labels, series.get(touchpoint), touchpoint)
+        for touchpoint in TOUCHPOINTS
+    }
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Sheet1'
+    ws.append(headers)
+
+    header_fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center')
+
+    base_date = _simulation_export_date(base_dir)
+    for interval_start in range(0, 1440, 15):
+        ts = datetime.combine(base_date, time(hour=interval_start // 60, minute=interval_start % 60))
+        row = [ts]
+        for terminal, touchpoint in column_touchpoints:
+            value = aggregated[touchpoint].get(interval_start, 0)
+            row.append(round(value * weights[touchpoint][terminal]))
+        ws.append(row)
+
+    for cell in ws['A'][1:]:
+        cell.number_format = 'YYYY-MM-DD HH:MM:SS'
+    ws.column_dimensions['A'].width = 20
+    for col_idx in range(2, len(headers) + 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 15
+
+    output_path = _data_path(base_dir, 'simulated_intraday_PAX.xlsx')
+    wb.save(output_path)
+    return {'saved': True, 'filename': 'simulated_intraday_PAX.xlsx', 'path': output_path}
 
 
 def _table_from_series(series):

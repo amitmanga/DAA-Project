@@ -294,10 +294,12 @@ function idpaxRender(payload) {
 async function idpaxRunSimulation() {
   if (!IDPAX_DATA) return;
   const run = document.getElementById('idpax-run-sim');
+  const load = document.getElementById('idpax-load-resource');
   if (run) {
     run.disabled = true;
     run.textContent = 'Processing...';
   }
+  if (load) load.disabled = true;
   try {
     const res = await fetch('/api/intraday/pax-demand/simulate', {
       method: 'POST',
@@ -307,7 +309,10 @@ async function idpaxRunSimulation() {
     const payload = await res.json();
     if (!res.ok || payload.error) throw new Error(payload.error || `Simulation failed: ${res.status}`);
     idpaxRender(payload);
-    if (run) run.textContent = 'Simulation Applied';
+    const runBtn = document.getElementById('idpax-run-sim');
+    if (runBtn) runBtn.textContent = 'Simulation Applied';
+    const loadBtn = document.getElementById('idpax-load-resource');
+    if (loadBtn) loadBtn.disabled = !payload.simulation_export?.saved;
   } catch (err) {
     console.error(err);
     const status = document.getElementById('idpax-sim-status');
@@ -318,6 +323,40 @@ async function idpaxRunSimulation() {
     if (run) run.textContent = 'Run Simulation';
   } finally {
     if (run) run.disabled = false;
+    const loadBtn = document.getElementById('idpax-load-resource');
+    if (loadBtn && loadBtn.textContent !== 'Loading...') loadBtn.disabled = false;
+  }
+}
+
+async function idpaxLoadResourcePlanning() {
+  const btn = document.getElementById('idpax-load-resource');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Loading...';
+  }
+
+  try {
+    const res = await fetch('/api/intraday/pax-demand/load-simulation', { method: 'POST' });
+    const payload = await res.json();
+    if (!res.ok || payload.error) throw new Error(payload.error || `Load failed: ${res.status}`);
+
+    if (typeof switchView === 'function') {
+      switchView('intraday');
+    } else if (typeof initIntraday === 'function') {
+      initIntraday();
+    }
+  } catch (err) {
+    console.error(err);
+    const status = document.getElementById('idpax-sim-status');
+    if (status) {
+      status.hidden = false;
+      status.innerHTML = `<div>${idpaxEsc(err.message)}</div>`;
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Load to Resource Planning';
+    }
   }
 }
 
@@ -333,6 +372,8 @@ function idpaxAttachActions() {
       idpaxRenderScenarioForm(IDPAX_DATA || {});
       const run = document.getElementById('idpax-run-sim');
       if (run) run.textContent = 'Run Simulation';
+      const load = document.getElementById('idpax-load-resource');
+      if (load) load.textContent = 'Load to Resource Planning';
     });
   });
 
@@ -349,8 +390,16 @@ function idpaxAttachActions() {
       if (!IDPAX_DATA) return;
       const runBtn = document.getElementById('idpax-run-sim');
       if (runBtn) runBtn.textContent = 'Run Simulation';
+      const loadBtn = document.getElementById('idpax-load-resource');
+      if (loadBtn) loadBtn.textContent = 'Load to Resource Planning';
       idpaxRender(IDPAX_DATA);
     });
+  }
+
+  const load = document.getElementById('idpax-load-resource');
+  if (load && !load.dataset.bound) {
+    load.dataset.bound = '1';
+    load.addEventListener('click', idpaxLoadResourcePlanning);
   }
 }
 

@@ -1091,6 +1091,8 @@ body.is-home-view .header-meta {
 .idpax-sim-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .idpax-sim-status {
   background: var(--warn-light);
@@ -1109,9 +1111,11 @@ body.is-home-view .header-meta {
   padding-top: 6px;
 }
 .idpax-run,
-.idpax-clear {
+.idpax-clear,
+.idpax-load-resource {
   min-height: 40px;
   padding: 0 16px;
+  white-space: nowrap;
 }
 .idpax-section-title {
   display: flex;

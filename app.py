@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 from long_term_pax_demand import build_long_term_pax_forecast
-from intraday_pax_demand import build_intraday_pax_pulse, simulate_intraday_pax
+from intraday_pax_demand import build_intraday_pax_pulse, save_intraday_pax_simulation, simulate_intraday_pax
 from short_term_pax_demand import build_short_term_pax_outlook
 
 # CP-SAT optimiser (optional — falls back to greedy if OR-Tools is absent)
@@ -336,7 +336,8 @@ FLIGHT_CATEGORY_PAX_CAPACITY = {
 }
 
 PAX_CONFIG_CACHE = None
-PAX_PROFILE_CACHE = None
+PAX_PROFILE_CACHE = {}
+INTRADAY_PAX_SIM_OVERLAY_ACTIVE = False
 LONG_TERM_TARGET_YEAR = 2026
 LONG_TERM_PAX_FORECAST_FILE = 'forecast_pax_results_2026.csv'
 LONG_TERM_HISTORICAL_PAX_FILE = 'historical_pax_data.csv'
@@ -389,16 +390,10 @@ def load_pax_config():
     return PAX_CONFIG_CACHE
 
 
-def load_pax_profile():
-    """Return passenger profile rows keyed by their source workbook date."""
-    global PAX_PROFILE_CACHE
-    if PAX_PROFILE_CACHE is not None:
-        return PAX_PROFILE_CACHE
-
-    path = os.path.join(BASE_DIR, 'data', 'short term PAX.xlsx')
+def _load_pax_workbook_profile(filename):
+    path = os.path.join(BASE_DIR, 'data', filename)
     if not os.path.exists(path):
-        PAX_PROFILE_CACHE = {'dates': [], 'rows_by_date': {}}
-        return PAX_PROFILE_CACHE
+        return {'dates': [], 'rows_by_date': {}}
 
     rows_by_date = defaultdict(list)
     try:
@@ -416,8 +411,90 @@ def load_pax_profile():
         rows_by_date = defaultdict(list)
 
     dates = sorted(rows_by_date.keys())
-    PAX_PROFILE_CACHE = {'dates': dates, 'rows_by_date': dict(rows_by_date)}
-    return PAX_PROFILE_CACHE
+    return {'dates': dates, 'rows_by_date': dict(rows_by_date)}
+
+
+def _merge_simulated_pax_overlay(base_profile):
+    overlay = _load_pax_workbook_profile('simulated_intraday_PAX.xlsx')
+    if not overlay.get('dates'):
+        return base_profile
+
+    merged_by_date = {
+        dt: [dict(row) for row in rows]
+        for dt, rows in (base_profile.get('rows_by_date') or {}).items()
+    }
+    for overlay_date, overlay_rows in (overlay.get('rows_by_date') or {}).items():
+        active_minutes = []
+        for overlay_row in overlay_rows:
+            ts = overlay_row.get('Timestamp')
+            if not isinstance(ts, datetime):
+                continue
+            for col, value in overlay_row.items():
+                if col == 'Timestamp':
+                    continue
+                try:
+                    if float(value or 0) > 0:
+                        active_minutes.append(ts.hour * 60 + ts.minute)
+                        break
+                except (TypeError, ValueError):
+                    continue
+        overlay_start = min(active_minutes) if active_minutes else None
+        overlay_end = max(active_minutes) if active_minutes else None
+
+        base_rows = merged_by_date.setdefault(overlay_date, [])
+        by_minute = {}
+        for idx, row in enumerate(base_rows):
+            ts = row.get('Timestamp')
+            if isinstance(ts, datetime):
+                by_minute[ts.hour * 60 + ts.minute] = idx
+
+        for overlay_row in overlay_rows:
+            ts = overlay_row.get('Timestamp')
+            if not isinstance(ts, datetime):
+                continue
+            minute = ts.hour * 60 + ts.minute
+            in_overlay_window = (
+                overlay_start is not None and overlay_end is not None and
+                overlay_start <= minute <= overlay_end
+            )
+            if minute in by_minute:
+                target = base_rows[by_minute[minute]]
+            else:
+                target = {'Timestamp': ts}
+                by_minute[minute] = len(base_rows)
+                base_rows.append(target)
+
+            for col, value in overlay_row.items():
+                if col == 'Timestamp':
+                    continue
+                try:
+                    pax = float(value or 0)
+                except (TypeError, ValueError):
+                    pax = 0.0
+                if in_overlay_window or pax > 0:
+                    target[col] = pax
+                    target['__sim_overlay'] = True
+
+    dates = sorted(merged_by_date.keys())
+    return {'dates': dates, 'rows_by_date': merged_by_date}
+
+
+def load_pax_profile(use_sim_overlay=False):
+    """Return passenger profile rows keyed by their source workbook date."""
+    global PAX_PROFILE_CACHE
+    if not isinstance(PAX_PROFILE_CACHE, dict):
+        PAX_PROFILE_CACHE = {}
+
+    cache_key = 'sim_overlay' if use_sim_overlay else 'base'
+    if cache_key in PAX_PROFILE_CACHE:
+        return PAX_PROFILE_CACHE[cache_key]
+
+    profile = _load_pax_workbook_profile('short term PAX.xlsx')
+    if use_sim_overlay:
+        profile = _merge_simulated_pax_overlay(profile)
+
+    PAX_PROFILE_CACHE[cache_key] = profile
+    return profile
 
 
 def _parse_any_date(date_str):
@@ -429,9 +506,9 @@ def _parse_any_date(date_str):
     return None
 
 
-def _pax_source_date_for(requested_dt):
+def _pax_source_date_for(requested_dt, use_sim_overlay=False):
     """Map current D..D+3 dates to the four dates provided in the PAX workbook."""
-    profile = load_pax_profile()
+    profile = load_pax_profile(use_sim_overlay=use_sim_overlay)
     dates = profile.get('dates', [])
     if not dates:
         return None
@@ -447,18 +524,18 @@ def _pax_source_date_for(requested_dt):
     return None
 
 
-def build_pax_demand_tasks(date_str, current_time_mins=None):
+def build_pax_demand_tasks(date_str, current_time_mins=None, use_sim_overlay=False):
     """Build hourly passenger-handling demand windows from the PAX workbooks."""
     requested_dt = _parse_any_date(date_str)
     if requested_dt is None:
         return []
 
-    source_date = _pax_source_date_for(requested_dt)
+    source_date = _pax_source_date_for(requested_dt, use_sim_overlay=use_sim_overlay)
     if source_date is None:
         return []
 
     cfg = load_pax_config()
-    profile = load_pax_profile()
+    profile = load_pax_profile(use_sim_overlay=use_sim_overlay)
     rows = profile.get('rows_by_date', {}).get(source_date, [])
     if not cfg or not rows:
         return []
@@ -528,6 +605,7 @@ def build_pax_demand_tasks(date_str, current_time_mins=None):
             'source_slots':    bucket['source_count'],
             'time_window':     f"{mins_to_time(start_mins)}-{mins_to_time(end_mins)}",
             'source_date':     source_date.isoformat(),
+            'pax_overlay':     bool(use_sim_overlay),
         }
         if current_time_mins is not None and end_mins <= current_time_mins:
             task['is_past'] = True
@@ -1384,12 +1462,50 @@ def id_pax_demand_tactical_pulse():
 
 @app.route('/api/intraday/pax-demand/simulate', methods=['POST'])
 def id_pax_demand_simulate():
+    global PAX_PROFILE_CACHE
     body = request.get_json(force=True) or {}
     scenario = body.get('scenario', '')
     params = body.get('params') or {}
     if not scenario:
         return jsonify({'error': 'No scenario specified'}), 400
-    return jsonify(simulate_intraday_pax(BASE_DIR, scenario, params))
+    payload = simulate_intraday_pax(BASE_DIR, scenario, params)
+    try:
+        payload['simulation_export'] = save_intraday_pax_simulation(BASE_DIR, payload)
+        if isinstance(PAX_PROFILE_CACHE, dict):
+            PAX_PROFILE_CACHE.pop('sim_overlay', None)
+    except Exception as exc:
+        payload['simulation_export'] = {'saved': False, 'error': str(exc)}
+    return jsonify(payload)
+
+
+@app.route('/api/intraday/pax-demand/load-simulation', methods=['POST'])
+def id_pax_demand_load_simulation():
+    """Activate simulated_intraday_PAX.xlsx as today's intraday PAX overlay."""
+    global INTRADAY_PAX_SIM_OVERLAY_ACTIVE, PAX_PROFILE_CACHE
+
+    output_path = os.path.join(BASE_DIR, 'data', 'simulated_intraday_PAX.xlsx')
+    if not os.path.exists(output_path):
+        return jsonify({
+            'error': 'Run a simulation first to create data/simulated_intraday_PAX.xlsx.'
+        }), 404
+
+    INTRADAY_PAX_SIM_OVERLAY_ACTIVE = True
+    if isinstance(PAX_PROFILE_CACHE, dict):
+        PAX_PROFILE_CACHE.pop('sim_overlay', None)
+    else:
+        PAX_PROFILE_CACHE = {}
+
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    _intraday_result_cache.pop(today_str, None)
+    _manual_assigns.pop(today_str, None)
+    _manual_unassigns.pop(today_str, None)
+    _manual_block_assigns.pop(today_str, None)
+
+    return jsonify({
+        'ok': True,
+        'simulation_overlay_active': True,
+        'source_file': 'simulated_intraday_PAX.xlsx',
+    })
 
 
 @app.route('/api/long-term/gap-skill-data')
@@ -2824,7 +2940,7 @@ def get_stands_map():
 
 
 def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=False,
-                       demand_windows=None, prev_shift_ends=None):
+                       demand_windows=None, prev_shift_ends=None, use_sim_overlay=False):
     """Return (on_duty_list, absent_list) for the given date string.
 
     When use_roster_optimiser=True the two-phase roster engine is used to
@@ -2932,7 +3048,7 @@ def get_staff_for_date(date_str, custom_constraints=None, use_roster_optimiser=F
         try:
             # 30-minute blocks: 0..47
             block_density = [0.0] * 48
-            for task in build_pax_demand_tasks(date_str):
+            for task in build_pax_demand_tasks(date_str, use_sim_overlay=use_sim_overlay):
                 start = int(task.get('start_mins', 0) or 0)
                 end = int(task.get('end_mins', start + PAX_DEMAND_SLOT_MINS) or start)
                 demand = float(task.get('staff_needed', 0) or 0)
@@ -3838,7 +3954,7 @@ def _generate_day_tasks(processed_flights: list, rules: list, stands_map: dict,
 # Main optimiser
 # ---------------------------------------------------------------------------
 
-def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_mins=None, prefer_early=False, custom_constraints=None, staff_shift_overrides=None):
+def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_mins=None, prefer_early=False, custom_constraints=None, staff_shift_overrides=None, use_sim_overlay=False):
     """Run the greedy staff-assignment optimiser for a single day.
 
     Returns a rich dict with flights, tasks, staff, alerts and KPIs.
@@ -3880,7 +3996,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
     delay_map = {}
     rules = []
     stands_map = {}
-    on_duty, absent_staff, _cf = get_staff_for_date(date_str, custom_constraints)
+    on_duty, absent_staff, _cf = get_staff_for_date(date_str, custom_constraints, use_sim_overlay=use_sim_overlay)
     print(f"[DEBUG] On-duty: {len(on_duty)}, Absent: {len(absent_staff)}")
     if staff_shift_overrides:
         for s in on_duty:
@@ -4144,7 +4260,7 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         })
         all_tasks.append(fd)
 
-    pax_tasks = build_pax_demand_tasks(iso_date_key, current_time_mins)
+    pax_tasks = build_pax_demand_tasks(iso_date_key, current_time_mins, use_sim_overlay=use_sim_overlay)
     if pax_tasks:
         all_tasks = pax_tasks
 
@@ -4814,6 +4930,10 @@ def optimize_day(date_str, overrides=None, manual_assigns=None, current_time_min
         'absent_staff':  absent_staff,
         'alerts':        alerts,
         'overrides':     overrides,
+        'pax_profile': {
+            'simulation_overlay_active': bool(use_sim_overlay),
+            'source_file': 'simulated_intraday_PAX.xlsx overlay' if use_sim_overlay else 'short term PAX.xlsx',
+        },
     }
 
     # Include PAX coverage skills derived from the PAX Config workbook so
@@ -5304,7 +5424,8 @@ def intraday_get():
     result = optimize_day(today_str, _intraday_overrides, man,
                           current_time_mins=None,
                           prefer_early=True,
-                          custom_constraints=_intraday_custom_constraints)
+                          custom_constraints=_intraday_custom_constraints,
+                          use_sim_overlay=INTRADAY_PAX_SIM_OVERLAY_ACTIVE)
     if 'error' in result:
         return jsonify(result), 404
     # Mark past tasks for UI display after full optimization (does not affect assignments).
@@ -5339,7 +5460,8 @@ def intraday_delay():
     result = optimize_day(today_str, _intraday_overrides, man,
                           current_time_mins=None,
                           prefer_early=True,
-                          custom_constraints=_intraday_custom_constraints)
+                          custom_constraints=_intraday_custom_constraints,
+                          use_sim_overlay=INTRADAY_PAX_SIM_OVERLAY_ACTIVE)
     if 'error' in result:
         return jsonify(result), 404
     current_time_mins = now.hour * 60 + now.minute
@@ -5358,6 +5480,10 @@ def intraday_delay():
 @app.route('/api/intraday/reset', methods=['POST'])
 def intraday_reset():
     """Clear live intraday overrides and reload today's schedule."""
+    global INTRADAY_PAX_SIM_OVERLAY_ACTIVE, PAX_PROFILE_CACHE
+    INTRADAY_PAX_SIM_OVERLAY_ACTIVE = False
+    if isinstance(PAX_PROFILE_CACHE, dict):
+        PAX_PROFILE_CACHE.pop('sim_overlay', None)
     _intraday_overrides.clear()
     today_str = datetime.now().strftime('%Y-%m-%d')
     if today_str in _manual_assigns:
@@ -5406,7 +5532,8 @@ def intraday_assign():
     result = optimize_day(today_str, _intraday_overrides, _manual_assigns.get(today_str, {}),
                           current_time_mins=None,
                           prefer_early=True,
-                          custom_constraints=_intraday_custom_constraints)
+                          custom_constraints=_intraday_custom_constraints,
+                          use_sim_overlay=INTRADAY_PAX_SIM_OVERLAY_ACTIVE)
     if 'error' in result:
         return jsonify(result), 404
     for task in result.get('tasks', []):
@@ -5451,7 +5578,8 @@ def intraday_assign_block():
         # Run optimizer once as a fallback, snapshot, and cache.
         _tmp = optimize_day(today_str, _intraday_overrides, {},
                             current_time_mins=None, prefer_early=True,
-                            custom_constraints=_intraday_custom_constraints)
+                            custom_constraints=_intraday_custom_constraints,
+                            use_sim_overlay=INTRADAY_PAX_SIM_OVERLAY_ACTIVE)
         for _t in _tmp.get('tasks', []):
             if _t.get('end_mins', 0) <= cur_mins:
                 _t['is_past'] = True
@@ -5691,7 +5819,8 @@ def intraday_optimise():
         result = optimize_day(today_str, _intraday_overrides, man,
                               current_time_mins=None,
                               prefer_early=True,
-                              custom_constraints=_intraday_custom_constraints)
+                              custom_constraints=_intraday_custom_constraints,
+                              use_sim_overlay=INTRADAY_PAX_SIM_OVERLAY_ACTIVE)
         if 'error' in result:
             return jsonify(result), 404
         for task in result.get('tasks', []):
@@ -6760,6 +6889,147 @@ def roster_optimised():
 
 
 # ===========================================================================
+# SIMULATION DATA EXPORT — save to Excel file
+# ===========================================================================
+
+def _save_simulation_to_excel(plan, sim_result, date_str):
+    """Save simulated staffing gaps as PAX demand in Excel format.
+    
+    Creates an Excel file at data/simulated_intraday_PAX.xlsx with:
+    - Timestamp column (15-minute intervals for the date)
+    - Touchpoint columns: checkin, security, cbp, lounge, boarding, immigration, baggage
+    - Values representing average staffing gaps from simulation runs
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        logger.warning("openpyxl not available; simulation results not saved to Excel")
+        return False
+    
+    # Parse the date
+    parsed_dt = parse_date(date_str)
+    if not parsed_dt:
+        logger.error(f"Could not parse date {date_str} for Excel export")
+        return False
+    
+    base_date = parsed_dt.date()
+    
+    # Touchpoints (matching short term PAX.xlsx format)
+    TOUCHPOINTS = ['checkin', 'security', 'cbp', 'lounge', 'boarding', 'immigration', 'baggage']
+    
+    # Map skills to touchpoints
+    skill_to_touchpoint = {
+        'Check-in': 'checkin',
+        'Security': 'security',
+        'CBP': 'cbp',
+        'Lounge': 'lounge',
+        'Boarding': 'boarding',
+        'Immigration': 'immigration',
+        'Baggage': 'baggage',
+    }
+    
+    # Group tasks by 15-minute interval and touchpoint
+    interval_data = {}  # {(start_mins): {touchpoint: gap_count}}
+    
+    # Use worst-case scenario to estimate gaps per interval/touchpoint
+    worst_case = sim_result.get('worst_case', {})
+    failing_tasks = worst_case.get('failing_tasks', [])
+    
+    # If no detailed failing tasks, estimate from bottlenecks
+    if not failing_tasks:
+        bottlenecks = sim_result.get('bottlenecks', {})
+        top_failing_tasks = bottlenecks.get('top_failing_tasks', [])
+        failing_tasks = top_failing_tasks
+    
+    # Aggregate gaps by interval and touchpoint
+    for task_dict in failing_tasks:
+        task_start = task_dict.get('start_mins', 0)
+        task_end = task_dict.get('end_mins', 1440)
+        skill = task_dict.get('skill', '').strip()
+        gap = task_dict.get('gap', task_dict.get('avg_gap', 0))
+        
+        # Map skill to touchpoint
+        touchpoint = skill_to_touchpoint.get(skill, skill.lower())
+        if not any(t == touchpoint for t in TOUCHPOINTS):
+            continue
+        
+        # Find 15-minute interval(s) this task spans
+        for interval_start in range(0, 1440, 15):
+            interval_end = min(interval_start + 15, 1440)
+            # Check if task overlaps this interval
+            if task_start < interval_end and task_end > interval_start:
+                if interval_start not in interval_data:
+                    interval_data[interval_start] = {}
+                if touchpoint not in interval_data[interval_start]:
+                    interval_data[interval_start][touchpoint] = 0
+                interval_data[interval_start][touchpoint] += gap
+    
+    # If no interval data from failing tasks, estimate from summary statistics
+    if not interval_data:
+        # Use average gap across the day distributed evenly
+        summary = sim_result.get('summary', {})
+        avg_gap_mins = summary.get('gap_staff_mins', {}).get('mean', 0)
+        avg_unserved = summary.get('unserved_tasks', {}).get('mean', 0)
+        
+        if avg_unserved > 0:
+            gap_per_interval = avg_unserved / 96  # 1440 mins / 15 = 96 intervals
+            for interval_start in range(0, 1440, 15):
+                interval_data[interval_start] = {
+                    tp: gap_per_interval / len(TOUCHPOINTS) for tp in TOUCHPOINTS
+                }
+    
+    # Create Excel workbook
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Simulated PAX"
+    
+    # Write headers
+    headers = ['Timestamp'] + [f'{tp}_arrivals' for tp in TOUCHPOINTS]
+    ws.append(headers)
+    
+    # Format header row
+    header_fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center')
+    
+    # Write data rows
+    for interval_start in range(0, 1440, 15):
+        hours = interval_start // 60
+        minutes = interval_start % 60
+        ts = datetime.combine(base_date, datetime.min.time()).replace(hour=hours, minute=minutes)
+        
+        row_data = [ts]
+        for touchpoint in TOUCHPOINTS:
+            gap = interval_data.get(interval_start, {}).get(touchpoint, 0)
+            row_data.append(max(0, gap))  # Ensure non-negative
+        
+        ws.append(row_data)
+    
+    # Format timestamp column as datetime
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=1):
+        row[0].number_format = 'YYYY-MM-DD HH:MM:SS'
+    
+    # Adjust column widths
+    ws.column_dimensions['A'].width = 20
+    for col in ['B', 'C', 'D', 'E', 'F', 'G', 'H']:
+        ws.column_dimensions[col].width = 14
+    
+    # Save file
+    output_path = os.path.join(BASE_DIR, 'data', 'simulated_intraday_PAX.xlsx')
+    try:
+        wb.save(output_path)
+        logger.info(f"Simulation results saved to {output_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save simulation Excel file: {e}")
+        return False
+
+
+# ===========================================================================
 # MONTE CARLO SIMULATION ENDPOINT  (/api/simulation/run)
 # ===========================================================================
 
@@ -6900,6 +7170,12 @@ def simulation_run():
     sim_result["date_label"]   = plan.get("date_label", date_str)
     sim_result["plan_kpis"]    = plan.get("kpis", {})
     sim_result["sim_available"] = True
+
+    # ── Save simulation results to Excel file ─────────────────────────────────
+    excel_saved = _save_simulation_to_excel(plan, sim_result, date_str)
+    sim_result["excel_file_saved"] = excel_saved
+    if excel_saved:
+        sim_result["excel_filename"] = "simulated_intraday_PAX.xlsx"
 
     return jsonify(sim_result)
 
@@ -7043,10 +7319,11 @@ def save_staff_skills_api():
 @app.route('/api/config/reload', methods=['POST'])
 def config_reload_api():
     """Clear all server-side data caches so every view reloads fresh data."""
-    global PAX_CONFIG_CACHE, PAX_PROFILE_CACHE, _config_rules
+    global PAX_CONFIG_CACHE, PAX_PROFILE_CACHE, INTRADAY_PAX_SIM_OVERLAY_ACTIVE, _config_rules
     global _demand, _staff_req, _skill_req, _staff_avail, _skill_avail
     PAX_CONFIG_CACHE = None
-    PAX_PROFILE_CACHE = None
+    PAX_PROFILE_CACHE = {}
+    INTRADAY_PAX_SIM_OVERLAY_ACTIVE = False
     _config_rules = None
     _demand = None
     _staff_req = None
