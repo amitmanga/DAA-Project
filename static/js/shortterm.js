@@ -2707,6 +2707,33 @@ function renderSTStaffAllocation(container) {
         <div class="rl-kpi-lbl" style="margin-top:4px;">Legend</div>
       </div>
     </div>
+    <div class="st-shift-move-toolbar">
+      <div class="st-shift-move-copy">
+        <div class="st-shift-move-title">Shift Move</div>
+        <div class="st-shift-move-hint">Move a staff member to a better shift window, then re-optimise this day.</div>
+      </div>
+      <div class="st-shift-move-controls">
+        <select id="st-shift-move-staff">
+          <option value="">Select staff member</option>
+          ${allStaff.map(s => {
+            const sid = String(s.id||'');
+            const nm  = s.name || sid;
+            const sh  = s.shift_label || s.shift || '';
+            return `<option value="${_escAttr(sid)}">${_escAttr(nm)} (${_escAttr(sh)})</option>`;
+          }).join('')}
+        </select>
+        <select id="st-shift-move-preset">
+          <option value="">Select new shift</option>
+          <option value="00:00|12:00">Early 00:00-12:00</option>
+          <option value="06:00|18:00">Mid 06:00-18:00</option>
+          <option value="12:00|00:00">Late 12:00-00:00</option>
+          <option value="16:00|04:00">Evening 16:00-04:00</option>
+          <option value="22:00|10:00">Night 22:00-10:00</option>
+        </select>
+        <button id="st-shift-move-btn" type="button">Move Shift</button>
+      </div>
+      <div id="st-shift-move-msg" class="st-shift-move-msg"></div>
+    </div>
     <div class="rl-main">
       <div class="rl-left-pane">
         <div class="rl-matrix-wrap" id="st-rl-matrix-wrap">
@@ -2732,34 +2759,6 @@ function renderSTStaffAllocation(container) {
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--muted);text-align:center;gap:8px;">
             <div style="font-size:2rem;opacity:0.3;">←</div>
             <div style="font-size:0.85rem;">Select a cell in the heatmap to manage staff for that block</div>
-          </div>
-        </div>
-        <!-- Shift Move panel -->
-        <div style="flex-shrink:0;border-top:1px solid var(--border);padding:14px 16px;background:var(--surface-2,#141414);">
-          <div style="font-size:0.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">Shift Move</div>
-          <div style="display:flex;flex-direction:column;gap:8px;">
-            <select id="st-shift-move-staff" style="width:100%;padding:6px 8px;background:var(--surface-3,#1e1e1e);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:0.78rem;">
-              <option value="">— Select staff member —</option>
-              ${allStaff.map(s => {
-                const sid = String(s.id||'');
-                const nm  = s.name || sid;
-                const sh  = s.shift_label || s.shift || '';
-                return `<option value="${_escAttr(sid)}">${_escAttr(nm)} (${_escAttr(sh)})</option>`;
-              }).join('')}
-            </select>
-            <select id="st-shift-move-preset" style="width:100%;padding:6px 8px;background:var(--surface-3,#1e1e1e);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:0.78rem;">
-              <option value="">— Select new shift —</option>
-              <option value="00:00|12:00">Early &nbsp; 00:00 – 12:00</option>
-              <option value="06:00|18:00">Mid &nbsp;&nbsp;&nbsp; 06:00 – 18:00</option>
-              <option value="12:00|00:00">Late &nbsp;&nbsp; 12:00 – 00:00</option>
-              <option value="16:00|04:00">Evening &nbsp;16:00 – 04:00</option>
-              <option value="22:00|10:00">Night &nbsp; 22:00 – 10:00</option>
-            </select>
-            <button id="st-shift-move-btn"
-              style="padding:6px 14px;background:var(--info);color:#fff;border:none;border-radius:6px;font-size:0.78rem;font-weight:600;cursor:pointer;">
-              Move Shift
-            </button>
-            <div id="st-shift-move-msg" style="font-size:0.75rem;min-height:18px;"></div>
           </div>
         </div>
         <!-- Move log -->
