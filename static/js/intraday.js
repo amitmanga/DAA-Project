@@ -224,7 +224,8 @@ function renderGateTimelineNowLine() {
 }
 
 // ── Boot ────────────────────────────────────────────────────────
-async function initIntraday() {
+async function initIntraday(options = {}) {
+  if (options.activeTab) ID_ACTIVE_TAB = options.activeTab;
   document.getElementById('id-content').innerHTML =
     '<div class="loading-spinner"><div class="spinner"></div><span>Loading today\'s operations…</span></div>';
   await loadIntradayData();
@@ -1371,6 +1372,8 @@ const _RL_HOUR_BLOCKS = Array.from({ length: 24 }, (_, h) => ({
   start: h * 60,
   end: (h + 1) * 60,
 }));
+let _simPaxSkillKey = '__ALL__';
+let _simPaxTerminal = 'ALL';
 
 
 function renderIDGateTimeline() {
@@ -2227,7 +2230,6 @@ async function renderIDOptimization(container) {
 
   /* ── Simulation Impact Dashboard ────────────────────────────────── */
   const _simCharts = {};
-  let _simPaxSkillKey = null;
 
   function _destroySimCharts() {
     Object.keys(_simCharts).forEach(k => {
@@ -2361,34 +2363,103 @@ async function renderIDOptimization(container) {
     return `${row.skill || ''}||${row.terminal || ''}||${row.column || ''}`;
   }
 
-  function _buildPaxSkillTimelineCard(cmp) {
+  function _buildImpactTimelineCard(cmp) {
     const rows = cmp?.pax_timeline || [];
     if (!rows.length) return '';
 
-    const best = rows.slice().sort((a, b) =>
-      Math.abs(Number(b.total_delta || 0)) - Math.abs(Number(a.total_delta || 0))
-    )[0];
-    const activeKey = _simPaxSkillKey && rows.some(r => _paxRowKey(r) === _simPaxSkillKey)
-      ? _simPaxSkillKey
-      : _paxRowKey(best);
-    _simPaxSkillKey = activeKey;
+    const terminals = ['ALL', ...new Set(rows.map(row => row.terminal).filter(Boolean).sort())];
+    if (!terminals.includes(_simPaxTerminal)) _simPaxTerminal = 'ALL';
+    const terminalRows = _simPaxTerminal === 'ALL' ? rows : rows.filter(row => row.terminal === _simPaxTerminal);
+    const skillNames = [...new Set(terminalRows.map(row => row.skill).filter(Boolean))].sort();
+    if (_simPaxSkillKey !== '__ALL__' && !skillNames.includes(_simPaxSkillKey)) _simPaxSkillKey = '__ALL__';
 
-    const buttons = rows.map(row => {
-      const key = _paxRowKey(row);
-      const label = `${row.skill || 'PAX'} ${row.terminal || ''}`.trim();
-      return `
-        <button class="sim-pax-skill-btn ${key === activeKey ? 'active' : ''}" type="button" data-pax-key="${_escAttr(key)}">
-          <span>${_escAttr(label)}</span>
-          <strong>${_escAttr(_fmtDelta(row.total_delta || 0))}</strong>
-        </button>`;
-    }).join('');
+    const terminalButtons = terminals.map(term => `
+      <button class="sim-pax-terminal-btn ${term === _simPaxTerminal ? 'active' : ''}" type="button" data-terminal-filter="${_escAttr(term)}">
+        ${_escAttr(term === 'ALL' ? 'All Terminals' : term)}
+      </button>`).join('');
+
+    const allDelta = terminalRows.reduce((sum, row) => sum + Number(row.total_delta || 0), 0);
+    const buttons = [
+      `<button class="sim-pax-skill-btn ${_simPaxSkillKey === '__ALL__' ? 'active' : ''}" type="button" data-skill-filter="__ALL__">
+        <span>All Skills</span>
+        <strong>${_escAttr(_fmtDelta(allDelta))} pax</strong>
+      </button>`,
+      ...skillNames.map(skill => {
+        const skillRows = terminalRows.filter(row => row.skill === skill);
+        const delta = skillRows.reduce((sum, row) => sum + Number(row.total_delta || 0), 0);
+        const label = `${skill}${_simPaxTerminal === 'ALL' ? '' : ' ' + _simPaxTerminal}`;
+        return `
+          <button class="sim-pax-skill-btn ${skill === _simPaxSkillKey ? 'active' : ''}" type="button" data-skill-filter="${_escAttr(skill)}">
+            <span>${_escAttr(label)}</span>
+            <strong>${_escAttr(_fmtDelta(delta))} pax</strong>
+          </button>`;
+      }),
+    ].join('');
 
     return `
       <div class="sim-dash-pax-lines">
-        <div class="sim-chart-title">Passenger Flow by Skill - 15 Min Before vs After</div>
+        <div class="sim-chart-title">Passenger Impact vs FTE Required - 15 Min Full Day</div>
+        <div class="sim-pax-filter-row">${terminalButtons}</div>
         <div class="sim-pax-skill-strip">${buttons}</div>
-        <div class="sim-chart-canvas-wrap"><canvas id="sim-pax-skill-chart"></canvas></div>
+        <div class="sim-chart-canvas-wrap"><canvas id="sim-impact-dual-axis-chart"></canvas></div>
       </div>`;
+  }
+
+  function _buildImpactChartPoints(rows, mx) {
+    const selectedRows = rows.filter(row => {
+      const terminalOk = _simPaxTerminal === 'ALL' || row.terminal === _simPaxTerminal;
+      const skillOk = _simPaxSkillKey === '__ALL__' || row.skill === _simPaxSkillKey;
+      return terminalOk && skillOk;
+    });
+    const slots = Array.from({ length: 96 }, (_, idx) => ({
+      id: `q${String(idx).padStart(2, '0')}`,
+      time: `${String(Math.floor((idx * 15) / 60)).padStart(2, '0')}:${String((idx * 15) % 60).padStart(2, '0')}`,
+      start: idx * 15,
+    }));
+    const bySlot = {};
+    slots.forEach(slot => {
+      bySlot[slot.id] = {
+        time: slot.time,
+        start_mins: slot.start,
+        before: 0,
+        after: 0,
+        delta: 0,
+        fte_required: 0,
+        fte_assigned: 0,
+      };
+    });
+
+    selectedRows.forEach(row => {
+      (row.points || []).forEach(point => {
+        const idx = Math.floor(Number(point.start_mins || 0) / 15);
+        const bucket = bySlot[`q${String(idx).padStart(2, '0')}`];
+        if (!bucket) return;
+        bucket.before += Number(point.before || 0);
+        bucket.after += Number(point.after || 0);
+        bucket.delta += Number(point.delta || 0);
+      });
+    });
+    const allowedSkills = new Set(selectedRows.map(row => row.skill).filter(Boolean));
+
+    Object.entries(mx || {}).forEach(([rowKey, byBlock]) => {
+      const [skill, terminal] = rowKey.split('||');
+      const terminalOk = _simPaxTerminal === 'ALL' || terminal === _simPaxTerminal;
+      const skillOk = _simPaxSkillKey === '__ALL__' ? allowedSkills.has(skill) : skill === _simPaxSkillKey;
+      if (!terminalOk || !skillOk) return;
+      Object.entries(byBlock || {}).forEach(([blockId, cell]) => {
+        const block = _RL_HOUR_BLOCKS.find(item => item.id === blockId);
+        if (!block) return;
+        for (let minute = block.start; minute < block.end; minute += 15) {
+          const idx = Math.floor(minute / 15);
+          const bucket = bySlot[`q${String(idx).padStart(2, '0')}`];
+          if (!bucket) continue;
+          bucket.fte_required += Number(cell.req || 0);
+          bucket.fte_assigned += Number(cell.asgn || 0);
+        }
+      });
+    });
+
+    return slots.map(slot => bySlot[slot.id]);
   }
 
   function renderOverlayComparisonPanel() {
@@ -2411,14 +2482,13 @@ async function renderIDOptimization(container) {
         ${_simKpi('Coverage %',    covBefore,        covAfter,        covDelta.toFixed(1),  false, covBefore, covAfter)}
       </div>`;
 
-    const timelineCard = `
+    const timelineCardUnused = `
       <div class="sim-dash-timeline">
         <div class="sim-chart-title">FTE Required Over Time — Before vs After</div>
         <div class="sim-chart-canvas-wrap"><canvas id="sim-fte-timeline-chart"></canvas></div>
       </div>`;
 
-    const heatmap = _buildHeatmap(skills);
-    const paxLines = _buildPaxSkillTimelineCard(cmp);
+    const impactTimeline = _buildImpactTimelineCard(cmp);
 
     return `
       <div class="sim-dash">
@@ -2434,10 +2504,8 @@ async function renderIDOptimization(container) {
         </div>
         ${kpis}
         <div class="sim-dash-bottom-row">
-          ${timelineCard}
-          ${heatmap}
+          ${impactTimeline}
         </div>
-        ${paxLines}
       </div>`;
   }
 
@@ -2999,36 +3067,51 @@ async function renderIDOptimization(container) {
     }
 
     const paxRows = cmp.pax_timeline || [];
-    const paxCtx = document.getElementById('sim-pax-skill-chart');
-    const bestPax = paxRows.slice().sort((a, b) =>
-      Math.abs(Number(b.total_delta || 0)) - Math.abs(Number(a.total_delta || 0))
-    )[0];
-    if ((!_simPaxSkillKey || !paxRows.some(r => _paxRowKey(r) === _simPaxSkillKey)) && bestPax) {
-      _simPaxSkillKey = _paxRowKey(bestPax);
-    }
-
+    const paxCtx = document.getElementById('sim-impact-dual-axis-chart');
     document.querySelectorAll('.sim-pax-skill-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.paxKey === _simPaxSkillKey);
+      btn.classList.toggle('active', btn.dataset.skillFilter === _simPaxSkillKey);
       if (!btn.dataset.bound) {
         btn.dataset.bound = '1';
         btn.addEventListener('click', () => {
-          _simPaxSkillKey = btn.dataset.paxKey || _simPaxSkillKey;
-          _initSimDashCharts();
+          _simPaxSkillKey = btn.dataset.skillFilter || '__ALL__';
+          renderIDOptimization(container);
+        });
+      }
+    });
+    document.querySelectorAll('.sim-pax-terminal-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.terminalFilter === _simPaxTerminal);
+      if (!btn.dataset.bound) {
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          _simPaxTerminal = btn.dataset.terminalFilter || 'ALL';
+          _simPaxSkillKey = '__ALL__';
+          renderIDOptimization(container);
         });
       }
     });
 
-    const paxRow = paxRows.find(r => _paxRowKey(r) === _simPaxSkillKey);
-    const paxPoints = paxRow?.points || [];
+    const paxPoints = _buildImpactChartPoints(paxRows, matrix);
     if (paxCtx && paxPoints.length) {
-      _simCharts.pax = new Chart(paxCtx, {
-        type: 'line',
+      _simCharts.impact = new Chart(paxCtx, {
+        type: 'bar',
         data: {
           labels: paxPoints.map(p => p.time),
           datasets: [
             {
+              type: 'bar',
+              label: 'Passenger Delta',
+              data: paxPoints.map(p => p.delta || 0),
+              yAxisID: 'y',
+              backgroundColor: paxPoints.map(p => Number(p.delta || 0) >= 0 ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)'),
+              borderColor: paxPoints.map(p => Number(p.delta || 0) >= 0 ? 'rgba(239,68,68,0.55)' : 'rgba(16,185,129,0.55)'),
+              borderWidth: 1,
+              order: 3,
+            },
+            {
+              type: 'line',
               label: 'Passengers (Before)',
               data: paxPoints.map(p => p.before || 0),
+              yAxisID: 'y',
               borderColor: 'rgba(148,163,184,0.72)',
               backgroundColor: 'rgba(148,163,184,0.08)',
               borderDash: [5, 4],
@@ -3036,21 +3119,65 @@ async function renderIDOptimization(container) {
               pointRadius: 2,
               tension: 0.32,
               fill: false,
+              order: 2,
             },
             {
-              label: 'Passengers (After)',
+              type: 'line',
+              label: 'Passengers (Short Term + Overlay)',
               data: paxPoints.map(p => p.after || 0),
+              yAxisID: 'y',
               borderColor: '#38bdf8',
               backgroundColor: 'rgba(56,189,248,0.12)',
               borderWidth: 2.5,
               pointRadius: 2,
               tension: 0.32,
               fill: false,
+              order: 1,
+            },
+            {
+              type: 'line',
+              label: 'FTE Required',
+              data: paxPoints.map(p => p.fte_required || 0),
+              yAxisID: 'yFte',
+              borderColor: 'rgba(245,158,11,0.68)',
+              backgroundColor: 'rgba(245,158,11,0.08)',
+              borderWidth: 2,
+              pointRadius: 2,
+              stepped: true,
+              fill: false,
+              order: 0,
+            },
+            {
+              type: 'line',
+              label: 'FTE Assigned',
+              data: paxPoints.map(p => p.fte_assigned || 0),
+              yAxisID: 'yFte',
+              borderColor: '#10b981',
+              backgroundColor: 'rgba(16,185,129,0.1)',
+              borderWidth: 2.5,
+              pointRadius: 2,
+              stepped: true,
+              fill: false,
+              order: 0,
             },
           ],
         },
         options: {
           ...CHART_DEFAULTS,
+          scales: {
+            x: CHART_DEFAULTS.scales.x,
+            y: {
+              ...CHART_DEFAULTS.scales.y,
+              title: { display: true, text: 'Passengers / 15 min', color: '#94a3b8', font: { size: 10 } },
+            },
+            yFte: {
+              position: 'right',
+              beginAtZero: true,
+              ticks: { color: '#fdba74', font: { size: 9 }, precision: 0 },
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: 'FTE', color: '#fdba74', font: { size: 10 } },
+            },
+          },
           plugins: {
             ...CHART_DEFAULTS.plugins,
             tooltip: {
@@ -3060,7 +3187,10 @@ async function renderIDOptimization(container) {
                 afterBody(items) {
                   const idx = items?.[0]?.dataIndex ?? 0;
                   const point = paxPoints[idx] || {};
-                  return `Delta: ${_fmtDelta(point.delta || 0)} pax`;
+                  return [
+                    `Passenger delta: ${_fmtDelta(point.delta || 0)} pax`,
+                    `FTE: ${_fmtInt(point.fte_assigned || 0)} assigned / ${_fmtInt(point.fte_required || 0)} required`,
+                  ];
                 },
               },
             },
@@ -3350,6 +3480,17 @@ function renderIDHourlyCoverage() {
   if (table) table.innerHTML = buildIDCoverageTableHTML(ID_DATA?.tasks || []);
 }
 
+async function openIntradayStaffReallocation() {
+  ID_ACTIVE_TAB = 'opt';
+  stopGateTimelineAutoRefresh();
+  if (typeof switchView === 'function') {
+    switchView('intraday');
+    return;
+  }
+  await initIntraday({ activeTab: 'opt' });
+}
+
 window.initIntraday = initIntraday;
+window.openIntradayStaffReallocation = openIntradayStaffReallocation;
 
 

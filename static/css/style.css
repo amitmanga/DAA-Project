@@ -1088,6 +1088,9 @@ body.is-home-view .header-meta {
   min-height: 40px;
   padding: 8px 12px;
 }
+.idpax-sim-controls select[multiple] {
+  min-height: 150px;
+}
 .idpax-sim-actions {
   display: flex;
   gap: 8px;
@@ -4635,13 +4638,10 @@ canvas { display: block; }
   color: var(--text);
 }
 
-/* FTE timeline + heatmap side-by-side */
+/* Overlay impact chart */
 .sim-dash-bottom-row {
-  display: grid;
-  grid-template-columns: minmax(420px, 1fr) auto;
-  gap: 12px;
+  display: block;
   margin-bottom: 14px;
-  align-items: stretch;
 }
 .sim-dash-timeline {
   background: var(--surface);
@@ -4663,17 +4663,40 @@ canvas { display: block; }
   background: var(--surface);
   border: 1px solid rgba(255,255,255,0.07);
   border-radius: 10px;
-  margin-top: 12px;
+  margin-top: 0;
+  min-width: 0;
   padding: 12px 14px;
 }
 .sim-dash-pax-lines .sim-chart-canvas-wrap {
-  height: 230px;
+  height: 380px;
 }
 .sim-pax-skill-strip {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 10px;
+}
+.sim-pax-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.sim-pax-terminal-btn {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.64rem;
+  font-weight: 800;
+  min-height: 26px;
+  padding: 0 9px;
+}
+.sim-pax-terminal-btn.active {
+  background: rgba(16,185,129,0.14);
+  border-color: rgba(16,185,129,0.45);
+  color: #a7f3d0;
 }
 .sim-pax-skill-btn {
   align-items: center;

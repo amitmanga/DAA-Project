@@ -100,10 +100,10 @@ function idpaxSetText(id, value) {
 }
 
 function idpaxFlightOptions(payload) {
-  const options = (payload.flights || []).map(f => {
+  const options = (payload.flights || []).map((f, idx) => {
     const time = f.etd || f.eta || '--';
     const label = `${f.flight_no} - ${f.type} - ${time} - ${f.terminal || ''}`;
-    return `<option value="${idpaxEsc(f.flight_no)}">${idpaxEsc(label)}</option>`;
+    return `<option value="${idpaxEsc(f.flight_no)}" ${idx === 0 ? 'selected' : ''}>${idpaxEsc(label)}</option>`;
   }).join('');
   return options || '<option value="">Loading flights...</option>';
 }
@@ -115,8 +115,8 @@ function idpaxRenderScenarioForm(payload) {
   const forms = {
     flight_delay: `
       <label>
-        <span>Select Flight</span>
-        <select id="idpax-flight-select">${idpaxFlightOptions(payload)}</select>
+        <span>Select Flight(s)</span>
+        <select id="idpax-flight-select" multiple size="6">${idpaxFlightOptions(payload)}</select>
       </label>
       <label>
         <span>Delay (Minutes)</span>
@@ -168,7 +168,11 @@ function idpaxRenderScenarioForm(payload) {
 function idpaxCollectParams() {
   const val = id => document.getElementById(id)?.value || '';
   if (IDPAX_CURRENT_SCENARIO === 'flight_delay') {
-    return { flight_no: val('idpax-flight-select'), delay_min: val('idpax-delay-mins') };
+    const flightSelect = document.getElementById('idpax-flight-select');
+    const flightNos = flightSelect
+      ? Array.from(flightSelect.selectedOptions).map(opt => opt.value).filter(Boolean)
+      : [];
+    return { flight_no: flightNos[0] || val('idpax-flight-select'), flight_nos: flightNos, delay_min: val('idpax-delay-mins') };
   }
   if (IDPAX_CURRENT_SCENARIO === 'ground_stop') {
     return { start: val('idpax-gs-start'), duration_min: val('idpax-gs-duration') };
@@ -431,10 +435,12 @@ async function idpaxLoadResourcePlanning() {
     const payload = await res.json();
     if (!res.ok || payload.error) throw new Error(payload.error || `Load failed: ${res.status}`);
 
-    if (typeof switchView === 'function') {
+    if (typeof openIntradayStaffReallocation === 'function') {
+      await openIntradayStaffReallocation();
+    } else if (typeof switchView === 'function') {
       switchView('intraday');
     } else if (typeof initIntraday === 'function') {
-      initIntraday();
+      await initIntraday({ activeTab: 'opt' });
     }
   } catch (err) {
     console.error(err);

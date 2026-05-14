@@ -85,11 +85,14 @@ def _load_flights(base_dir):
             flight_no = str(row.get('Flight_No') or '').strip()
             if not flight_no:
                 continue
+            eta = str(row.get('ETA') or '').strip()
+            etd = str(row.get('ETD') or '').strip() or eta
             flights.append({
                 'flight_no': flight_no,
-                'type': str(row.get('Type') or '').strip(),
-                'eta': str(row.get('ETA') or '').strip(),
-                'etd': str(row.get('ETD') or '').strip(),
+                'type': 'DEP',
+                'source_type': str(row.get('Type') or '').strip(),
+                'eta': eta,
+                'etd': etd,
                 'aircraft_type': str(row.get('Aircraft_Type') or row.get('Aircraft Type') or row.get('Aircraft') or '').strip(),
                 'icao_cat': str(row.get('ICAO_Cat') or row.get('ICAO Cat') or row.get('Category') or '').strip(),
                 'airline': str(row.get('Airline') or '').strip(),
@@ -260,9 +263,18 @@ def _save_flight_delay_overlay_simulation(base_dir, payload, headers, column_tou
     if int(float(simulation_meta.get('delay_min') or 0)) != 60:
         return None
 
-    affected_terminal = simulation_meta.get('affected_terminal') or simulation_meta.get('selected_terminal')
-    scheduled_departure = simulation_meta.get('scheduled_departure')
-    if affected_terminal not in ('T1', 'T2') or not scheduled_departure:
+    selected_flights = simulation_meta.get('selected_flights') or []
+    if not selected_flights:
+        selected_flights = [{
+            'flight_no': simulation_meta.get('selected_flight_no'),
+            'terminal': simulation_meta.get('affected_terminal') or simulation_meta.get('selected_terminal'),
+            'scheduled_departure': simulation_meta.get('scheduled_departure'),
+        }]
+    selected_flights = [
+        flight for flight in selected_flights
+        if flight.get('terminal') in ('T1', 'T2') and flight.get('scheduled_departure')
+    ]
+    if not selected_flights:
         return None
 
     overlay_rows = _load_flight_delay_overlay_rows(base_dir)
@@ -276,26 +288,28 @@ def _save_flight_delay_overlay_simulation(base_dir, payload, headers, column_tou
         return {'saved': False, 'error': 'openpyxl is not installed'}
 
     base_date = _simulation_export_date(base_dir)
-    departure_mins = _mins(scheduled_departure)
 
     overlay_by_minute = {}
     overlay_windows = {}
-    for row in overlay_rows:
-        exact_minute = departure_mins + int(row['offset_mins'])
-        if exact_minute < 0 or exact_minute >= 1440:
-            continue
-        interval_start = (exact_minute // 15) * 15
-        minute_values = overlay_by_minute.setdefault(interval_start, {})
-
-        for touchpoint, delta in row['overlay'].items():
-            if abs(delta) < 1e-9:
+    for flight in selected_flights:
+        affected_terminal = flight.get('terminal')
+        departure_mins = _mins(flight.get('scheduled_departure'))
+        for row in overlay_rows:
+            exact_minute = departure_mins + int(row['offset_mins'])
+            if exact_minute < 0 or exact_minute >= 1440:
                 continue
-            col_name = _workbook_col_name(affected_terminal, touchpoint)
-            minute_values[col_name] = round(delta)
-            window = [interval_start, min(1440, interval_start + 15)]
-            overlay_windows.setdefault(col_name, [])
-            if window not in overlay_windows[col_name]:
-                overlay_windows[col_name].append(window)
+            interval_start = (exact_minute // 15) * 15
+            minute_values = overlay_by_minute.setdefault(interval_start, {})
+
+            for touchpoint, delta in row['overlay'].items():
+                if abs(delta) < 1e-9:
+                    continue
+                col_name = _workbook_col_name(affected_terminal, touchpoint)
+                minute_values[col_name] = round(minute_values.get(col_name, 0) + delta)
+                window = [interval_start, min(1440, interval_start + 15)]
+                overlay_windows.setdefault(col_name, [])
+                if window not in overlay_windows[col_name]:
+                    overlay_windows[col_name].append(window)
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -339,6 +353,7 @@ def _save_flight_delay_overlay_simulation(base_dir, payload, headers, column_tou
         'path': output_path,
         'source': FLIGHT_DELAY_EFFECT_FILE,
         'mode': 'flight_delay_overlay_60',
+        'flight_count': len(selected_flights),
     }
 
 
@@ -679,16 +694,35 @@ def simulate_intraday_pax(base_dir, scenario, params):
     if scenario == 'flight_delay':
         delay = int(float(params.get('delay_min') or 30))
         shift = max(0, delay)
-        flight_no = params.get('flight_no') or 'selected flight'
+        raw_flight_nos = params.get('flight_nos') or params.get('flight_no') or []
+        if isinstance(raw_flight_nos, str):
+            raw_flight_nos = [raw_flight_nos]
+        flight_nos = []
+        for raw in raw_flight_nos:
+            flight_id = str(raw or '').strip()
+            if flight_id and flight_id not in flight_nos:
+                flight_nos.append(flight_id)
+        flight_no = flight_nos[0] if flight_nos else 'selected flight'
 
         flights = _load_flights(base_dir)
-        selected = next((f for f in flights if f['flight_no'] == flight_no), None)
+        selected_flights = [f for f in flights if f['flight_no'] in flight_nos]
+        selected = selected_flights[0] if selected_flights else None
         if selected:
             selected_flight_meta = {
                 'selected_flight_no': selected.get('flight_no'),
                 'selected_terminal': _terminal_for_flight(selected),
                 'scheduled_departure': selected.get('etd'),
                 'scheduled_arrival': selected.get('eta'),
+                'selected_flights': [
+                    {
+                        'flight_no': flight.get('flight_no'),
+                        'terminal': _terminal_for_flight(flight),
+                        'scheduled_departure': flight.get('etd'),
+                        'scheduled_arrival': flight.get('eta'),
+                    }
+                    for flight in selected_flights
+                    if _terminal_for_flight(flight) and flight.get('etd')
+                ],
             }
 
         if selected and selected.get('etd'):
@@ -759,7 +793,7 @@ def simulate_intraday_pax(base_dir, scenario, params):
                 affected_windows[key] = [[0, 1440]]
 
         cascade = [
-            f"{flight_no} delayed by {delay} minutes; boarding and lounge demand shift later.",
+            f"{len(selected_flights) or 1} flight(s) delayed by {delay} minutes; overlays are combined by terminal and time slot.",
             "Gate pressure moves into the next departure wave.",
             "CBP demand is shifted where the selected flight requires preclearance.",
         ]

@@ -5165,8 +5165,8 @@ def _changed_time_rows_for_skill(skill, before_time, after_time):
     return rows
 
 
-def _build_pax_timeline(base_dir):
-    """Return 15-min before/after passenger series by PAX skill/touchpoint."""
+def _build_pax_timeline(base_dir, before_time=None, after_time=None):
+    """Return full-day 15-minute before/after passenger and FTE series by PAX skill."""
 
     def _sf(v):
         try:
@@ -5200,28 +5200,33 @@ def _build_pax_timeline(base_dir):
                 overlay_by_minute[ts.hour * 60 + ts.minute] = row
 
         grouped = {}
-        for col, windows in date_windows.items():
-            if not col or '_' not in col:
-                continue
+        pax_columns = [
+            f"{terminal}_{work.title() if work != 'cbp' else 'CBP'}"
+            for terminal in ('T1', 'T2')
+            for work in PAX_WORK_SKILL_MAP
+        ]
+        for col in pax_columns:
             terminal, _work_col = col.split('_', 1)
             skill = PAX_WORK_SKILL_MAP.get(_pax_work_from_col(col), _pax_work_from_col(col).title())
             key = (skill, terminal, col)
             points = []
-            minutes = sorted({
-                minute
-                for start, end in windows
-                for minute in range(max(0, int(start)), min(1440, int(end)), PAX_SLOT_MINS)
-            })
-            for minute in minutes:
+            for minute in range(0, 1440, PAX_SLOT_MINS):
                 base_val = _sf((base_by_minute.get(minute) or {}).get(col))
                 overlay_val = _sf((overlay_by_minute.get(minute) or {}).get(col))
                 after_val = max(0.0, base_val + overlay_val)
+                hour_start = (minute // PAX_DEMAND_SLOT_MINS) * PAX_DEMAND_SLOT_MINS
+                fte_key = (hour_start, terminal)
+                before_fte = (before_time or {}).get(skill, {}).get(fte_key, {}).get('required', 0)
+                after_fte = (after_time or {}).get(skill, {}).get(fte_key, {}).get('required', 0)
                 points.append({
                     'time': mins_to_time(minute),
                     'start_mins': minute,
                     'before': round(base_val),
                     'after': round(after_val),
                     'delta': round(after_val - base_val),
+                    'fte_before': int(before_fte or 0),
+                    'fte_after': int(after_fte or 0),
+                    'fte_delta': int(after_fte or 0) - int(before_fte or 0),
                 })
             if points:
                 grouped[key] = {
@@ -5232,6 +5237,7 @@ def _build_pax_timeline(base_dir):
                     'total_before': sum(p['before'] for p in points),
                     'total_after': sum(p['after'] for p in points),
                     'total_delta': sum(p['delta'] for p in points),
+                    'total_fte_delta': sum(p['fte_delta'] for p in points),
                 }
 
         rows.extend(grouped.values())
@@ -5293,7 +5299,7 @@ def _build_overlay_fte_comparison(before_result, after_result):
     rows.sort(key=lambda r: (abs(r['delta_required']) + abs(r['delta_assigned']) + abs(r['delta_gap']) + len(r['times'])), reverse=True)
 
     try:
-        pax_timeline = _build_pax_timeline(BASE_DIR)
+        pax_timeline = _build_pax_timeline(BASE_DIR, before_time, after_time)
     except Exception:
         pax_timeline = []
 
