@@ -255,6 +255,92 @@ def _load_flight_delay_overlay_rows(base_dir):
     return rows
 
 
+def _combined_flight_delay_overlay(base_dir, labels, selected_flights):
+    overlay_rows = _load_flight_delay_overlay_rows(base_dir)
+    if not overlay_rows:
+        raise ValueError(f'{FLIGHT_DELAY_EFFECT_FILE} has no readable overlay rows')
+
+    overlay_series = {'labels': labels}
+    overlay_table_series = {'labels': labels, '_sum_lounge': True}
+    simulated_windows = {}
+    affected_touchpoints = set()
+    affected_terminals = set()
+    label_minutes = [_mins(label) for label in (labels or [])]
+    label_index = {str(label): idx for idx, label in enumerate(labels or [])}
+    for touchpoint in TOUCHPOINTS:
+        overlay_series[touchpoint] = [0.0 for _ in labels]
+        overlay_table_series[touchpoint] = [0.0 for _ in labels]
+
+    for flight in selected_flights or []:
+        terminal = _terminal_for_flight(flight) or str(flight.get('terminal') or '').strip().upper()
+        departure = flight.get('etd') or flight.get('scheduled_departure')
+        if terminal not in ('T1', 'T2') or not departure:
+            continue
+
+        affected_terminals.add(terminal)
+        departure_mins = _mins(departure)
+        for row in overlay_rows:
+            exact_minute = departure_mins + int(row['offset_mins'])
+            if exact_minute < 0 or exact_minute >= 1440:
+                continue
+
+            interval_start = (exact_minute // 15) * 15
+            interval_end = min(1440, interval_start + 15)
+            slot_indices = [
+                idx for idx, minute in enumerate(label_minutes)
+                if interval_start <= minute < interval_end
+            ]
+            table_idx = label_index.get(_mins_to_hhmm(interval_start))
+            if table_idx is None and slot_indices:
+                table_idx = slot_indices[0]
+            if not slot_indices and table_idx is None:
+                continue
+
+            for touchpoint, delta in row['overlay'].items():
+                if abs(delta) < 1e-9:
+                    continue
+                if slot_indices:
+                    per_point_delta = delta / len(slot_indices)
+                    for idx in slot_indices:
+                        overlay_series[touchpoint][idx] += per_point_delta
+                if table_idx is not None:
+                    overlay_table_series[touchpoint][table_idx] += delta
+                affected_touchpoints.add(touchpoint)
+                window = [interval_start, interval_end]
+                simulated_windows.setdefault(touchpoint, [])
+                if window not in simulated_windows[touchpoint]:
+                    simulated_windows[touchpoint].append(window)
+
+    return {
+        'series': overlay_series,
+        'table_series': overlay_table_series,
+        'affected_touchpoints': sorted(affected_touchpoints),
+        'affected_terminals': sorted(affected_terminals),
+        'affected_windows': simulated_windows,
+    }
+
+
+def _add_overlay_to_series(baseline, overlay):
+    labels = baseline.get('labels') or overlay.get('labels') or []
+    out = {'labels': labels}
+    for touchpoint in TOUCHPOINTS:
+        base_vals = _numbers(baseline.get(touchpoint))
+        overlay_vals = _numbers(overlay.get(touchpoint))
+        size = max(len(base_vals), len(overlay_vals), len(labels))
+        out[touchpoint] = [
+            max(0.0, (base_vals[idx] if idx < len(base_vals) else 0.0) + (overlay_vals[idx] if idx < len(overlay_vals) else 0.0))
+            for idx in range(size)
+        ]
+    return out
+
+
+def _overlay_totals(overlay):
+    return {
+        touchpoint: round(sum(_numbers(overlay.get(touchpoint))))
+        for touchpoint in TOUCHPOINTS
+    }
+
+
 def _save_flight_delay_overlay_simulation(base_dir, payload, headers, column_touchpoints):
     """Write a 60-minute departure-delay workbook from flight_delay_effect.xlsx."""
     simulation_meta = payload.get('simulation') or {}
@@ -498,7 +584,7 @@ def _table_from_series(series):
         end = min(start + 15, len(labels))
         for key in TOUCHPOINTS:
             vals = _numbers(series.get(key))[start:end]
-            if key == 'lounge':
+            if key == 'lounge' and not series.get('_sum_lounge'):
                 row[key] = round(sum(vals) / len(vals)) if vals else 0
             else:
                 row[key] = round(sum(vals))
@@ -723,6 +809,60 @@ def simulate_intraday_pax(base_dir, scenario, params):
                     for flight in selected_flights
                     if _terminal_for_flight(flight) and flight.get('etd')
                 ],
+            }
+
+        if selected_flights and delay == 60:
+            overlay_effect = _combined_flight_delay_overlay(base_dir, labels, selected_flights)
+            overlay_series = overlay_effect['series']
+            overlay_table_series = overlay_effect.get('table_series') or overlay_series
+            series = _add_overlay_to_series(baseline_series, overlay_series)
+            affected_touchpoints = set(overlay_effect['affected_touchpoints'])
+            affected_windows = overlay_effect['affected_windows']
+            affected_terminals = overlay_effect['affected_terminals']
+            affected_terminal = affected_terminals[0] if len(affected_terminals) == 1 else None
+
+            cascade = [
+                f"{len(selected_flights)} flight(s) delayed by 60 minutes; graph, table and cards use combined overlays from {FLIGHT_DELAY_EFFECT_FILE}.",
+                "The table shows the combined delta/overlay by touchpoint and time slot.",
+                "Load to Resource Planning writes the same combined terminal overlay to simulated_intraday_PAX.xlsx.",
+            ]
+            sim_meta = {
+                'active': True,
+                'scenario': scenario,
+                'cascade': cascade,
+                'delay_min': delay,
+                'overlay_source': FLIGHT_DELAY_EFFECT_FILE,
+                'affected_touchpoints': sorted(affected_touchpoints),
+                'affected_windows': affected_windows,
+                'affected_terminals': affected_terminals,
+            }
+            sim_meta.update({k: v for k, v in selected_flight_meta.items() if v})
+            if affected_terminal:
+                sim_meta['affected_terminal'] = affected_terminal
+
+            overlay_totals = _overlay_totals(overlay_series)
+            insights = _build_insights(series)
+            for item in insights:
+                key = item.get('key')
+                item['secondary_label'] = 'Total Overlay'
+                item['secondary_value'] = f"{overlay_totals.get(key, 0):+,} pax"
+
+            return {
+                **base,
+                'series': series,
+                'labels': series.get('labels', []),
+                'baseline': {key: baseline_series.get(key, []) for key in TOUCHPOINTS},
+                'simulated': {key: series.get(key, []) for key in TOUCHPOINTS},
+                'overlay': {key: overlay_series.get(key, []) for key in TOUCHPOINTS},
+                'impact': _build_impact(baseline_series, series),
+                'table': {
+                    'columns': base['table']['columns'],
+                    'rows': _table_from_series(overlay_table_series),
+                    'mode': 'overlay_delta',
+                    'title': 'Combined Overlay by Touchpoint',
+                },
+                'insights': insights,
+                'simulation': sim_meta,
             }
 
         if selected and selected.get('etd'):

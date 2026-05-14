@@ -46,6 +46,11 @@ function idpaxFmt(value) {
   return Number(value || 0).toLocaleString();
 }
 
+function idpaxFmtDelta(value) {
+  const n = Math.round(Number(value || 0));
+  return n > 0 ? `+${n.toLocaleString()}` : n.toLocaleString();
+}
+
 function idpaxSeriesPeak(values) {
   const nums = (values || []).map(v => Number(v || 0)).filter(Number.isFinite);
   return nums.length ? Math.max(...nums) : 0;
@@ -99,11 +104,13 @@ function idpaxSetText(id, value) {
   if (el) el.textContent = value;
 }
 
-function idpaxFlightOptions(payload) {
+function idpaxFlightOptions(payload, selectedNos = []) {
+  const selected = new Set((selectedNos || []).map(v => String(v || '').trim()).filter(Boolean));
   const options = (payload.flights || []).map((f, idx) => {
     const time = f.etd || f.eta || '--';
     const label = `${f.flight_no} - ${f.type} - ${time} - ${f.terminal || ''}`;
-    return `<option value="${idpaxEsc(f.flight_no)}" ${idx === 0 ? 'selected' : ''}>${idpaxEsc(label)}</option>`;
+    const isSelected = selected.size ? selected.has(f.flight_no) : idx === 0;
+    return `<option value="${idpaxEsc(f.flight_no)}" ${isSelected ? 'selected' : ''}>${idpaxEsc(label)}</option>`;
   }).join('');
   return options || '<option value="">Loading flights...</option>';
 }
@@ -111,12 +118,13 @@ function idpaxFlightOptions(payload) {
 function idpaxRenderScenarioForm(payload) {
   const target = document.getElementById('idpax-sim-params');
   if (!target) return;
+  const selectedNos = (payload?.simulation?.selected_flights || []).map(f => f.flight_no).filter(Boolean);
 
   const forms = {
     flight_delay: `
       <label>
         <span>Select Flight(s)</span>
-        <select id="idpax-flight-select" multiple size="6">${idpaxFlightOptions(payload)}</select>
+        <select id="idpax-flight-select" multiple size="6">${idpaxFlightOptions(IDPAX_DATA || payload, selectedNos)}</select>
       </label>
       <label>
         <span>Delay (Minutes)</span>
@@ -190,16 +198,20 @@ function idpaxRenderTable(payload) {
   const tbody = document.getElementById('idpax-table-body');
   if (!tbody) return;
   const rows = payload.table?.rows || [];
+  const isOverlayTable = payload.table?.mode === 'overlay_delta';
+  const title = document.querySelector('.idpax-table-title span');
+  if (title) title.textContent = payload.table?.title || (isOverlayTable ? 'Combined Overlay by Touchpoint' : 'PAX Count by Touchpoint');
+  const fmt = isOverlayTable ? idpaxFmtDelta : idpaxFmt;
   tbody.innerHTML = rows.map(row => `
     <tr>
       <td>${idpaxEsc(row.time)}</td>
-      <td>${idpaxFmt(row.checkin)}</td>
-      <td>${idpaxFmt(row.security)}</td>
-      <td>${idpaxFmt(row.cbp)}</td>
-      <td>${idpaxFmt(row.lounge)}</td>
-      <td>${idpaxFmt(row.boarding)}</td>
-      <td>${idpaxFmt(row.immigration)}</td>
-      <td>${idpaxFmt(row.baggage)}</td>
+      <td>${fmt(row.checkin)}</td>
+      <td>${fmt(row.security)}</td>
+      <td>${fmt(row.cbp)}</td>
+      <td>${fmt(row.lounge)}</td>
+      <td>${fmt(row.boarding)}</td>
+      <td>${fmt(row.immigration)}</td>
+      <td>${fmt(row.baggage)}</td>
     </tr>
   `).join('');
 }
@@ -306,6 +318,12 @@ function idpaxBuildDatasets(series, isSimulated = false, baselineSeries = null) 
 function idpaxRenderChart(payload) {
   const canvas = document.getElementById('idpax-pulse-chart');
   if (!canvas || !window.Chart) return;
+  const title = document.querySelector('.idpax-chart-card .idpax-card-title span');
+  if (title) {
+    title.textContent = payload.simulation?.overlay_source
+      ? 'Baseline + Combined Flight Delay Overlay'
+      : 'Live Touchpoint Pulse';
+  }
 
   if (IDPAX_CHART) {
     IDPAX_CHART.destroy();
@@ -378,7 +396,7 @@ function idpaxRenderStatus(payload) {
 function idpaxRender(payload) {
   idpaxSetText('idpax-title', payload.summary?.title || 'Intra-Day Tactical Pulse');
   idpaxSetText('idpax-subtitle', payload.summary?.subtitle || '');
-  idpaxRenderScenarioForm(IDPAX_DATA || payload);
+  idpaxRenderScenarioForm(payload);
   idpaxRenderChart(payload);
   idpaxRenderTable(payload);
   idpaxRenderInsights(payload);

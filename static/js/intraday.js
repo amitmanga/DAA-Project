@@ -2424,8 +2424,8 @@ async function renderIDOptimization(container) {
         before: 0,
         after: 0,
         delta: 0,
-        fte_required: 0,
-        fte_assigned: 0,
+        fte_required_before: 0,
+        fte_required_after: 0,
       };
     });
 
@@ -2437,25 +2437,8 @@ async function renderIDOptimization(container) {
         bucket.before += Number(point.before || 0);
         bucket.after += Number(point.after || 0);
         bucket.delta += Number(point.delta || 0);
-      });
-    });
-    const allowedSkills = new Set(selectedRows.map(row => row.skill).filter(Boolean));
-
-    Object.entries(mx || {}).forEach(([rowKey, byBlock]) => {
-      const [skill, terminal] = rowKey.split('||');
-      const terminalOk = _simPaxTerminal === 'ALL' || terminal === _simPaxTerminal;
-      const skillOk = _simPaxSkillKey === '__ALL__' ? allowedSkills.has(skill) : skill === _simPaxSkillKey;
-      if (!terminalOk || !skillOk) return;
-      Object.entries(byBlock || {}).forEach(([blockId, cell]) => {
-        const block = _RL_HOUR_BLOCKS.find(item => item.id === blockId);
-        if (!block) return;
-        for (let minute = block.start; minute < block.end; minute += 15) {
-          const idx = Math.floor(minute / 15);
-          const bucket = bySlot[`q${String(idx).padStart(2, '0')}`];
-          if (!bucket) continue;
-          bucket.fte_required += Number(cell.req || 0);
-          bucket.fte_assigned += Number(cell.asgn || 0);
-        }
+        bucket.fte_required_before += Number(point.fte_before || 0);
+        bucket.fte_required_after += Number(point.fte_after || 0);
       });
     });
 
@@ -3136,21 +3119,22 @@ async function renderIDOptimization(container) {
             },
             {
               type: 'line',
-              label: 'FTE Required',
-              data: paxPoints.map(p => p.fte_required || 0),
+              label: 'FTE Required (Before)',
+              data: paxPoints.map(p => p.fte_required_before || 0),
               yAxisID: 'yFte',
-              borderColor: 'rgba(245,158,11,0.68)',
+              borderColor: 'rgba(245,158,11,0.72)',
               backgroundColor: 'rgba(245,158,11,0.08)',
               borderWidth: 2,
               pointRadius: 2,
+              borderDash: [6, 4],
               stepped: true,
               fill: false,
               order: 0,
             },
             {
               type: 'line',
-              label: 'FTE Assigned',
-              data: paxPoints.map(p => p.fte_assigned || 0),
+              label: 'FTE Required (After)',
+              data: paxPoints.map(p => p.fte_required_after || 0),
               yAxisID: 'yFte',
               borderColor: '#10b981',
               backgroundColor: 'rgba(16,185,129,0.1)',
@@ -3189,7 +3173,7 @@ async function renderIDOptimization(container) {
                   const point = paxPoints[idx] || {};
                   return [
                     `Passenger delta: ${_fmtDelta(point.delta || 0)} pax`,
-                    `FTE: ${_fmtInt(point.fte_assigned || 0)} assigned / ${_fmtInt(point.fte_required || 0)} required`,
+                    `FTE required: ${_fmtInt(point.fte_required_before || 0)} before / ${_fmtInt(point.fte_required_after || 0)} after`,
                   ];
                 },
               },
