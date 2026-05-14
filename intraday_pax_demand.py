@@ -255,6 +255,55 @@ def _load_flight_delay_overlay_rows(base_dir):
     return rows
 
 
+def _load_flight_delay_effect_rows(base_dir):
+    """Load Baseline, Simulation, and Overlay columns from flight_delay_effect.xlsx."""
+    path = _data_path(base_dir, FLIGHT_DELAY_EFFECT_FILE)
+    if not os.path.exists(path):
+        return []
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        ws = wb.active
+    except Exception:
+        return []
+
+    headers = [
+        str(value).strip() if value is not None else ''
+        for value in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+    ]
+    baseline_idx, simulation_idx, overlay_idx = {}, {}, {}
+    for touchpoint, label in TOUCHPOINT_COLUMN_LABELS.items():
+        lbl = label.lower()
+        for idx, header in enumerate(headers):
+            h = header.lower()
+            if h == f"{lbl} (baseline)":
+                baseline_idx[touchpoint] = idx
+            elif h == f"{lbl} (simulation)":
+                simulation_idx[touchpoint] = idx
+            elif h == f"{lbl} (overlay)":
+                overlay_idx[touchpoint] = idx
+
+    rows = []
+    positive_after_zero = False
+    for values in ws.iter_rows(min_row=2, values_only=True):
+        if not values or values[0] in (None, ''):
+            continue
+        offset = _parse_relative_t_offset(values[0], positive_after_zero=positive_after_zero)
+        if offset is None:
+            continue
+        rows.append({
+            'offset_mins': offset,
+            'baseline': {tp: _as_float(values[idx] if idx < len(values) else 0) for tp, idx in baseline_idx.items()},
+            'simulation': {tp: _as_float(values[idx] if idx < len(values) else 0) for tp, idx in simulation_idx.items()},
+            'overlay': {tp: _as_float(values[idx] if idx < len(values) else 0) for tp, idx in overlay_idx.items()},
+        })
+        if offset == 0:
+            positive_after_zero = True
+
+    return rows
+
+
 def _combined_flight_delay_overlay(base_dir, labels, selected_flights):
     overlay_rows = _load_flight_delay_overlay_rows(base_dir)
     if not overlay_rows:
@@ -317,6 +366,104 @@ def _combined_flight_delay_overlay(base_dir, labels, selected_flights):
         'affected_touchpoints': sorted(affected_touchpoints),
         'affected_terminals': sorted(affected_terminals),
         'affected_windows': simulated_windows,
+    }
+
+
+def _combined_flight_delay_baseline_sim(base_dir, labels, selected_flights, delay_mins):
+    """Build per-flight baseline and simulated series from flight_delay_effect.xlsx.
+
+    Baseline column values are aligned to each flight's old ETD.
+    Simulation column values are aligned to each flight's new ETD (old ETD + delay_mins).
+    Values from multiple flights are summed into a single aggregated series.
+    """
+    effect_rows = _load_flight_delay_effect_rows(base_dir)
+    if not effect_rows:
+        raise ValueError(f'{FLIGHT_DELAY_EFFECT_FILE} has no readable effect rows')
+
+    base_by_min = {tp: [0.0] * 1440 for tp in TOUCHPOINTS}
+    sim_by_min = {tp: [0.0] * 1440 for tp in TOUCHPOINTS}
+    affected_touchpoints = set()
+    affected_terminals = set()
+    affected_windows = {}
+
+    for flight in selected_flights or []:
+        terminal = _terminal_for_flight(flight) or str(flight.get('terminal') or '').strip().upper()
+        departure = flight.get('etd') or flight.get('scheduled_departure')
+        if not departure:
+            continue
+
+        affected_terminals.add(terminal)
+        old_etd = _mins(str(departure))
+        new_etd = old_etd + int(delay_mins)
+
+        for row in effect_rows:
+            offset = int(row['offset_mins'])
+
+            # Each row covers a 15-minute window starting at the given offset.
+            # Spread the value evenly across all 15 minutes so the chart shows
+            # a smooth continuous distribution rather than single-point spikes.
+
+            # Baseline: 15-min window aligned to old ETD
+            base_start = old_etd + offset
+            for spread in range(15):
+                m = base_start + spread
+                if 0 <= m < 1440:
+                    for tp, val in row['baseline'].items():
+                        if abs(val) > 1e-9:
+                            base_by_min[tp][m] += val / 15.0
+                            affected_touchpoints.add(tp)
+
+            # Simulation: 15-min window aligned to new ETD
+            sim_start = new_etd + offset
+            for spread in range(15):
+                m = sim_start + spread
+                if 0 <= m < 1440:
+                    for tp, val in row['simulation'].items():
+                        if abs(val) > 1e-9:
+                            sim_by_min[tp][m] += val / 15.0
+                            affected_touchpoints.add(tp)
+                            slot_s = (m // 15) * 15
+                            window = [slot_s, min(1440, slot_s + 15)]
+                            affected_windows.setdefault(tp, [])
+                            if window not in affected_windows[tp]:
+                                affected_windows[tp].append(window)
+
+    label_minutes = [_mins(label) for label in (labels or [])]
+    n = len(labels)
+
+    baseline_series = {'labels': labels}
+    simulated_series = {'labels': labels}
+    for tp in TOUCHPOINTS:
+        baseline_series[tp] = [base_by_min[tp][m] if 0 <= m < 1440 else 0.0 for m in label_minutes]
+        simulated_series[tp] = [sim_by_min[tp][m] if 0 <= m < 1440 else 0.0 for m in label_minutes]
+
+    # Build delta table (simulated - baseline) aggregated to 15-min slots.
+    # Values are placed at the first label index of each slot so _table_from_series
+    # sums the slice correctly (one non-zero entry per 15-value window).
+    slot_first_idx = {}
+    for idx, m in enumerate(label_minutes):
+        slot_key = _mins_to_hhmm((m // 15) * 15)
+        if slot_key not in slot_first_idx:
+            slot_first_idx[slot_key] = idx
+
+    delta_series = {'labels': labels, '_sum_lounge': True}
+    for tp in TOUCHPOINTS:
+        delta = [0.0] * n
+        for minute in range(1440):
+            d = sim_by_min[tp][minute] - base_by_min[tp][minute]
+            if abs(d) > 1e-9:
+                idx = slot_first_idx.get(_mins_to_hhmm((minute // 15) * 15))
+                if idx is not None:
+                    delta[idx] += d
+        delta_series[tp] = delta
+
+    return {
+        'baseline_series': baseline_series,
+        'simulated_series': simulated_series,
+        'delta_series': delta_series,
+        'affected_touchpoints': sorted(affected_touchpoints),
+        'affected_terminals': sorted(affected_terminals),
+        'affected_windows': affected_windows,
     }
 
 
@@ -646,6 +793,57 @@ def _base_payload(base_dir):
     return pulse, series
 
 
+def build_flight_delay_baseline(base_dir, flight_nos):
+    """Return file-based baseline series for selected flights before simulation is run.
+
+    Baseline aligned to each flight's ETD from flight_delay_effect.xlsx, summed across
+    all selected flights. Simulated and delta series are zero-filled (simulation not run).
+    """
+    base = build_intraday_pax_pulse(base_dir)
+    labels = base['series'].get('labels', [])
+    n = len(labels)
+
+    flights = _load_flights(base_dir)
+    selected_flights = [f for f in flights if f['flight_no'] in set(flight_nos or [])]
+
+    baseline_series = {'labels': labels, **{tp: [0.0] * n for tp in TOUCHPOINTS}}
+    if selected_flights:
+        try:
+            effect = _combined_flight_delay_baseline_sim(base_dir, labels, selected_flights, delay_mins=60)
+            baseline_series = effect['baseline_series']
+        except ValueError:
+            pass
+
+    zero_delta = {'labels': labels, '_sum_lounge': True, **{tp: [0.0] * n for tp in TOUCHPOINTS}}
+
+    return {
+        **base,
+        'baseline': {key: baseline_series.get(key, [0.0] * n) for key in TOUCHPOINTS},
+        'simulated': {key: [0.0] * n for key in TOUCHPOINTS},
+        'table': {
+            'columns': base['table']['columns'],
+            'rows': _table_from_series(zero_delta),
+            'mode': 'overlay_delta',
+            'title': 'Combined Baseline vs Simulation by Touchpoint',
+        },
+        'baseline_preview': True,
+        'simulation': {
+            'active': False,
+            'scenario': 'flight_delay',
+            'selected_flights': [
+                {
+                    'flight_no': f['flight_no'],
+                    'terminal': _terminal_for_flight(f),
+                    'etd': f.get('etd'),
+                    'scheduled_departure': f.get('etd'),
+                    'scheduled_arrival': f.get('eta'),
+                }
+                for f in selected_flights
+            ],
+        },
+    }
+
+
 def build_intraday_pax_pulse(base_dir):
     pulse, series = _base_payload(base_dir)
 
@@ -812,19 +1010,25 @@ def simulate_intraday_pax(base_dir, scenario, params):
             }
 
         if selected_flights and delay == 60:
-            overlay_effect = _combined_flight_delay_overlay(base_dir, labels, selected_flights)
-            overlay_series = overlay_effect['series']
-            overlay_table_series = overlay_effect.get('table_series') or overlay_series
-            series = _add_overlay_to_series(baseline_series, overlay_series)
-            affected_touchpoints = set(overlay_effect['affected_touchpoints'])
-            affected_windows = overlay_effect['affected_windows']
-            affected_terminals = overlay_effect['affected_terminals']
+            # Baseline+simulation from file: baseline aligned to old ETD, simulation to new ETD
+            effect = _combined_flight_delay_baseline_sim(base_dir, labels, selected_flights, delay)
+            file_baseline = effect['baseline_series']
+            file_simulated = effect['simulated_series']
+            delta_series = effect['delta_series']
+            affected_touchpoints = set(effect['affected_touchpoints'])
+            affected_windows = effect['affected_windows']
+            affected_terminals = effect['affected_terminals']
             affected_terminal = affected_terminals[0] if len(affected_terminals) == 1 else None
 
+            # Keep overlay-on-pulse for the main PAX demand series and Excel export
+            overlay_effect = _combined_flight_delay_overlay(base_dir, labels, selected_flights)
+            overlay_series = overlay_effect['series']
+            series = _add_overlay_to_series(baseline_series, overlay_series)
+
             cascade = [
-                f"{len(selected_flights)} flight(s) delayed by 60 minutes; graph, table and cards use combined overlays from {FLIGHT_DELAY_EFFECT_FILE}.",
-                "The table shows the combined delta/overlay by touchpoint and time slot.",
-                "Load to Resource Planning writes the same combined terminal overlay to simulated_intraday_PAX.xlsx.",
+                f"{len(selected_flights)} flight(s) delayed by 60 minutes; baseline and simulation sourced from {FLIGHT_DELAY_EFFECT_FILE}.",
+                "Baseline aligned to original departure; simulation aligned to new departure time.",
+                "Load to Resource Planning writes the combined terminal overlay to simulated_intraday_PAX.xlsx.",
             ]
             sim_meta = {
                 'active': True,
@@ -851,15 +1055,15 @@ def simulate_intraday_pax(base_dir, scenario, params):
                 **base,
                 'series': series,
                 'labels': series.get('labels', []),
-                'baseline': {key: baseline_series.get(key, []) for key in TOUCHPOINTS},
-                'simulated': {key: series.get(key, []) for key in TOUCHPOINTS},
+                'baseline': {key: file_baseline.get(key, []) for key in TOUCHPOINTS},
+                'simulated': {key: file_simulated.get(key, []) for key in TOUCHPOINTS},
                 'overlay': {key: overlay_series.get(key, []) for key in TOUCHPOINTS},
-                'impact': _build_impact(baseline_series, series),
+                'impact': _build_impact(file_baseline, file_simulated),
                 'table': {
                     'columns': base['table']['columns'],
-                    'rows': _table_from_series(overlay_table_series),
+                    'rows': _table_from_series(delta_series),
                     'mode': 'overlay_delta',
-                    'title': 'Combined Overlay by Touchpoint',
+                    'title': 'Combined Baseline vs Simulation by Touchpoint',
                 },
                 'insights': insights,
                 'simulation': sim_meta,

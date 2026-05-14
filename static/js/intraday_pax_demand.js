@@ -1,6 +1,7 @@
 /* Intraday PAX Demand - tactical pulse module */
 
 let IDPAX_DATA = null;
+let IDPAX_BASELINE_PAYLOAD = null;
 let IDPAX_CHART = null;
 let IDPAX_CURRENT_SCENARIO = 'flight_delay';
 
@@ -115,21 +116,160 @@ function idpaxFlightOptions(payload, selectedNos = []) {
   return options || '<option value="">Loading flights...</option>';
 }
 
+function idpaxFlightCheckboxItems(payload, selectedNos = []) {
+  const selected = new Set((selectedNos || []).map(v => String(v || '').trim()).filter(Boolean));
+  const items = (payload.flights || []).map(f => {
+    const time = f.etd || f.eta || '--';
+    const label = `${f.flight_no} - ${f.type} - ${time} - ${f.terminal || ''}`;
+    // Default: all flights pre-selected; honour prior selection if provided
+    const isChecked = selected.size ? selected.has(f.flight_no) : true;
+    return `<label class="idpax-ms-item">
+      <input type="checkbox" value="${idpaxEsc(f.flight_no)}"${isChecked ? ' checked' : ''}>
+      <span>${idpaxEsc(label)}</span>
+    </label>`;
+  }).join('');
+  return items || '<div class="idpax-ms-empty">No flights available</div>';
+}
+
+async function idpaxFetchBaseline() {
+  if (IDPAX_CURRENT_SCENARIO !== 'flight_delay') return;
+  const all = Array.from(document.querySelectorAll('#idpax-ms-dropdown'));
+  const dropdown = all.find(el => el.parentElement === document.body) || all[all.length - 1] || null;
+  if (!dropdown) return;
+  const flightNos = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value).filter(Boolean);
+  if (!flightNos.length) return;
+  try {
+    const res = await fetch('/api/intraday/pax-demand/flight-baseline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flight_nos: flightNos }),
+    });
+    const payload = await res.json();
+    if (!res.ok || payload.error) return;
+    IDPAX_BASELINE_PAYLOAD = payload;
+    idpaxRenderChart(payload);
+    idpaxRenderTable(payload);
+    idpaxRenderInsights(payload);
+    const runBtn = document.getElementById('idpax-run-sim');
+    if (runBtn) runBtn.textContent = 'Run Simulation';
+    const loadBtn = document.getElementById('idpax-load-resource');
+    if (loadBtn) loadBtn.disabled = true;
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function idpaxInitFlightMultiSelect() {
+  const trigger  = document.getElementById('idpax-ms-trigger');
+  const dropdown = document.getElementById('idpax-ms-dropdown');
+  const labelEl  = document.getElementById('idpax-ms-label');
+  if (!trigger || !dropdown || !labelEl) return;
+
+  // Attach to <body> so no ancestor overflow/clip can hide it
+  document.body.appendChild(dropdown);
+
+  function positionDropdown() {
+    const rect = trigger.getBoundingClientRect();
+    dropdown.style.top   = (rect.bottom + window.scrollY + 4) + 'px';
+    dropdown.style.left  = (rect.left   + window.scrollX)     + 'px';
+    dropdown.style.width = rect.width + 'px';
+  }
+
+  function openDropdown()  { positionDropdown(); dropdown.style.display = 'block'; trigger.classList.add('open'); }
+  function closeDropdown() { dropdown.style.display = 'none'; trigger.classList.remove('open'); }
+
+  const selectAllCb = dropdown.querySelector('#idpax-ms-select-all');
+  const flightCbs = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:not(#idpax-ms-select-all)'));
+
+  function syncSelectAll() {
+    if (!selectAllCb) return;
+    const allChecked = flightCbs.every(cb => cb.checked);
+    const anyChecked = flightCbs.some(cb => cb.checked);
+    selectAllCb.checked = allChecked;
+    selectAllCb.indeterminate = anyChecked && !allChecked;
+  }
+
+  function updateLabel() {
+    const checked = flightCbs.filter(cb => cb.checked);
+    if (checked.length === 0) {
+      labelEl.textContent = 'Select flights…';
+    } else if (checked.length === flightCbs.length) {
+      labelEl.textContent = 'All flights selected';
+    } else if (checked.length === 1) {
+      labelEl.textContent = checked[0].closest('label').querySelector('span').textContent;
+    } else {
+      labelEl.textContent = `${checked.length} flights selected`;
+    }
+  }
+
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', () => {
+      flightCbs.forEach(cb => { cb.checked = selectAllCb.checked; });
+      updateLabel();
+      idpaxFetchBaseline();
+    });
+  }
+
+  flightCbs.forEach(cb => {
+    cb.addEventListener('change', () => {
+      syncSelectAll();
+      updateLabel();
+      idpaxFetchBaseline();
+    });
+  });
+
+  trigger.addEventListener('click', e => {
+    e.stopPropagation();
+    dropdown.style.display === 'block' ? closeDropdown() : openDropdown();
+  });
+
+  document.addEventListener('click', e => {
+    if (!trigger.contains(e.target) && !dropdown.contains(e.target)) closeDropdown();
+  });
+
+  window.addEventListener('scroll', positionDropdown, { passive: true });
+  window.addEventListener('resize', () => { if (dropdown.style.display === 'block') positionDropdown(); }, { passive: true });
+
+  syncSelectAll();
+  updateLabel();
+}
+
 function idpaxRenderScenarioForm(payload) {
   const target = document.getElementById('idpax-sim-params');
   if (!target) return;
+
+  // Remove any stale body-appended dropdown from the previous render before
+  // re-building the form. Without this, duplicate #idpax-ms-dropdown elements
+  // accumulate in <body> and idpaxCollectParams reads the wrong (old) one.
+  document.querySelectorAll('#idpax-ms-dropdown').forEach(el => {
+    if (el.parentElement === document.body) el.remove();
+  });
+
   const selectedNos = (payload?.simulation?.selected_flights || []).map(f => f.flight_no).filter(Boolean);
 
   const forms = {
     flight_delay: `
-      <label>
+      <div class="idpax-ms-field">
         <span>Select Flight(s)</span>
-        <select id="idpax-flight-select" multiple size="6">${idpaxFlightOptions(IDPAX_DATA || payload, selectedNos)}</select>
-      </label>
-      <label>
+        <div class="idpax-multi-select">
+          <button type="button" class="idpax-ms-trigger" id="idpax-ms-trigger">
+            <span id="idpax-ms-label">Select flights…</span>
+            <span class="idpax-ms-arrow">▾</span>
+          </button>
+          <div class="idpax-ms-dropdown" id="idpax-ms-dropdown">
+            <label class="idpax-ms-item idpax-ms-select-all">
+              <input type="checkbox" id="idpax-ms-select-all">
+              <span>Select All</span>
+            </label>
+            ${idpaxFlightCheckboxItems(IDPAX_DATA || payload, selectedNos)}
+          </div>
+        </div>
+      </div>
+      <div class="idpax-ms-field">
         <span>Delay (Minutes)</span>
-        <input id="idpax-delay-mins" type="number" min="5" max="180" step="5" value="60">
-      </label>
+        <div class="idpax-delay-static">60 min</div>
+      </div>
     `,
     ground_stop: `
       <label>
@@ -171,16 +311,21 @@ function idpaxRenderScenarioForm(payload) {
     `,
   };
   target.innerHTML = forms[IDPAX_CURRENT_SCENARIO] || forms.flight_delay;
+  if (IDPAX_CURRENT_SCENARIO === 'flight_delay') idpaxInitFlightMultiSelect();
 }
 
 function idpaxCollectParams() {
   const val = id => document.getElementById(id)?.value || '';
   if (IDPAX_CURRENT_SCENARIO === 'flight_delay') {
-    const flightSelect = document.getElementById('idpax-flight-select');
-    const flightNos = flightSelect
-      ? Array.from(flightSelect.selectedOptions).map(opt => opt.value).filter(Boolean)
+    // After cleanup in idpaxRenderScenarioForm there is always exactly one
+    // #idpax-ms-dropdown, but guard by preferring the body-appended one (the
+    // visible one the user interacted with) over any stale in-form remnant.
+    const all = Array.from(document.querySelectorAll('#idpax-ms-dropdown'));
+    const dropdown = all.find(el => el.parentElement === document.body) || all[all.length - 1] || null;
+    const flightNos = dropdown
+      ? Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value).filter(Boolean)
       : [];
-    return { flight_no: flightNos[0] || val('idpax-flight-select'), flight_nos: flightNos, delay_min: val('idpax-delay-mins') };
+    return { flight_no: flightNos[0] || '', flight_nos: flightNos, delay_min: 60 };
   }
   if (IDPAX_CURRENT_SCENARIO === 'ground_stop') {
     return { start: val('idpax-gs-start'), duration_min: val('idpax-gs-duration') };
@@ -320,9 +465,13 @@ function idpaxRenderChart(payload) {
   if (!canvas || !window.Chart) return;
   const title = document.querySelector('.idpax-chart-card .idpax-card-title span');
   if (title) {
-    title.textContent = payload.simulation?.overlay_source
-      ? 'Baseline + Combined Flight Delay Overlay'
-      : 'Live Touchpoint Pulse';
+    if (payload.simulation?.overlay_source) {
+      title.textContent = 'Baseline + Combined Flight Delay Overlay';
+    } else if (payload.baseline_preview) {
+      title.textContent = 'Flight Delay — Baseline Preview';
+    } else {
+      title.textContent = 'Live Touchpoint Pulse';
+    }
   }
 
   if (IDPAX_CHART) {
@@ -333,13 +482,23 @@ function idpaxRenderChart(payload) {
   const series = payload.series || {};
   const labels = series.labels || [];
   const isSimulated = !!payload.simulation?.active;
+  const isBaselinePreview = !!payload.baseline_preview;
   const baselineSeries = payload.baseline || IDPAX_DATA?.series || null;
   const simulatedSeries = payload.simulated || series;
+
+  let datasets;
+  if (isBaselinePreview) {
+    // Show file baseline as solid lines — simulation not run yet
+    datasets = idpaxBuildDatasets(baselineSeries || {}, false, null);
+  } else {
+    datasets = idpaxBuildDatasets(simulatedSeries, isSimulated, baselineSeries);
+  }
+
   IDPAX_CHART = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: {
       labels,
-      datasets: idpaxBuildDatasets(simulatedSeries, isSimulated, baselineSeries),
+      datasets,
     },
     options: {
       responsive: true,
@@ -380,19 +539,6 @@ function idpaxRenderChart(payload) {
   });
 }
 
-function idpaxRenderStatus(payload) {
-  const status = document.getElementById('idpax-sim-status');
-  if (!status) return;
-  const cascade = payload.simulation?.cascade || [];
-  if (!payload.simulation?.active || cascade.length === 0) {
-    status.hidden = true;
-    status.innerHTML = '';
-    return;
-  }
-  status.hidden = false;
-  status.innerHTML = cascade.map(item => `<div>${idpaxEsc(item)}</div>`).join('');
-}
-
 function idpaxRender(payload) {
   idpaxSetText('idpax-title', payload.summary?.title || 'Intra-Day Tactical Pulse');
   idpaxSetText('idpax-subtitle', payload.summary?.subtitle || '');
@@ -400,7 +546,6 @@ function idpaxRender(payload) {
   idpaxRenderChart(payload);
   idpaxRenderTable(payload);
   idpaxRenderInsights(payload);
-  idpaxRenderStatus(payload);
   idpaxAttachActions();
 }
 
@@ -428,11 +573,6 @@ async function idpaxRunSimulation() {
     if (loadBtn) loadBtn.disabled = !payload.simulation_export?.saved;
   } catch (err) {
     console.error(err);
-    const status = document.getElementById('idpax-sim-status');
-    if (status) {
-      status.hidden = false;
-      status.innerHTML = `<div>${idpaxEsc(err.message)}</div>`;
-    }
     if (run) run.textContent = 'Run Simulation';
   } finally {
     if (run) run.disabled = false;
@@ -462,11 +602,6 @@ async function idpaxLoadResourcePlanning() {
     }
   } catch (err) {
     console.error(err);
-    const status = document.getElementById('idpax-sim-status');
-    if (status) {
-      status.hidden = false;
-      status.innerHTML = `<div>${idpaxEsc(err.message)}</div>`;
-    }
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -489,6 +624,7 @@ function idpaxAttachActions() {
       if (run) run.textContent = 'Run Simulation';
       const load = document.getElementById('idpax-load-resource');
       if (load) load.textContent = 'Load to Resource Planning';
+      if (IDPAX_CURRENT_SCENARIO === 'flight_delay') idpaxFetchBaseline();
     });
   });
 
@@ -506,8 +642,14 @@ function idpaxAttachActions() {
       const runBtn = document.getElementById('idpax-run-sim');
       if (runBtn) runBtn.textContent = 'Run Simulation';
       const loadBtn = document.getElementById('idpax-load-resource');
-      if (loadBtn) loadBtn.textContent = 'Load to Resource Planning';
-      idpaxRender(IDPAX_DATA);
+      if (loadBtn) { loadBtn.textContent = 'Load to Resource Planning'; loadBtn.disabled = true; }
+      if (IDPAX_CURRENT_SCENARIO === 'flight_delay' && IDPAX_BASELINE_PAYLOAD) {
+        idpaxRenderChart(IDPAX_BASELINE_PAYLOAD);
+        idpaxRenderTable(IDPAX_BASELINE_PAYLOAD);
+        idpaxRenderInsights(IDPAX_BASELINE_PAYLOAD);
+      } else {
+        idpaxRender(IDPAX_DATA);
+      }
     });
   }
 
@@ -529,6 +671,8 @@ async function initIntradayPaxDemand(options = {}) {
       IDPAX_DATA = await res.json();
     }
     idpaxRender(IDPAX_DATA);
+    // Load file baseline for default selected flights without awaiting (non-blocking)
+    idpaxFetchBaseline();
   } catch (err) {
     panel.innerHTML = '<div class="empty-state">Unable to load Intraday PAX Demand pulse.</div>';
     console.error(err);

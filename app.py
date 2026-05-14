@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 from long_term_pax_demand import build_long_term_pax_forecast
-from intraday_pax_demand import build_intraday_pax_pulse, save_intraday_pax_simulation, simulate_intraday_pax
+from intraday_pax_demand import build_flight_delay_baseline, build_intraday_pax_pulse, save_intraday_pax_simulation, simulate_intraday_pax
 from short_term_pax_demand import build_short_term_pax_outlook
 
 # CP-SAT optimiser (optional — falls back to greedy if OR-Tools is absent)
@@ -1523,6 +1523,15 @@ def st_pax_demand_strategic_outlook():
 @app.route('/api/intraday/pax-demand/tactical-pulse')
 def id_pax_demand_tactical_pulse():
     return jsonify(build_intraday_pax_pulse(BASE_DIR))
+
+
+@app.route('/api/intraday/pax-demand/flight-baseline', methods=['POST'])
+def id_pax_demand_flight_baseline():
+    body = request.get_json(force=True) or {}
+    flight_nos = body.get('flight_nos') or []
+    if isinstance(flight_nos, str):
+        flight_nos = [flight_nos]
+    return jsonify(build_flight_delay_baseline(BASE_DIR, flight_nos))
 
 
 @app.route('/api/intraday/pax-demand/simulate', methods=['POST'])

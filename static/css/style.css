@@ -1088,8 +1088,77 @@ body.is-home-view .header-meta {
   min-height: 40px;
   padding: 8px 12px;
 }
-.idpax-sim-controls select[multiple] {
-  min-height: 150px;
+/* ── Flight multi-select field wrapper ── */
+.idpax-ms-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.idpax-ms-field > span {
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.idpax-multi-select { position: relative; }
+.idpax-ms-trigger {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  font-size: 0.83rem;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 8px 12px;
+  text-align: left;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+.idpax-ms-trigger.open { border-color: #E8850A; }
+.idpax-ms-arrow { color: var(--muted); flex-shrink: 0; font-size: 0.72rem; transition: transform 0.2s; }
+.idpax-ms-trigger.open .idpax-ms-arrow { transform: rotate(180deg); }
+.idpax-ms-dropdown {
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  display: none;
+  max-height: 220px;
+  overflow-y: auto;
+  position: absolute;
+  z-index: 9999;
+}
+.idpax-ms-item {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  font-size: 0.81rem;
+  gap: 8px;
+  padding: 7px 12px;
+}
+.idpax-ms-item:hover { background: rgba(255,255,255,0.06); }
+.idpax-ms-item input[type="checkbox"] { cursor: pointer; flex-shrink: 0; }
+.idpax-ms-select-all { border-bottom: 1px solid var(--border-2); font-weight: 600; position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.idpax-ms-select-all:hover { background: rgba(255,255,255,0.06); }
+.idpax-ms-empty { color: var(--muted); font-size: 0.8rem; padding: 12px; text-align: center; }
+.idpax-delay-static {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  color: var(--muted);
+  display: flex;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  min-height: 40px;
+  padding: 8px 14px;
+  user-select: none;
 }
 .idpax-sim-actions {
   display: flex;
