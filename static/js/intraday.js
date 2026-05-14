@@ -2445,6 +2445,44 @@ async function renderIDOptimization(container) {
     return slots.map(slot => bySlot[slot.id]);
   }
 
+  function _niceChartStep(value) {
+    if (!isFinite(value) || value <= 0) return 1;
+    const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+    const normalized = value / magnitude;
+    const niceNormalized = normalized <= 1 ? 1
+      : normalized <= 2 ? 2
+      : normalized <= 2.5 ? 2.5
+      : normalized <= 5 ? 5
+      : 10;
+    return niceNormalized * magnitude;
+  }
+
+  function _niceChartCeil(value, ticks = 6) {
+    if (!isFinite(value) || value <= 0) return 1;
+    const step = _niceChartStep(value / Math.max(1, ticks));
+    return Math.ceil(value / step) * step;
+  }
+
+  function _buildAlignedImpactScales(points) {
+    const paxValues = [];
+    const fteValues = [];
+    points.forEach(point => {
+      paxValues.push(Number(point.before || 0), Number(point.after || 0), Number(point.delta || 0));
+      fteValues.push(Number(point.fte_required_before || 0), Number(point.fte_required_after || 0));
+    });
+
+    const paxMinValue = Math.min(0, ...paxValues.filter(Number.isFinite));
+    const paxMaxValue = Math.max(1, ...paxValues.filter(Number.isFinite));
+    const yMax = _niceChartCeil(paxMaxValue, 6);
+    const yMin = paxMinValue < 0 ? -_niceChartCeil(Math.abs(paxMinValue), 5) : 0;
+
+    const fteMaxValue = Math.max(1, ...fteValues.filter(Number.isFinite));
+    const yFteMax = Math.max(1, _niceChartCeil(fteMaxValue, 6));
+    const yFteMin = yMin < 0 && yMax > 0 ? yFteMax * (yMin / yMax) : 0;
+
+    return { yMin, yMax, yFteMin, yFteMax };
+  }
+
   function renderOverlayComparisonPanel() {
     const cmp = ID_DATA?.overlay_comparison;
     if (!cmp?.active) { _destroySimCharts(); return ''; }
@@ -3075,6 +3113,7 @@ async function renderIDOptimization(container) {
 
     const paxPoints = _buildImpactChartPoints(paxRows, matrix);
     if (paxCtx && paxPoints.length) {
+      const impactScales = _buildAlignedImpactScales(paxPoints);
       _simCharts.impact = new Chart(paxCtx, {
         type: 'bar',
         data: {
@@ -3123,11 +3162,15 @@ async function renderIDOptimization(container) {
               data: paxPoints.map(p => p.fte_required_before || 0),
               yAxisID: 'yFte',
               borderColor: 'rgba(245,158,11,0.72)',
-              backgroundColor: 'rgba(245,158,11,0.08)',
+              backgroundColor: 'rgba(245,158,11,0.18)',
               borderWidth: 2,
-              pointRadius: 2,
-              borderDash: [6, 4],
-              stepped: true,
+              pointBackgroundColor: 'rgba(31,41,55,0.95)',
+              pointBorderColor: 'rgba(245,158,11,0.9)',
+              pointBorderWidth: 2,
+              pointHoverRadius: 6,
+              pointRadius: 3.5,
+              pointStyle: 'rectRounded',
+              showLine: false,
               fill: false,
               order: 0,
             },
@@ -3137,10 +3180,15 @@ async function renderIDOptimization(container) {
               data: paxPoints.map(p => p.fte_required_after || 0),
               yAxisID: 'yFte',
               borderColor: '#10b981',
-              backgroundColor: 'rgba(16,185,129,0.1)',
+              backgroundColor: 'rgba(16,185,129,0.2)',
               borderWidth: 2.5,
-              pointRadius: 2,
-              stepped: true,
+              pointBackgroundColor: '#10b981',
+              pointBorderColor: 'rgba(220,252,231,0.92)',
+              pointBorderWidth: 1.5,
+              pointHoverRadius: 6,
+              pointRadius: 3.8,
+              pointStyle: 'circle',
+              showLine: false,
               fill: false,
               order: 0,
             },
@@ -3152,12 +3200,23 @@ async function renderIDOptimization(container) {
             x: CHART_DEFAULTS.scales.x,
             y: {
               ...CHART_DEFAULTS.scales.y,
+              min: impactScales.yMin,
+              max: impactScales.yMax,
+              grid: {
+                color: ctx => Number(ctx.tick?.value) === 0 ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.07)',
+              },
               title: { display: true, text: 'Passengers / 15 min', color: '#94a3b8', font: { size: 10 } },
             },
             yFte: {
               position: 'right',
-              beginAtZero: true,
-              ticks: { color: '#fdba74', font: { size: 9 }, precision: 0 },
+              min: impactScales.yFteMin,
+              max: impactScales.yFteMax,
+              ticks: {
+                color: '#fdba74',
+                font: { size: 9 },
+                precision: 0,
+                callback: value => Number(value) < 0 ? '' : value,
+              },
               grid: { drawOnChartArea: false },
               title: { display: true, text: 'FTE', color: '#fdba74', font: { size: 10 } },
             },
