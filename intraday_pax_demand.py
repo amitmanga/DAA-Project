@@ -3,13 +3,24 @@ import json
 import os
 from copy import deepcopy
 from datetime import datetime, time
+import re
 
 
 PULSE_FILE = 'intraday_pax_pulse.json'
 FLIGHTS_FILE = 'intraday_pax_flights.csv'
+FLIGHT_DELAY_EFFECT_FILE = 'flight_delay_effect.xlsx'
 TOUCHPOINTS = ('checkin', 'security', 'cbp', 'lounge', 'boarding', 'immigration', 'baggage')
 PAX_BY_ICAO = {'A': 20, 'B': 50, 'C': 180, 'D': 260, 'E': 330, 'F': 500}
 PAX_DEFAULT = 150
+TOUCHPOINT_COLUMN_LABELS = {
+    'checkin': 'Checkin',
+    'security': 'Security',
+    'cbp': 'CBP',
+    'lounge': 'Lounge',
+    'boarding': 'Boarding',
+    'immigration': 'Immigration',
+    'baggage': 'Baggage',
+}
 
 
 def _data_path(base_dir, filename):
@@ -166,6 +177,171 @@ def _interval_overlaps_windows(interval_start, windows):
     return False
 
 
+def _as_float(value, default=0.0):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _workbook_col_name(terminal, touchpoint):
+    return f"{terminal}_{TOUCHPOINT_COLUMN_LABELS[touchpoint]}"
+
+
+def _parse_relative_t_offset(raw, positive_after_zero=False):
+    text = str(raw or '').strip().upper()
+    match = re.match(r'^T\s*([+-])?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?$', text)
+    if not match:
+        return None
+
+    sign_token, hours, minutes, seconds = match.groups()
+    offset = int(hours) * 60 + int(minutes) + round(int(seconds or 0) / 60)
+    if offset == 0:
+        return 0
+
+    # Some Excel exports preserve the visual T+ section as repeated T- text.
+    # Once T-00:00:00 has been passed, row order is the reliable direction.
+    if positive_after_zero:
+        return offset
+    return -offset if sign_token != '+' else offset
+
+
+def _load_flight_delay_overlay_rows(base_dir):
+    path = _data_path(base_dir, FLIGHT_DELAY_EFFECT_FILE)
+    if not os.path.exists(path):
+        return []
+
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        ws = wb.active
+    except Exception:
+        return []
+
+    headers = [
+        str(value).strip() if value is not None else ''
+        for value in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+    ]
+    overlay_idx = {}
+    for touchpoint, label in TOUCHPOINT_COLUMN_LABELS.items():
+        target = f"{label} (Overlay)".lower()
+        for idx, header in enumerate(headers):
+            if header.lower() == target:
+                overlay_idx[touchpoint] = idx
+                break
+
+    rows = []
+    positive_after_zero = False
+    for values in ws.iter_rows(min_row=2, values_only=True):
+        if not values or values[0] in (None, ''):
+            continue
+        offset = _parse_relative_t_offset(values[0], positive_after_zero=positive_after_zero)
+        if offset is None:
+            continue
+
+        rows.append({
+            'offset_mins': offset,
+            'overlay': {
+                touchpoint: _as_float(values[idx] if idx < len(values) else 0)
+                for touchpoint, idx in overlay_idx.items()
+            },
+        })
+        if offset == 0:
+            positive_after_zero = True
+
+    return rows
+
+
+def _save_flight_delay_overlay_simulation(base_dir, payload, headers, column_touchpoints):
+    """Write a 60-minute departure-delay workbook from flight_delay_effect.xlsx."""
+    simulation_meta = payload.get('simulation') or {}
+    if simulation_meta.get('scenario') != 'flight_delay':
+        return None
+    if int(float(simulation_meta.get('delay_min') or 0)) != 60:
+        return None
+
+    affected_terminal = simulation_meta.get('affected_terminal') or simulation_meta.get('selected_terminal')
+    scheduled_departure = simulation_meta.get('scheduled_departure')
+    if affected_terminal not in ('T1', 'T2') or not scheduled_departure:
+        return None
+
+    overlay_rows = _load_flight_delay_overlay_rows(base_dir)
+    if not overlay_rows:
+        return {'saved': False, 'error': f'{FLIGHT_DELAY_EFFECT_FILE} has no readable overlay rows'}
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Alignment, Font, PatternFill
+    except ImportError:
+        return {'saved': False, 'error': 'openpyxl is not installed'}
+
+    base_date = _simulation_export_date(base_dir)
+    departure_mins = _mins(scheduled_departure)
+
+    overlay_by_minute = {}
+    overlay_windows = {}
+    for row in overlay_rows:
+        exact_minute = departure_mins + int(row['offset_mins'])
+        if exact_minute < 0 or exact_minute >= 1440:
+            continue
+        interval_start = (exact_minute // 15) * 15
+        minute_values = overlay_by_minute.setdefault(interval_start, {})
+
+        for touchpoint, delta in row['overlay'].items():
+            if abs(delta) < 1e-9:
+                continue
+            col_name = _workbook_col_name(affected_terminal, touchpoint)
+            minute_values[col_name] = round(delta)
+            window = [interval_start, min(1440, interval_start + 15)]
+            overlay_windows.setdefault(col_name, [])
+            if window not in overlay_windows[col_name]:
+                overlay_windows[col_name].append(window)
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'Sheet1'
+    ws.append(headers)
+
+    header_fill = PatternFill(start_color='366092', end_color='366092', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal='center')
+
+    for interval_start in range(0, 1440, 15):
+        ts = datetime.combine(base_date, time(hour=interval_start // 60, minute=interval_start % 60))
+        row = [ts]
+        overlay_values = overlay_by_minute.get(interval_start) or {}
+        for terminal, touchpoint in column_touchpoints:
+            col_name = _workbook_col_name(terminal, touchpoint)
+            row.append(overlay_values.get(col_name, 0))
+        ws.append(row)
+
+    meta = wb.create_sheet('_overlay_meta')
+    meta.sheet_state = 'hidden'
+    meta.append(['Date', 'Column', 'StartMinute', 'EndMinute'])
+    for col_name in sorted(overlay_windows):
+        for start, end in overlay_windows[col_name]:
+            meta.append([base_date.isoformat(), col_name, int(start), int(end)])
+
+    for cell in ws['A'][1:]:
+        cell.number_format = 'YYYY-MM-DD HH:MM:SS'
+    ws.column_dimensions['A'].width = 20
+    for col_idx in range(2, len(headers) + 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = 15
+
+    output_path = _data_path(base_dir, 'simulated_intraday_PAX.xlsx')
+    wb.save(output_path)
+    return {
+        'saved': True,
+        'filename': 'simulated_intraday_PAX.xlsx',
+        'path': output_path,
+        'source': FLIGHT_DELAY_EFFECT_FILE,
+        'mode': 'flight_delay_overlay_60',
+    }
+
+
 def _simulation_export_date(base_dir):
     path = _data_path(base_dir, 'short term PAX.xlsx')
     if os.path.exists(path):
@@ -203,6 +379,10 @@ def save_intraday_pax_simulation(base_dir, payload):
         ('T1', 'checkin'), ('T1', 'security'), ('T1', 'cbp'), ('T1', 'lounge'), ('T1', 'boarding'), ('T1', 'immigration'), ('T1', 'baggage'),
         ('T2', 'checkin'), ('T2', 'security'), ('T2', 'cbp'), ('T2', 'lounge'), ('T2', 'boarding'), ('T2', 'immigration'), ('T2', 'baggage'),
     ]
+
+    flight_delay_export = _save_flight_delay_overlay_simulation(base_dir, payload, headers, column_touchpoints)
+    if flight_delay_export is not None:
+        return flight_delay_export
 
     simulation_meta = payload.get('simulation') or {}
     affected_terminal = simulation_meta.get('affected_terminal')  # e.g. 'T1', 'T2', or None
@@ -494,6 +674,7 @@ def simulate_intraday_pax(base_dir, scenario, params):
     affected_terminal = None
     affected_touchpoints = set()
     affected_windows = {}
+    selected_flight_meta = {}
 
     if scenario == 'flight_delay':
         delay = int(float(params.get('delay_min') or 30))
@@ -502,6 +683,13 @@ def simulate_intraday_pax(base_dir, scenario, params):
 
         flights = _load_flights(base_dir)
         selected = next((f for f in flights if f['flight_no'] == flight_no), None)
+        if selected:
+            selected_flight_meta = {
+                'selected_flight_no': selected.get('flight_no'),
+                'selected_terminal': _terminal_for_flight(selected),
+                'scheduled_departure': selected.get('etd'),
+                'scheduled_arrival': selected.get('eta'),
+            }
 
         if selected and selected.get('etd'):
             etd = _mins(str(selected['etd']))
@@ -625,6 +813,9 @@ def simulate_intraday_pax(base_dir, scenario, params):
         'scenario': scenario,
         'cascade': cascade,
     }
+    if scenario == 'flight_delay':
+        sim_meta['delay_min'] = delay
+        sim_meta.update({k: v for k, v in selected_flight_meta.items() if v})
     if scenario == 'flight_delay' and affected_terminal:
         sim_meta['affected_terminal'] = affected_terminal
         sim_meta['affected_touchpoints'] = sorted(affected_touchpoints)

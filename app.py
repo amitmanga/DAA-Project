@@ -532,7 +532,12 @@ def _merge_simulated_pax_overlay(base_profile):
                 else:
                     should_apply = in_overlay_window or pax > 0
                 if should_apply:
-                    target[col] = pax
+                    base_pax = target.get(col) or 0
+                    try:
+                        base_pax = float(base_pax)
+                    except (TypeError, ValueError):
+                        base_pax = 0.0
+                    target[col] = max(0.0, base_pax + pax) if date_windows else pax
                     target['__sim_overlay'] = True
 
     dates = sorted(merged_by_date.keys())
@@ -5161,9 +5166,7 @@ def _changed_time_rows_for_skill(skill, before_time, after_time):
 
 
 def _build_pax_timeline(base_dir):
-    """Return 15-min before/after PAX series for dashboard charts."""
-    import json as _json
-    from intraday_pax_demand import TOUCHPOINTS as _TP
+    """Return 15-min before/after passenger series by PAX skill/touchpoint."""
 
     def _sf(v):
         try:
@@ -5171,65 +5174,70 @@ def _build_pax_timeline(base_dir):
         except (TypeError, ValueError):
             return 0.0
 
-    before = {tp: {} for tp in _TP}
-    try:
-        with open(os.path.join(base_dir, 'data', 'intraday_pax_pulse.json'), encoding='utf-8') as f:
-            pulse = _json.load(f)
-        labels = pulse.get('labels', [])
-        for tp in _TP:
-            for lbl, val in zip(labels, pulse.get(tp, [])):
-                h, m = str(lbl or '0:0').split(':')[:2]
-                bucket = (int(h) * 60 + int(m)) // 15 * 15
-                v = _sf(val)
-                if tp == 'lounge':
-                    bucket_list = before[tp].setdefault(bucket, [])
-                    bucket_list.append(v)
-                else:
-                    before[tp][bucket] = before[tp].get(bucket, 0) + v
-        for bucket, vals in list(before['lounge'].items()):
-            if isinstance(vals, list):
-                before['lounge'][bucket] = sum(vals) / len(vals) if vals else 0
-    except Exception:
-        pass
+    base_profile = _load_pax_workbook_profile('short term PAX.xlsx')
+    overlay_profile = _load_pax_workbook_profile('simulated_intraday_PAX.xlsx')
+    explicit_windows = _load_simulated_pax_overlay_windows()
+    if not overlay_profile.get('dates') or not explicit_windows:
+        return []
 
-    after = {tp: {} for tp in _TP}
-    try:
-        import openpyxl as _xl
-        sim_path = os.path.join(base_dir, 'data', 'simulated_intraday_PAX.xlsx')
-        wb = _xl.load_workbook(sim_path, data_only=True, read_only=True)
-        ws = wb.active
-        hdr = [c for c in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
-        col_map = {}
-        for tp in _TP:
-            tc = tp.capitalize()
-            try:
-                col_map[tp] = (hdr.index(f'T1_{tc}'), hdr.index(f'T2_{tc}'))
-            except ValueError:
-                pass
-        for rv in ws.iter_rows(min_row=2, values_only=True):
-            ts = rv[0]
-            if not isinstance(ts, datetime):
+    rows = []
+    for overlay_date, date_windows in explicit_windows.items():
+        base_rows = base_profile.get('rows_by_date', {}).get(overlay_date, [])
+        overlay_rows = overlay_profile.get('rows_by_date', {}).get(overlay_date, [])
+        if not base_rows or not overlay_rows:
+            continue
+
+        base_by_minute = {}
+        for row in base_rows:
+            ts = row.get('Timestamp')
+            if isinstance(ts, datetime):
+                base_by_minute[ts.hour * 60 + ts.minute] = row
+
+        overlay_by_minute = {}
+        for row in overlay_rows:
+            ts = row.get('Timestamp')
+            if isinstance(ts, datetime):
+                overlay_by_minute[ts.hour * 60 + ts.minute] = row
+
+        grouped = {}
+        for col, windows in date_windows.items():
+            if not col or '_' not in col:
                 continue
-            bucket = ts.hour * 60 + ts.minute
-            for tp, (i1, i2) in col_map.items():
-                v = _sf(rv[i1]) + _sf(rv[i2])
-                after[tp][bucket] = v / 2 if tp == 'lounge' else v
-    except Exception:
-        pass
+            terminal, _work_col = col.split('_', 1)
+            skill = PAX_WORK_SKILL_MAP.get(_pax_work_from_col(col), _pax_work_from_col(col).title())
+            key = (skill, terminal, col)
+            points = []
+            minutes = sorted({
+                minute
+                for start, end in windows
+                for minute in range(max(0, int(start)), min(1440, int(end)), PAX_SLOT_MINS)
+            })
+            for minute in minutes:
+                base_val = _sf((base_by_minute.get(minute) or {}).get(col))
+                overlay_val = _sf((overlay_by_minute.get(minute) or {}).get(col))
+                after_val = max(0.0, base_val + overlay_val)
+                points.append({
+                    'time': mins_to_time(minute),
+                    'start_mins': minute,
+                    'before': round(base_val),
+                    'after': round(after_val),
+                    'delta': round(after_val - base_val),
+                })
+            if points:
+                grouped[key] = {
+                    'skill': skill,
+                    'terminal': terminal,
+                    'column': col,
+                    'points': points,
+                    'total_before': sum(p['before'] for p in points),
+                    'total_after': sum(p['after'] for p in points),
+                    'total_delta': sum(p['delta'] for p in points),
+                }
 
-    all_buckets = set()
-    for tp in _TP:
-        all_buckets |= set(before[tp]) | set(after[tp])
+        rows.extend(grouped.values())
 
-    timeline = []
-    for bucket in sorted(all_buckets):
-        entry = {'time': f"{bucket // 60:02d}:{bucket % 60:02d}", 'start_mins': bucket}
-        for tp in _TP:
-            bv = before[tp].get(bucket, 0)
-            entry[f'before_{tp}'] = round(bv if not isinstance(bv, list) else (sum(bv) / len(bv) if bv else 0))
-            entry[f'after_{tp}'] = round(after[tp].get(bucket, 0))
-        timeline.append(entry)
-    return timeline
+    rows.sort(key=lambda r: (r['skill'].lower(), r['terminal'], r['column']))
+    return rows
 
 
 def _build_overlay_fte_comparison(before_result, after_result):

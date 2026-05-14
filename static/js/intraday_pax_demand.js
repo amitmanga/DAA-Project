@@ -120,7 +120,7 @@ function idpaxRenderScenarioForm(payload) {
       </label>
       <label>
         <span>Delay (Minutes)</span>
-        <input id="idpax-delay-mins" type="number" min="5" max="180" step="5" value="30">
+        <input id="idpax-delay-mins" type="number" min="5" max="180" step="5" value="60">
       </label>
     `,
     ground_stop: `

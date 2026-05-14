@@ -2227,6 +2227,7 @@ async function renderIDOptimization(container) {
 
   /* ── Simulation Impact Dashboard ────────────────────────────────── */
   const _simCharts = {};
+  let _simPaxSkillKey = null;
 
   function _destroySimCharts() {
     Object.keys(_simCharts).forEach(k => {
@@ -2356,6 +2357,40 @@ async function renderIDOptimization(container) {
       </div>`;
   }
 
+  function _paxRowKey(row) {
+    return `${row.skill || ''}||${row.terminal || ''}||${row.column || ''}`;
+  }
+
+  function _buildPaxSkillTimelineCard(cmp) {
+    const rows = cmp?.pax_timeline || [];
+    if (!rows.length) return '';
+
+    const best = rows.slice().sort((a, b) =>
+      Math.abs(Number(b.total_delta || 0)) - Math.abs(Number(a.total_delta || 0))
+    )[0];
+    const activeKey = _simPaxSkillKey && rows.some(r => _paxRowKey(r) === _simPaxSkillKey)
+      ? _simPaxSkillKey
+      : _paxRowKey(best);
+    _simPaxSkillKey = activeKey;
+
+    const buttons = rows.map(row => {
+      const key = _paxRowKey(row);
+      const label = `${row.skill || 'PAX'} ${row.terminal || ''}`.trim();
+      return `
+        <button class="sim-pax-skill-btn ${key === activeKey ? 'active' : ''}" type="button" data-pax-key="${_escAttr(key)}">
+          <span>${_escAttr(label)}</span>
+          <strong>${_escAttr(_fmtDelta(row.total_delta || 0))}</strong>
+        </button>`;
+    }).join('');
+
+    return `
+      <div class="sim-dash-pax-lines">
+        <div class="sim-chart-title">Passenger Flow by Skill - 15 Min Before vs After</div>
+        <div class="sim-pax-skill-strip">${buttons}</div>
+        <div class="sim-chart-canvas-wrap"><canvas id="sim-pax-skill-chart"></canvas></div>
+      </div>`;
+  }
+
   function renderOverlayComparisonPanel() {
     const cmp = ID_DATA?.overlay_comparison;
     if (!cmp?.active) { _destroySimCharts(); return ''; }
@@ -2383,6 +2418,7 @@ async function renderIDOptimization(container) {
       </div>`;
 
     const heatmap = _buildHeatmap(skills);
+    const paxLines = _buildPaxSkillTimelineCard(cmp);
 
     return `
       <div class="sim-dash">
@@ -2401,6 +2437,7 @@ async function renderIDOptimization(container) {
           ${timelineCard}
           ${heatmap}
         </div>
+        ${paxLines}
       </div>`;
   }
 
@@ -2958,6 +2995,77 @@ async function renderIDOptimization(container) {
           ],
         },
         options: CHART_DEFAULTS,
+      });
+    }
+
+    const paxRows = cmp.pax_timeline || [];
+    const paxCtx = document.getElementById('sim-pax-skill-chart');
+    const bestPax = paxRows.slice().sort((a, b) =>
+      Math.abs(Number(b.total_delta || 0)) - Math.abs(Number(a.total_delta || 0))
+    )[0];
+    if ((!_simPaxSkillKey || !paxRows.some(r => _paxRowKey(r) === _simPaxSkillKey)) && bestPax) {
+      _simPaxSkillKey = _paxRowKey(bestPax);
+    }
+
+    document.querySelectorAll('.sim-pax-skill-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.paxKey === _simPaxSkillKey);
+      if (!btn.dataset.bound) {
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', () => {
+          _simPaxSkillKey = btn.dataset.paxKey || _simPaxSkillKey;
+          _initSimDashCharts();
+        });
+      }
+    });
+
+    const paxRow = paxRows.find(r => _paxRowKey(r) === _simPaxSkillKey);
+    const paxPoints = paxRow?.points || [];
+    if (paxCtx && paxPoints.length) {
+      _simCharts.pax = new Chart(paxCtx, {
+        type: 'line',
+        data: {
+          labels: paxPoints.map(p => p.time),
+          datasets: [
+            {
+              label: 'Passengers (Before)',
+              data: paxPoints.map(p => p.before || 0),
+              borderColor: 'rgba(148,163,184,0.72)',
+              backgroundColor: 'rgba(148,163,184,0.08)',
+              borderDash: [5, 4],
+              borderWidth: 2,
+              pointRadius: 2,
+              tension: 0.32,
+              fill: false,
+            },
+            {
+              label: 'Passengers (After)',
+              data: paxPoints.map(p => p.after || 0),
+              borderColor: '#38bdf8',
+              backgroundColor: 'rgba(56,189,248,0.12)',
+              borderWidth: 2.5,
+              pointRadius: 2,
+              tension: 0.32,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          ...CHART_DEFAULTS,
+          plugins: {
+            ...CHART_DEFAULTS.plugins,
+            tooltip: {
+              mode: 'index',
+              intersect: false,
+              callbacks: {
+                afterBody(items) {
+                  const idx = items?.[0]?.dataIndex ?? 0;
+                  const point = paxPoints[idx] || {};
+                  return `Delta: ${_fmtDelta(point.delta || 0)} pax`;
+                },
+              },
+            },
+          },
+        },
       });
     }
   }
