@@ -5255,6 +5255,105 @@ def _build_pax_timeline(base_dir, before_time=None, after_time=None):
     return rows
 
 
+def _build_baseline_pax_timeline(base_dir, before_time=None):
+    """Build a PAX timeline from short term PAX.xlsx with no overlay applied.
+
+    before == after and delta == 0 for every point — used to populate the
+    Passenger Impact chart before a simulation overlay is loaded.
+    """
+    def _sf(v):
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    base_profile = _load_pax_workbook_profile('short term PAX.xlsx')
+    rows_by_date = base_profile.get('rows_by_date', {})
+    if not rows_by_date:
+        return []
+
+    date_str = sorted(rows_by_date.keys())[0]
+    base_rows = rows_by_date[date_str]
+
+    base_by_minute = {}
+    for row in base_rows:
+        ts = row.get('Timestamp')
+        if isinstance(ts, datetime):
+            base_by_minute[ts.hour * 60 + ts.minute] = row
+
+    grouped = {}
+    pax_columns = [
+        f"{terminal}_{work.title() if work != 'cbp' else 'CBP'}"
+        for terminal in ('T1', 'T2')
+        for work in PAX_WORK_SKILL_MAP
+    ]
+    for col in pax_columns:
+        terminal, _work_col = col.split('_', 1)
+        skill = PAX_WORK_SKILL_MAP.get(_pax_work_from_col(col), _pax_work_from_col(col).title())
+        key = (skill, terminal, col)
+        points = []
+        for minute in range(0, 1440, PAX_SLOT_MINS):
+            base_val = _sf((base_by_minute.get(minute) or {}).get(col))
+            hour_start = (minute // PAX_DEMAND_SLOT_MINS) * PAX_DEMAND_SLOT_MINS
+            fte_key = (hour_start, terminal)
+            fte_req = int((before_time or {}).get(skill, {}).get(fte_key, {}).get('required', 0) or 0)
+            points.append({
+                'time': mins_to_time(minute),
+                'start_mins': minute,
+                'before': round(base_val),
+                'after': round(base_val),
+                'delta': 0,
+                'fte_before': fte_req,
+                'fte_after': fte_req,
+                'fte_delta': 0,
+            })
+        if points:
+            total_before = sum(p['before'] for p in points)
+            grouped[key] = {
+                'skill': skill,
+                'terminal': terminal,
+                'column': col,
+                'points': points,
+                'total_before': total_before,
+                'total_after': total_before,
+                'total_delta': 0,
+                'total_fte_delta': 0,
+            }
+
+    return sorted(grouped.values(), key=lambda r: (r['skill'].lower(), r['terminal'], r['column']))
+
+
+def _build_baseline_fte_comparison(result):
+    """Build overlay_comparison with baseline data only (no simulation overlay active).
+
+    Returns an overlay_comparison payload where before == after and all deltas are 0.
+    This allows the Passenger Impact chart to render even before a simulation is run.
+    """
+    summary = _optimizer_fte_summary(result)
+    time_summary = _optimizer_time_summary(result)
+    totals = summary['totals']
+
+    try:
+        pax_timeline = _build_baseline_pax_timeline(BASE_DIR, time_summary)
+    except Exception:
+        pax_timeline = []
+
+    return {
+        'active': False,
+        'before_source': 'short term PAX.xlsx',
+        'after_source': 'short term PAX.xlsx',
+        'before': totals,
+        'after': totals,
+        'delta_required': 0,
+        'delta_assigned': 0,
+        'delta_gap': 0,
+        'delta_passengers': 0,
+        'skills': [],
+        'fte_timeline': [],
+        'pax_timeline': pax_timeline,
+    }
+
+
 def _build_overlay_fte_comparison(before_result, after_result):
     before = _optimizer_fte_summary(before_result)
     after = _optimizer_fte_summary(after_result)
@@ -5382,7 +5481,11 @@ def _refresh_overlay_comparison_after(result):
 
 def _attach_intraday_overlay_comparison(result, date_str, manual_assigns):
     if not INTRADAY_PAX_SIM_OVERLAY_ACTIVE:
-        result.pop('overlay_comparison', None)
+        # Provide baseline-only comparison so the Passenger Impact chart is always visible
+        try:
+            result['overlay_comparison'] = _build_baseline_fte_comparison(result)
+        except Exception:
+            result.pop('overlay_comparison', None)
         return result
     baseline = optimize_day(
         date_str,

@@ -2,6 +2,7 @@
 
 let IDPAX_DATA = null;
 let IDPAX_BASELINE_PAYLOAD = null;
+let IDPAX_SIM_PAYLOAD = null;
 let IDPAX_CHART = null;
 let IDPAX_CURRENT_SCENARIO = 'flight_delay';
 
@@ -566,6 +567,7 @@ async function idpaxRunSimulation() {
     });
     const payload = await res.json();
     if (!res.ok || payload.error) throw new Error(payload.error || `Simulation failed: ${res.status}`);
+    IDPAX_SIM_PAYLOAD = payload;
     idpaxRender(payload);
     const runBtn = document.getElementById('idpax-run-sim');
     if (runBtn) runBtn.textContent = 'Simulation Applied';
@@ -616,6 +618,7 @@ function idpaxAttachActions() {
     btn.dataset.bound = '1';
     btn.addEventListener('click', () => {
       IDPAX_CURRENT_SCENARIO = btn.dataset.scenario || 'flight_delay';
+      IDPAX_SIM_PAYLOAD = null;
       document.querySelectorAll('.idpax-scenario').forEach(item => {
         item.classList.toggle('active', item === btn);
       });
@@ -639,17 +642,15 @@ function idpaxAttachActions() {
     clear.dataset.bound = '1';
     clear.addEventListener('click', () => {
       if (!IDPAX_DATA) return;
+      IDPAX_SIM_PAYLOAD = null;
+      IDPAX_BASELINE_PAYLOAD = null;
       const runBtn = document.getElementById('idpax-run-sim');
       if (runBtn) runBtn.textContent = 'Run Simulation';
       const loadBtn = document.getElementById('idpax-load-resource');
       if (loadBtn) { loadBtn.textContent = 'Load to Resource Planning'; loadBtn.disabled = true; }
-      if (IDPAX_CURRENT_SCENARIO === 'flight_delay' && IDPAX_BASELINE_PAYLOAD) {
-        idpaxRenderChart(IDPAX_BASELINE_PAYLOAD);
-        idpaxRenderTable(IDPAX_BASELINE_PAYLOAD);
-        idpaxRenderInsights(IDPAX_BASELINE_PAYLOAD);
-      } else {
-        idpaxRender(IDPAX_DATA);
-      }
+      // Full render from IDPAX_DATA resets the form (dropdown defaults to all flights selected)
+      idpaxRender(IDPAX_DATA);
+      if (IDPAX_CURRENT_SCENARIO === 'flight_delay') idpaxFetchBaseline();
     });
   }
 
@@ -669,10 +670,27 @@ async function initIntradayPaxDemand(options = {}) {
       const res = await fetch('/api/intraday/pax-demand/tactical-pulse');
       if (!res.ok) throw new Error(`Intraday PAX API failed: ${res.status}`);
       IDPAX_DATA = await res.json();
+      // Data was refreshed — discard any stale simulation result
+      IDPAX_SIM_PAYLOAD = null;
+      IDPAX_BASELINE_PAYLOAD = null;
     }
-    idpaxRender(IDPAX_DATA);
-    // Load file baseline for default selected flights without awaiting (non-blocking)
-    idpaxFetchBaseline();
+
+    if (IDPAX_SIM_PAYLOAD) {
+      // User ran a simulation before navigating away — restore it exactly
+      idpaxRender(IDPAX_SIM_PAYLOAD);
+      // Ensure the correct scenario button is highlighted
+      document.querySelectorAll('.idpax-scenario').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.scenario === IDPAX_CURRENT_SCENARIO);
+      });
+      const runBtn = document.getElementById('idpax-run-sim');
+      if (runBtn) runBtn.textContent = 'Simulation Applied';
+      const loadBtn = document.getElementById('idpax-load-resource');
+      if (loadBtn) loadBtn.disabled = !IDPAX_SIM_PAYLOAD.simulation_export?.saved;
+    } else {
+      idpaxRender(IDPAX_DATA);
+      // Load file baseline for default selected flights without awaiting (non-blocking)
+      idpaxFetchBaseline();
+    }
   } catch (err) {
     panel.innerHTML = '<div class="empty-state">Unable to load Intraday PAX Demand pulse.</div>';
     console.error(err);

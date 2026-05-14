@@ -2483,36 +2483,51 @@ async function renderIDOptimization(container) {
     return { yMin, yMax, yFteMin, yFteMax };
   }
 
+  function _simKpiBaseline(label, value) {
+    return `
+      <div class="sim-kpi">
+        <div class="sim-kpi-label">${label}</div>
+        <div class="sim-kpi-values">
+          <span class="sim-kpi-after">${_fmtInt(value)}</span>
+        </div>
+        <div class="sim-kpi-bar-wrap">
+          <div class="sim-kpi-bar-row">
+            <span class="sim-kpi-bar-lbl">Baseline</span>
+            <div class="sim-kpi-bar-track"><div class="sim-kpi-bar-fill" style="width:100%;background:var(--info);opacity:0.45;"></div></div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function renderOverlayComparisonPanel() {
     const cmp = ID_DATA?.overlay_comparison;
-    if (!cmp?.active) { _destroySimCharts(); return ''; }
+    if (!cmp) { _destroySimCharts(); return ''; }
 
+    const isActive = !!cmp.active;
     const before = cmp.before || {};
     const after  = cmp.after  || {};
-    const skills  = cmp.skills || [];
     const _safeCov = v => { const n = Number(v); return (isNaN(n) || !isFinite(n)) ? 100 : Math.max(0, n); };
     const covBefore = _safeCov(before.coverage_pct);
     const covAfter  = _safeCov(after.coverage_pct);
     const covDelta  = covAfter - covBefore;
 
-    const kpis = `
+    const kpis = isActive ? `
       <div class="sim-dash-kpis">
         ${_simKpi('FTE Required',  before.required,  after.required,  cmp.delta_required,  false, before.required,  after.required)}
         ${_simKpi('FTE Assigned',  before.assigned,  after.assigned,  cmp.delta_assigned,  false, before.assigned,  after.assigned)}
         ${_simKpi('Open Gap',      before.gap,       after.gap,       cmp.delta_gap,        true,  before.gap,       after.gap)}
         ${_simKpi('Coverage %',    covBefore,        covAfter,        covDelta.toFixed(1),  false, covBefore, covAfter)}
-      </div>`;
-
-    const timelineCardUnused = `
-      <div class="sim-dash-timeline">
-        <div class="sim-chart-title">FTE Required Over Time — Before vs After</div>
-        <div class="sim-chart-canvas-wrap"><canvas id="sim-fte-timeline-chart"></canvas></div>
+      </div>` : `
+      <div class="sim-dash-kpis">
+        ${_simKpiBaseline('FTE Required', before.required)}
+        ${_simKpiBaseline('FTE Assigned', before.assigned)}
+        ${_simKpiBaseline('Open Gap',     before.gap)}
+        ${_simKpiBaseline('Coverage %',   covBefore)}
       </div>`;
 
     const impactTimeline = _buildImpactTimelineCard(cmp);
 
-    return `
-      <div class="sim-dash">
+    const head = isActive ? `
         <div class="sim-dash-head">
           <div>
             <div class="sim-dash-title">Simulation Overlay Impact</div>
@@ -2522,7 +2537,17 @@ async function renderIDOptimization(container) {
             <div class="sim-dash-badge">Overlay Active</div>
             <button class="rl-remove-overlay-btn" type="button">Remove Overlay</button>
           </div>
-        </div>
+        </div>` : `
+        <div class="sim-dash-head">
+          <div>
+            <div class="sim-dash-title">Passenger Impact Overview</div>
+            <div class="sim-dash-sub">Baseline: ${_escAttr(cmp.before_source || 'short term PAX.xlsx')} — load a simulation to see before/after comparison</div>
+          </div>
+        </div>`;
+
+    return `
+      <div class="sim-dash">
+        ${head}
         ${kpis}
         <div class="sim-dash-bottom-row">
           ${impactTimeline}
@@ -3011,7 +3036,8 @@ async function renderIDOptimization(container) {
   function _initSimDashCharts() {
     _destroySimCharts();
     const cmp = ID_DATA?.overlay_comparison;
-    if (!cmp?.active) return;
+    if (!cmp?.pax_timeline?.length) return;
+    const isActive = !!cmp.active;
 
     const CHART_DEFAULTS = {
       responsive: true,
@@ -3114,85 +3140,122 @@ async function renderIDOptimization(container) {
     const paxPoints = _buildImpactChartPoints(paxRows, matrix);
     if (paxCtx && paxPoints.length) {
       const impactScales = _buildAlignedImpactScales(paxPoints);
+
+      const baselineDatasets = [
+        {
+          type: 'line',
+          label: 'Passengers (Baseline)',
+          data: paxPoints.map(p => p.before || 0),
+          yAxisID: 'y',
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.12)',
+          borderWidth: 2.5,
+          pointRadius: 2,
+          tension: 0.32,
+          fill: false,
+          order: 1,
+        },
+        {
+          type: 'line',
+          label: 'FTE Required',
+          data: paxPoints.map(p => p.fte_required_before || 0),
+          yAxisID: 'yFte',
+          borderColor: 'rgba(245,158,11,0.9)',
+          backgroundColor: 'rgba(245,158,11,0.18)',
+          borderWidth: 2,
+          pointBackgroundColor: 'rgba(31,41,55,0.95)',
+          pointBorderColor: 'rgba(245,158,11,0.9)',
+          pointBorderWidth: 2,
+          pointHoverRadius: 6,
+          pointRadius: 3.5,
+          pointStyle: 'rectRounded',
+          showLine: false,
+          fill: false,
+          order: 0,
+        },
+      ];
+
+      const overlayDatasets = [
+        {
+          type: 'bar',
+          label: 'Passenger Delta',
+          data: paxPoints.map(p => p.delta || 0),
+          yAxisID: 'y',
+          backgroundColor: paxPoints.map(p => Number(p.delta || 0) >= 0 ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)'),
+          borderColor: paxPoints.map(p => Number(p.delta || 0) >= 0 ? 'rgba(239,68,68,0.55)' : 'rgba(16,185,129,0.55)'),
+          borderWidth: 1,
+          order: 3,
+        },
+        {
+          type: 'line',
+          label: 'Passengers (Before)',
+          data: paxPoints.map(p => p.before || 0),
+          yAxisID: 'y',
+          borderColor: 'rgba(148,163,184,0.72)',
+          backgroundColor: 'rgba(148,163,184,0.08)',
+          borderDash: [5, 4],
+          borderWidth: 2,
+          pointRadius: 2,
+          tension: 0.32,
+          fill: false,
+          order: 2,
+        },
+        {
+          type: 'line',
+          label: 'Passengers (Short Term + Overlay)',
+          data: paxPoints.map(p => p.after || 0),
+          yAxisID: 'y',
+          borderColor: '#38bdf8',
+          backgroundColor: 'rgba(56,189,248,0.12)',
+          borderWidth: 2.5,
+          pointRadius: 2,
+          tension: 0.32,
+          fill: false,
+          order: 1,
+        },
+        {
+          type: 'line',
+          label: 'FTE Required (Before)',
+          data: paxPoints.map(p => p.fte_required_before || 0),
+          yAxisID: 'yFte',
+          borderColor: 'rgba(245,158,11,0.72)',
+          backgroundColor: 'rgba(245,158,11,0.18)',
+          borderWidth: 2,
+          pointBackgroundColor: 'rgba(31,41,55,0.95)',
+          pointBorderColor: 'rgba(245,158,11,0.9)',
+          pointBorderWidth: 2,
+          pointHoverRadius: 6,
+          pointRadius: 3.5,
+          pointStyle: 'rectRounded',
+          showLine: false,
+          fill: false,
+          order: 0,
+        },
+        {
+          type: 'line',
+          label: 'FTE Required (After)',
+          data: paxPoints.map(p => p.fte_required_after || 0),
+          yAxisID: 'yFte',
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16,185,129,0.2)',
+          borderWidth: 2.5,
+          pointBackgroundColor: '#10b981',
+          pointBorderColor: 'rgba(220,252,231,0.92)',
+          pointBorderWidth: 1.5,
+          pointHoverRadius: 6,
+          pointRadius: 3.8,
+          pointStyle: 'circle',
+          showLine: false,
+          fill: false,
+          order: 0,
+        },
+      ];
+
       _simCharts.impact = new Chart(paxCtx, {
         type: 'bar',
         data: {
           labels: paxPoints.map(p => p.time),
-          datasets: [
-            {
-              type: 'bar',
-              label: 'Passenger Delta',
-              data: paxPoints.map(p => p.delta || 0),
-              yAxisID: 'y',
-              backgroundColor: paxPoints.map(p => Number(p.delta || 0) >= 0 ? 'rgba(239,68,68,0.18)' : 'rgba(16,185,129,0.18)'),
-              borderColor: paxPoints.map(p => Number(p.delta || 0) >= 0 ? 'rgba(239,68,68,0.55)' : 'rgba(16,185,129,0.55)'),
-              borderWidth: 1,
-              order: 3,
-            },
-            {
-              type: 'line',
-              label: 'Passengers (Before)',
-              data: paxPoints.map(p => p.before || 0),
-              yAxisID: 'y',
-              borderColor: 'rgba(148,163,184,0.72)',
-              backgroundColor: 'rgba(148,163,184,0.08)',
-              borderDash: [5, 4],
-              borderWidth: 2,
-              pointRadius: 2,
-              tension: 0.32,
-              fill: false,
-              order: 2,
-            },
-            {
-              type: 'line',
-              label: 'Passengers (Short Term + Overlay)',
-              data: paxPoints.map(p => p.after || 0),
-              yAxisID: 'y',
-              borderColor: '#38bdf8',
-              backgroundColor: 'rgba(56,189,248,0.12)',
-              borderWidth: 2.5,
-              pointRadius: 2,
-              tension: 0.32,
-              fill: false,
-              order: 1,
-            },
-            {
-              type: 'line',
-              label: 'FTE Required (Before)',
-              data: paxPoints.map(p => p.fte_required_before || 0),
-              yAxisID: 'yFte',
-              borderColor: 'rgba(245,158,11,0.72)',
-              backgroundColor: 'rgba(245,158,11,0.18)',
-              borderWidth: 2,
-              pointBackgroundColor: 'rgba(31,41,55,0.95)',
-              pointBorderColor: 'rgba(245,158,11,0.9)',
-              pointBorderWidth: 2,
-              pointHoverRadius: 6,
-              pointRadius: 3.5,
-              pointStyle: 'rectRounded',
-              showLine: false,
-              fill: false,
-              order: 0,
-            },
-            {
-              type: 'line',
-              label: 'FTE Required (After)',
-              data: paxPoints.map(p => p.fte_required_after || 0),
-              yAxisID: 'yFte',
-              borderColor: '#10b981',
-              backgroundColor: 'rgba(16,185,129,0.2)',
-              borderWidth: 2.5,
-              pointBackgroundColor: '#10b981',
-              pointBorderColor: 'rgba(220,252,231,0.92)',
-              pointBorderWidth: 1.5,
-              pointHoverRadius: 6,
-              pointRadius: 3.8,
-              pointStyle: 'circle',
-              showLine: false,
-              fill: false,
-              order: 0,
-            },
-          ],
+          datasets: isActive ? overlayDatasets : baselineDatasets,
         },
         options: {
           ...CHART_DEFAULTS,
@@ -3230,10 +3293,13 @@ async function renderIDOptimization(container) {
                 afterBody(items) {
                   const idx = items?.[0]?.dataIndex ?? 0;
                   const point = paxPoints[idx] || {};
-                  return [
-                    `Passenger delta: ${_fmtDelta(point.delta || 0)} pax`,
-                    `FTE required: ${_fmtInt(point.fte_required_before || 0)} before / ${_fmtInt(point.fte_required_after || 0)} after`,
-                  ];
+                  if (isActive) {
+                    return [
+                      `Passenger delta: ${_fmtDelta(point.delta || 0)} pax`,
+                      `FTE required: ${_fmtInt(point.fte_required_before || 0)} before / ${_fmtInt(point.fte_required_after || 0)} after`,
+                    ];
+                  }
+                  return [`FTE required: ${_fmtInt(point.fte_required_before || 0)}`];
                 },
               },
             },
