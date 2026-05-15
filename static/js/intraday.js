@@ -673,10 +673,15 @@ renderIDAlerts = function(alerts) {
           ${totalHigh ? `<span class="badge badge-warn">${totalHigh} High</span>` : ''}
           <span style="font-size:0.72rem;color:var(--muted)">${activeBlocks.length}/8 blocks · ${alerts.length} gaps</span>
         </span>
+        <button class="alerts-toggle collapsed" id="id-alerts-toggle" title="Collapse / expand">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
       </div>
-      <div style="margin:10px 0 4px;display:flex;gap:3px;">${timelineHtml}</div>
-      <div style="display:flex;gap:3px;margin-bottom:12px;">${timelineLabels}</div>
-      <div id="id-alerts-blocks" style="display:flex;flex-direction:row;gap:10px;width:100%;"></div>
+      <div class="alerts-body collapsed" id="id-alerts-body">
+        <div style="margin:10px 0 4px;display:flex;gap:3px;">${timelineHtml}</div>
+        <div style="display:flex;gap:3px;margin-bottom:12px;">${timelineLabels}</div>
+        <div id="id-alerts-blocks" style="display:flex;flex-direction:row;gap:10px;width:100%;"></div>
+      </div>
     </div>`;
 
   const blocksEl = document.getElementById('id-alerts-blocks');
@@ -759,6 +764,16 @@ renderIDAlerts = function(alerts) {
       if (entry) showIDSkillBlockDetail(entry.skill, entry.blockLabel, date);
     });
   });
+
+  // Collapse toggle
+  const idToggleBtn = document.getElementById('id-alerts-toggle');
+  const idAlertsBody = document.getElementById('id-alerts-body');
+  if (idToggleBtn && idAlertsBody) {
+    idToggleBtn.addEventListener('click', () => {
+      const collapsed = idAlertsBody.classList.toggle('collapsed');
+      idToggleBtn.classList.toggle('collapsed', collapsed);
+    });
+  }
 };
 
 function renderIDStaffRoster(staff, absent) {

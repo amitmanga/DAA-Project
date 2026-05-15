@@ -32,7 +32,7 @@ function fmtSkill(sk) {
 let ST_DATES = [];
 let ST_CURRENT_DATE = null;
 let ST_DATA = null;
-let ST_ACTIVE_TAB = 'staff-timeline';
+let ST_ACTIVE_TAB = 'summary';
 let _stAllocSelection = { skill: null, terminal: null, block: null };
 const _stAllocLog = [];
 const ST_CHARTS = {};
@@ -282,8 +282,8 @@ function renderShortTermDay() {
     <div id="st-alerts-panel"></div>
     <!-- Sub-tabs -->
     <div class="sub-tabs" style="margin-top:20px">
-      <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Roster Timeline</button>
-      <button class="sub-tab ${ST_ACTIVE_TAB==='roster-board'?'active':''}" data-sttab="roster-board">📋 Roster Board</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='summary'?'active':''}" data-sttab="summary">Summary</button>
+      <button class="sub-tab ${ST_ACTIVE_TAB==='staff-timeline'?'active':''}" data-sttab="staff-timeline">👤 Task Allocation</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='staff-allocation'?'active':''}" data-sttab="staff-allocation">📊 Staff Allocation</button>
       <button class="sub-tab ${ST_ACTIVE_TAB==='opt'?'active':''}" data-sttab="opt">⚙ Optimization</button>
     </div>
@@ -405,15 +405,16 @@ function renderSTAlerts(alerts, date) {
           ${totalHigh ? `<span class="badge badge-warn">${totalHigh} High</span>` : ''}
           <span style="font-size:0.72rem;color:var(--muted)">${activeBlocks.length}/8 blocks affected · ${alerts.length} gaps total</span>
         </span>
+        <button class="alerts-toggle collapsed" id="st-alerts-toggle" title="Collapse / expand">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
       </div>
-
-      <!-- 3-hour timeline bar -->
-      <div style="margin:10px 0 4px;display:flex;gap:3px;">${timelineHtml}</div>
-      <div style="display:flex;gap:3px;margin-bottom:12px;">${timelineLabels}</div>
-
-      <!-- 3-hour block cards — single full-width row -->
-      <div id="st-alerts-blocks" style="display:flex;flex-direction:row;gap:10px;width:100%;"></div>
-</div>`;
+      <div class="alerts-body collapsed" id="st-alerts-body">
+        <div style="margin:10px 0 4px;display:flex;gap:3px;">${timelineHtml}</div>
+        <div style="display:flex;gap:3px;margin-bottom:12px;">${timelineLabels}</div>
+        <div id="st-alerts-blocks" style="display:flex;flex-direction:row;gap:10px;width:100%;"></div>
+      </div>
+    </div>`;
 
   const blocksEl = document.getElementById('st-alerts-blocks');
 
@@ -501,6 +502,16 @@ function renderSTAlerts(alerts, date) {
       if (entry) showSTSkillBlockDetail(entry.skill, entry.blockLabel, date);
     });
   });
+
+  // Collapse toggle
+  const stToggleBtn = document.getElementById('st-alerts-toggle');
+  const stAlertsBody = document.getElementById('st-alerts-body');
+  if (stToggleBtn && stAlertsBody) {
+    stToggleBtn.addEventListener('click', () => {
+      const collapsed = stAlertsBody.classList.toggle('collapsed');
+      stToggleBtn.classList.toggle('collapsed', collapsed);
+    });
+  }
 }
 
 const _stSkillDetailMap = {};
@@ -802,11 +813,84 @@ function renderSTSubContent() {
   const el = document.getElementById('st-sub-content');
   // guard: if legacy 'staff' tab was active, redirect to timeline
   if (ST_ACTIVE_TAB === 'staff') ST_ACTIVE_TAB = 'staff-timeline';
-  if (ST_ACTIVE_TAB === 'demand') renderSTDemandTab(el);
+  if (ST_ACTIVE_TAB === 'summary') renderSTSummary(el);
+  else if (ST_ACTIVE_TAB === 'demand') renderSTDemandTab(el);
   else if (ST_ACTIVE_TAB === 'staff-timeline') renderSTRosterTimeline(el);
   else if (ST_ACTIVE_TAB === 'roster-board') renderSTRosterBoard(el);
   else if (ST_ACTIVE_TAB === 'opt') renderSTOptimization(el);
   else if (ST_ACTIVE_TAB === 'staff-allocation') renderSTStaffAllocation(el);
+}
+
+function renderSTSummary(container) {
+  container.innerHTML = `
+    <div class="stpax-module" style="margin-top:16px">
+      <section class="stpax-outlook-panel">
+        <div class="stpax-brand-row">
+          <span class="stpax-pill">Pulse</span>
+          <h2>PAX Flow Digital Twin</h2>
+        </div>
+        <div class="stpax-section-title">
+          <span id="stpax-title">3-Day Strategic Outlook</span>
+          <em id="stpax-subtitle">passenger numbers engineered based on actual next 3-day flight schedules</em>
+        </div>
+        <article class="stpax-chart-card" style="--pax-accent:#0ea5e9">
+          <div class="stpax-card-title pax-card-title-row">
+            <div class="pax-icon-bubble pax-icon-bubble-sm" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 16 3-4 4 3 5-7"/></svg>
+            </div>
+            <span>Passenger Flow Outlook</span>
+          </div>
+          <div class="stpax-chart-wrap">
+            <canvas id="stpax-outlook-chart"></canvas>
+          </div>
+        </article>
+        <div class="stpax-insight-grid" id="stpax-insight-grid"></div>
+      </section>
+    </div>
+
+    <div class="mt-24" style="margin-top:28px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:8px;">
+        <div class="section-header" style="margin-bottom:0">
+          <h2 style="font-size:1rem;font-weight:700;color:var(--text);">Workforce Coverage — Short-Term</h2>
+          <span class="section-hint">Assigned / Required per skill per hour. PAX touchpoints only.</span>
+        </div>
+        <div id="st-coverage-terminal-filter" style="display:flex;gap:6px;">
+          <button class="st-term-btn active" data-term="ALL">All</button>
+          <button class="st-term-btn" data-term="T1">T1</button>
+          <button class="st-term-btn" data-term="T2">T2</button>
+        </div>
+      </div>
+      <div class="legend-row mb-12">
+        <span class="leg surplus"></span><span>Surplus</span>
+        <span class="leg adequate"></span><span>Adequate</span>
+        <span class="leg warning"></span><span>Warning</span>
+        <span class="leg gap"></span><span>Gap</span>
+      </div>
+      <div class="heatmap-wrapper" style="overflow-x:auto;">
+        <table class="heatmap-table heatmap-table--fluid" id="st-summary-heatmap"></table>
+      </div>
+    </div>
+  `;
+  if (typeof initShortTermPaxDemand === 'function') initShortTermPaxDemand({ date: ST_CURRENT_DATE });
+
+  function refreshSTCoverageTable(terminal) {
+    const tbl = document.getElementById('st-summary-heatmap');
+    if (tbl && ST_DATA) {
+      try { tbl.innerHTML = buildSTCoverageTableHTML(ST_DATA.tasks || [], terminal); } catch (e) { console.warn('Coverage render failed', e); }
+    }
+  }
+  refreshSTCoverageTable('ALL');
+
+  const filterBar = document.getElementById('st-coverage-terminal-filter');
+  if (filterBar) {
+    filterBar.addEventListener('click', e => {
+      const btn = e.target.closest('.st-term-btn');
+      if (!btn) return;
+      filterBar.querySelectorAll('.st-term-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      refreshSTCoverageTable(btn.dataset.term);
+    });
+  }
 }
 
 // ── Roster Timeline Tab ──────────────────────────────────────────
@@ -817,7 +901,7 @@ async function renderSTRosterTimeline(container) {
     <div class="panel mt-16">
       <div class="panel-title-row">
         <span class="panel-title">Operational Roster Timeline — ${ST_DATA.date_label}</span>
-        <div class="filter-row" style="flex-wrap:wrap;gap:6px">
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
           <input class="search-input" id="st-staff-timeline-search" placeholder="Search staff ID / skill…" style="width:180px" />
           <select id="st-staff-timeline-shift" class="select-input">
             <option value="">All Shifts</option>
@@ -827,6 +911,8 @@ async function renderSTRosterTimeline(container) {
               return `<option value="${sh}">${lbl}</option>`;
             }).join('')}
           </select>
+          <button id="rt-reopt-btn" class="btn-update-fluid" style="font-size:0.8rem;padding:7px 14px">⚡ Re-optimise</button>
+          <button id="rt-ext-btn"  class="btn-ghost"        style="font-size:0.8rem" title="Add 3 extra shift windows for higher coverage">+ Extended Shifts</button>
         </div>
       </div>
       <div id="st-staff-timeline" style="margin-top:16px;overflow-x:auto;"></div>
@@ -938,12 +1024,14 @@ async function renderSTRosterTimeline(container) {
   shiftSelect.addEventListener('change', doRefresh);
   doRefresh();
 
-  // Render the Workforce Coverage heatmap beneath the roster timeline
-  try {
-    renderSTHourlyCoverage();
-  } catch (e) {
-    console.warn('Coverage render failed', e);
-  }
+  // Proxy buttons → delegate to Roster Board buttons once they're rendered
+  document.getElementById('rt-reopt-btn')?.addEventListener('click', () => document.getElementById('rb-reopt-btn')?.click());
+  document.getElementById('rt-ext-btn')?.addEventListener('click',   () => document.getElementById('rb-ext-btn')?.click());
+
+  // Append Shift Assignment below
+  const boardContainer = document.createElement('div');
+  container.appendChild(boardContainer);
+  renderSTRosterBoard(boardContainer);
 }
 
 // ── Roster Timeline 3-Hour Block Table ────────────────────────────
@@ -1125,15 +1213,11 @@ async function renderSTRosterBoard(container) {
 
       container.innerHTML = `
         <div class="panel mt-16">
-          <div class="panel-title-row" style="margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:14px;flex-wrap:wrap;gap:10px">
-            <div>
-              <h2 class="panel-title" style="margin:0;font-size:1.2rem;color:var(--text);text-transform:none;">📋 Roster Board — Optimised Shift Assignments</h2>
-              <p class="section-hint" style="margin:5px 0 0;font-size:0.82rem">Shifts auto-assigned to maximise PAX coverage using 5 base shift windows (Early/Mid/Late/Evening/Night).</p>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-shrink:0">
-              <button id="rb-reopt-btn" class="btn-update-fluid" style="font-size:0.8rem;padding:7px 14px">⚡ Re-optimise</button>
-              <button id="rb-ext-btn"  class="btn-ghost"         style="font-size:0.8rem" title="Add 3 extra shift windows for higher coverage">+ Extended Shifts</button>
-            </div>
+          <div style="margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:14px;">
+            <h2 class="panel-title" style="margin:0;font-size:1.2rem;color:var(--text);text-transform:none;">📋 Roster Board — Optimised Shift Assignments</h2>
+            <p class="section-hint" style="margin:5px 0 0;font-size:0.82rem">Shifts auto-assigned to maximise PAX coverage using 5 base shift windows (Early/Mid/Late/Evening/Night).</p>
+            <button id="rb-reopt-btn" style="display:none"></button>
+            <button id="rb-ext-btn"  style="display:none"></button>
           </div>
 
           <!-- Shift template legend -->
@@ -1156,7 +1240,6 @@ async function renderSTRosterBoard(container) {
               <thead>
                 <tr style="border-bottom:2px solid var(--border)">
                   <th style="padding:10px 12px;text-align:left;min-width:70px">Staff</th>
-                  <th style="padding:10px 12px;text-align:left;min-width:80px">Skill</th>
                   ${covHtml}
                 </tr>
               </thead>
@@ -1164,7 +1247,6 @@ async function renderSTRosterBoard(container) {
                 ${employees.map(emp => `
                   <tr style="border-bottom:1px solid var(--border)">
                     <td style="padding:6px 12px;font-weight:700;font-size:0.82rem">${emp.id}</td>
-                    <td style="padding:6px 12px;font-size:0.75rem;color:${ST_SKILL_COLOR[fmtSkill(emp.skill)]||ST_SKILL_COLOR[emp.skill]||'#888'};font-weight:600">${fmtSkill(emp.skill)}</td>
                     ${dates.map(d => {
                       const sh = emp.shifts[d.date] || {template_id:'OFF',timings:'',is_absent:false};
                       const tid = sh.template_id || (sh.is_absent ? 'LEAVE' : 'OFF');
@@ -1242,7 +1324,7 @@ async function renderSTRosterBoard(container) {
 }
 
 // ── Workforce Coverage (Hourly Heatmap) for Short-Term ─────────────
-function buildSTCoverageData(tasks) {
+function buildSTCoverageData(tasks, terminal) {
   const hours = [];
   for (let h = 4; h <= 23; h++) hours.push(h);
 
@@ -1259,6 +1341,12 @@ function buildSTCoverageData(tasks) {
   });
 
   (tasks || []).forEach(task => {
+    // Terminal filter: skip tasks that don't match (treat 'ALL' task terminal as matching any)
+    const taskTerm = (task.terminal || 'ALL').toUpperCase();
+    if (terminal && terminal !== 'ALL') {
+      if (taskTerm !== 'ALL' && taskTerm !== terminal.toUpperCase()) return;
+    }
+
     let sk = task.skill || task.role || task.task || '';
     if (!hourData[sk]) {
       const base = sk.split(' -- ')[0];
@@ -1289,8 +1377,8 @@ function buildSTCoverageData(tasks) {
   return { data, hours, skills };
 }
 
-function buildSTCoverageTableHTML(tasks) {
-  const { data, hours, skills } = buildSTCoverageData(tasks);
+function buildSTCoverageTableHTML(tasks, terminal) {
+  const { data, hours, skills } = buildSTCoverageData(tasks, terminal);
 
   function cellClass(req, assigned) {
     if (req === 0) return '';

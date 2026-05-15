@@ -187,7 +187,6 @@ function switchView(view) {
     refreshAllCharts();
     if (typeof initLongTermPaxDemand === 'function') initLongTermPaxDemand();
   }
-  if (view === 'short-term-pax' && typeof initShortTermPaxDemand === 'function') initShortTermPaxDemand();
   if (view === 'intraday-pax' && typeof initIntradayPaxDemand === 'function') initIntradayPaxDemand();
 }
 

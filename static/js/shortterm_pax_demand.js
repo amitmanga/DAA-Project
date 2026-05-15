@@ -190,6 +190,76 @@ function stpaxRenderChart(payload) {
   });
 }
 
+const STPAX_MONTHS = { Jan:1, Feb:2, Mar:3, Apr:4, May:5, Jun:6, Jul:7, Aug:8, Sep:9, Oct:10, Nov:11, Dec:12 };
+
+function stpaxDayToISO(dayStr) {
+  // "Fri 16 May 2025" -> "2025-05-16"
+  const parts = String(dayStr || '').split(' ');
+  if (parts.length < 4) return '';
+  const d = parts[1].padStart(2, '0');
+  const m = String(STPAX_MONTHS[parts[2]] || 0).padStart(2, '0');
+  const y = parts[3];
+  return `${y}-${m}-${d}`;
+}
+
+function stpaxComputeInsightsFromSeries(series) {
+  const nums = key => (series[key] || []).map(v => Number(v || 0));
+  const peakVal = values => Math.round(Math.max(0, ...values));
+  const activeAvg = values => {
+    const active = values.filter(v => v > 0);
+    return active.length ? Math.round(active.reduce((a, b) => a + b, 0) / active.length) : 0;
+  };
+  const pct = (part, total) => total ? Math.round((part / total) * 100) : null;
+  const peakTime = key => {
+    const vals = nums(key);
+    if (!vals.length) return '--';
+    const idx = vals.indexOf(Math.max(...vals));
+    return (series.labels || [])[idx] || '--';
+  };
+  const fmt = v => Number(v || 0).toLocaleString();
+
+  const checkin = nums('checkin'), security = nums('security'), cbp = nums('cbp');
+  const lounge = nums('lounge'), boarding = nums('boarding');
+  const immigration = nums('immigration'), baggage = nums('baggage');
+  const maxCheckin = peakVal(checkin), maxSecurity = peakVal(security), maxCbp = peakVal(cbp);
+  const maxLounge = peakVal(lounge), maxBoarding = peakVal(boarding);
+  const maxImmigration = peakVal(immigration), maxBaggage = peakVal(baggage);
+  const avgSecurity = activeAvg(security);
+
+  return [
+    { key: 'checkin',    label: 'Check-In',         accent: 'teal',   peak: maxCheckin,    metric_label: 'Peak Pax / 15-min',    peak_time: peakTime('checkin'),    secondary_label: 'Avg (all day)',        secondary_value: `${fmt(activeAvg(checkin))} pax` },
+    { key: 'security',   label: 'Security',          accent: 'purple', peak: maxSecurity,   metric_label: 'Peak Pax / 15-min',    peak_time: peakTime('security'),   secondary_label: 'Pressure Index',      secondary_value: avgSecurity ? `${(maxSecurity / avgSecurity).toFixed(1)}x avg` : '--' },
+    { key: 'cbp',        label: 'CBP Preclearance',  accent: 'crit',   peak: maxCbp,        metric_label: 'Peak Pax / 15-min',    peak_time: peakTime('cbp'),        secondary_label: '% of Security',       secondary_value: pct(maxCbp, maxSecurity) != null ? `${pct(maxCbp, maxSecurity)}% of security peak` : '--' },
+    { key: 'lounge',     label: 'Lounge / Retail',   accent: 'warn',   peak: maxLounge,     metric_label: 'Peak Concurrent Pax',  peak_time: peakTime('lounge'),     secondary_label: 'Avg Occupancy',       secondary_value: `${fmt(activeAvg(lounge))} pax` },
+    { key: 'boarding',   label: 'Boarding Gates',    accent: 'info',   peak: maxBoarding,   metric_label: 'Peak Pax / 15-min',    peak_time: peakTime('boarding'),   secondary_label: 'Gate Pressure',       secondary_value: pct(maxBoarding, maxCheckin) != null ? `${pct(maxBoarding, maxCheckin)}% of check-in` : '--' },
+    { key: 'immigration',label: 'Immigration',       accent: 'ok',     peak: maxImmigration,metric_label: 'Peak Pax / 15-min',    peak_time: peakTime('immigration'),secondary_label: 'Intl. Arrival Share', secondary_value: pct(maxImmigration, maxBaggage) != null ? `${pct(maxImmigration, maxBaggage)}% of arrivals` : '--' },
+  ];
+}
+
+function stpaxFilterDay(payload, isoDate) {
+  const daysData = payload.series?.days_data || [];
+  const day = daysData.find(d => stpaxDayToISO(d.date) === isoDate);
+  if (!day) return payload;
+
+  const filteredSeries = {
+    labels: day.labels || [],
+    day_labels: (day.labels || []).map(() => day.date),
+    days_data: [day],
+  };
+  for (const key of ['checkin', 'security', 'cbp', 'lounge', 'boarding', 'immigration', 'baggage']) {
+    filteredSeries[key] = day[key] || [];
+  }
+
+  const parts = String(day.date || '').split(' ');
+  const dayShort = parts.slice(1, 3).join(' ');
+  return {
+    ...payload,
+    summary: { ...payload.summary, title: `${dayShort} Passenger Flow`, subtitle: 'passenger flow for the selected date' },
+    series: filteredSeries,
+    insights: stpaxComputeInsightsFromSeries(filteredSeries),
+  };
+}
+
 function stpaxRender(payload) {
   stpaxSetText('stpax-title', payload.summary?.title || '3-Day Strategic Outlook');
   stpaxSetText('stpax-subtitle', payload.summary?.subtitle || '');
@@ -207,7 +277,8 @@ async function initShortTermPaxDemand(options = {}) {
       if (!res.ok) throw new Error(`Short-term PAX API failed: ${res.status}`);
       STPAX_DATA = await res.json();
     }
-    stpaxRender(STPAX_DATA);
+    const renderPayload = options.date ? stpaxFilterDay(STPAX_DATA, options.date) : STPAX_DATA;
+    stpaxRender(renderPayload);
   } catch (err) {
     panel.innerHTML = '<div class="empty-state">Unable to load Short Term PAX Demand outlook.</div>';
     console.error(err);
