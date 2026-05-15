@@ -1011,7 +1011,7 @@ async function renderSTRosterTimeline(container) {
     const q = searchInput.value.toLowerCase();
     const sf = shiftSelect.value;
     const filtered = (ST_DATA.staff || []).filter(s => {
-      const mq = !q || s.id.toLowerCase().includes(q) || s.skill1.toLowerCase().includes(q);
+      const mq = !q || s.id.toLowerCase().includes(q) || [s.skill1, s.skill2, s.skill3, s.skill4].some(sk => (sk || '').toLowerCase().includes(q));
       const ms = !sf || s.shift.toLowerCase() === sf.toLowerCase();
       return mq && ms;
     });
@@ -1067,6 +1067,7 @@ function renderST3HrBlocksTable(el, staffList) {
   const rows = staffList.map(s => {
     const utilColor = s.utilisation_pct > 90 ? ST.crit : s.utilisation_pct > 70 ? ST.warn : ST.ok;
     const sk1 = fmtSkill(s.skill1);
+    const allSkills = [s.skill1, s.skill2, s.skill3, s.skill4].filter(Boolean).map(fmtSkill);
     const grp = s.break_group || '';
     const grpColor = grp === 'A' ? '#2563EB' : '#059669';
 
@@ -1117,7 +1118,7 @@ function renderST3HrBlocksTable(el, staffList) {
 
     return `<tr>
       <td style="padding:6px 10px;font-weight:700;font-size:0.82rem;white-space:nowrap">${s.id}</td>
-      <td style="padding:6px 10px;font-size:0.78rem"><span style="color:${ST_SKILL_COLOR[sk1]||'#888'};font-weight:600">${sk1}</span></td>
+      <td style="padding:6px 10px;font-size:0.75rem;font-weight:600">${allSkills.map((sk, i) => `<span style="color:${ST_SKILL_COLOR[sk]||'#888'}">${sk}</span>`).join('<span style="color:var(--muted)">, </span>')}</td>
       <td style="padding:6px 10px;font-size:0.75rem;white-space:nowrap">${s.shift_label || s.shift}</td>
       <td style="padding:6px 10px;font-size:0.75rem;font-weight:700;color:${utilColor}">${Math.round(s.utilisation_pct)}%</td>
       ${cells}
