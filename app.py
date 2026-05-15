@@ -344,7 +344,7 @@ LONG_TERM_HISTORICAL_PAX_FILE = 'historical_pax_data.csv'
 
 # The weekly P50 file contains total passenger footfall only. These conservative
 # operating shares keep the long-term FTE model independent from flight movements.
-LONG_TERM_TERMINAL_SHARE = {'T1': 0.50, 'T2': 0.50}
+LONG_TERM_TERMINAL_SHARE = {'T1': 0.635, 'T2': 0.365}
 LONG_TERM_DEPARTURE_SHARE = 0.50
 LONG_TERM_ARRIVAL_SHARE = 0.50
 LONG_TERM_CBP_DEPARTURE_SHARE = 0.15
@@ -1861,10 +1861,16 @@ def lt_four_week_roster():
     3. Expand each week to 7 days using the DOW weights.
     4. Derive Early / Late / Night shift headcount from daily totals.
     """
+    # ── Terminal filter ────────────────────────────────────────────────────
+    terminal = request.args.get('terminal', 'ALL').upper()
+    if terminal not in ('T1', 'T2', 'ALL'):
+        terminal = 'ALL'
+    term_share = LONG_TERM_TERMINAL_SHARE.get(terminal, 1.0) if terminal != 'ALL' else 1.0
+
     # ── 1. Day-of-week weights ─────────────────────────────────────────────
     # Aviation baseline weights (Mon–Sun index 0–6).
     # These reflect typical airport traffic patterns (Fri/Sat peaks, Tue troughs).
-    _BASE_DOW = [0.100, 0.110, 0.125, 0.135, 0.155, 0.175, 0.200]
+    _BASE_DOW = [0.125, 0.100, 0.110, 0.135, 0.155, 0.175, 0.200]
     total_w = sum(_BASE_DOW)
     dow_weights = [round(w / total_w, 4) for w in _BASE_DOW]  # Mon–Sun, sum=1.0
 
@@ -1899,16 +1905,17 @@ def lt_four_week_roster():
         weight = dow_weights[dow_idx]
         skill_fte_day = {}
         for sk in all_skills:
-            skill_fte_day[sk] = round(weekly_skill_fte.get(sk, 0) * weight * 7, 2)
+            skill_fte_day[sk] = round(weekly_skill_fte.get(sk, 0) * weight * 7 * term_share, 2)
 
-        daily_total_fte = round(weekly_total_fte * weight * 7, 2)
+        daily_total_fte = round(weekly_total_fte * weight * 7 * term_share, 2)
 
         # Availability is an exact daily headcount: total workforce minus
         # employees whose leave window includes this calendar date.
-        daily_total_avail, daily_skill_avail, absent_count = daily_staff_available(date)
+        _raw_avail, _raw_skill_avail, absent_count = daily_staff_available(date)
+        daily_total_avail = round(_raw_avail * term_share, 2)
         skill_avail_day = {}
         for sk in all_skills:
-            skill_avail_day[sk] = round(daily_skill_avail.get(sk, 0), 2)
+            skill_avail_day[sk] = round(_raw_skill_avail.get(sk, 0) * term_share, 2)
 
         # Gap = Available − Required  (positive = surplus, negative = shortfall)
         skill_gap_day = {sk: round(skill_avail_day[sk] - skill_fte_day[sk], 2)
@@ -1978,7 +1985,7 @@ def lt_four_week_roster():
 
     cur_weekly_skill_fte   = skill_req_all.get(cur_wk_key, {})
     cur_weekly_total_fte   = staff_req_all.get(cur_wk_key, 0)
-    cur_week_avail         = sum(daily_staff_available(cur_week_monday + timedelta(days=i))[0] for i in range(7)) / 7
+    cur_week_avail         = round(sum(daily_staff_available(cur_week_monday + timedelta(days=i))[0] for i in range(7)) / 7 * term_share, 1)
 
     # Short term covers 4 days: today (day 0) through today+3
     ST_WINDOW = 4  # days covered by the short-term passenger profile
@@ -2006,7 +2013,7 @@ def lt_four_week_roster():
         'week':         cur_wk_key,
         'start_date':   cur_week_monday.strftime('%d %b %Y'),
         'end_date':     cur_week_sunday.strftime('%d %b %Y'),
-        'weekly_fte':   round(cur_weekly_total_fte, 1),
+        'weekly_fte':   round(cur_weekly_total_fte * term_share, 1),
         'weekly_avail': cur_week_avail,
         'days':         current_week_days,
         'is_current_week': True,
@@ -2021,7 +2028,7 @@ def lt_four_week_roster():
 
         weekly_skill_fte   = skill_req_all.get(wk_key, {})
         weekly_total_fte   = staff_req_all.get(wk_key, 0)
-        week_avail         = sum(daily_staff_available(monday + timedelta(days=i))[0] for i in range(7)) / 7
+        week_avail         = round(sum(daily_staff_available(monday + timedelta(days=i))[0] for i in range(7)) / 7 * term_share, 1)
 
         days = []
         for dow_idx in range(7):
@@ -2034,7 +2041,7 @@ def lt_four_week_roster():
             'week':            wk_key,
             'start_date':      monday.strftime('%d %b %Y'),
             'end_date':        (monday + timedelta(days=6)).strftime('%d %b %Y'),
-            'weekly_fte':      round(weekly_total_fte, 1),
+            'weekly_fte':      round(weekly_total_fte * term_share, 1),
             'weekly_avail':    week_avail,
             'days':            days,
             'is_current_week': False,
@@ -2049,6 +2056,7 @@ def lt_four_week_roster():
         'time_block_defs':  [{'id': tb['id'], 'label': tb['label']}
                              for tb in _TIME_BLOCKS],
         'st_window_days':   ST_WINDOW,
+        'terminal':         terminal,
     })
 
 

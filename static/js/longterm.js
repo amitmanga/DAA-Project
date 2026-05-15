@@ -84,7 +84,7 @@ window.addEventListener('themeChanged', () => {
 });
 
 function refreshAllCharts() {
-  if (document.getElementById('view-long-term-pax')?.classList.contains('active') &&
+  if (document.getElementById('sub-summary')?.classList.contains('active') &&
       typeof initLongTermPaxDemand === 'function') {
     initLongTermPaxDemand({ force: true });
   }
@@ -104,10 +104,9 @@ function refreshAllCharts() {
   // 3. Re-render sub-view specific charts
   const activeSub = document.querySelector('.sub-tab.active')?.dataset.sub;
   if (activeSub === 'allocation') {
-    loadAllocationTable(); // Re-renders table and skill bar chart
+    loadAllocationTable(); // Re-renders allocation table
     loadSkillBarChart();
-  } else if (activeSub === 'gap-skill') {
-    initGapSkillAnalysis(); // Re-renders merged charts
+    initGapSkillAnalysis(); // Re-renders gap analysis charts
   } else if (activeSub === 'skills') {
     loadSkillCharts();
   }
@@ -184,8 +183,10 @@ function switchView(view) {
   if (view === 'short-term' && typeof initShortTerm === 'function') initShortTerm();
   if (view === 'intraday'   && typeof initIntraday   === 'function') initIntraday();
   if (view === 'config'     && typeof initConfig     === 'function') initConfig();
-  if (view === 'long-term') refreshAllCharts();
-  if (view === 'long-term-pax' && typeof initLongTermPaxDemand === 'function') initLongTermPaxDemand();
+  if (view === 'long-term') {
+    refreshAllCharts();
+    if (typeof initLongTermPaxDemand === 'function') initLongTermPaxDemand();
+  }
   if (view === 'short-term-pax' && typeof initShortTermPaxDemand === 'function') initShortTermPaxDemand();
   if (view === 'intraday-pax' && typeof initIntradayPaxDemand === 'function') initIntradayPaxDemand();
 }
@@ -210,9 +211,12 @@ document.querySelectorAll('.sub-tab').forEach(tab => {
     document.querySelectorAll('.sub-view').forEach(v => v.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById(`sub-${tab.dataset.sub}`).classList.add('active');
+    if (tab.dataset.sub === 'summary' && typeof initLongTermPaxDemand === 'function') initLongTermPaxDemand();
+    if (tab.dataset.sub === 'allocation') {
+      loadAllocationTable();
+      initGapSkillAnalysis();
+    }
     if (tab.dataset.sub === 'scenario' && typeof initScenario === 'function') initScenario();
-
-    if (tab.dataset.sub === 'gap-skill') initGapSkillAnalysis();
     if (tab.dataset.sub === 'four-week-roster') initFourWeekRoster();
   });
 });
@@ -754,11 +758,11 @@ function renderImbalanceChart(selectedWeek) {
         if (elements.length > 0) {
           const idx = elements[0].index;
           selectWeek(ALL_IMBALANCE[idx].week);
-          // Switch to Demand tab to show drilldown
+          // Switch to Summary tab to show drilldown
           document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
           document.querySelectorAll('.sub-view').forEach(v => v.classList.remove('active'));
-          document.querySelector('[data-sub="demand"]').classList.add('active');
-          document.getElementById('sub-demand').classList.add('active');
+          document.querySelector('[data-sub="summary"]').classList.add('active');
+          document.getElementById('sub-summary').classList.add('active');
         }
       },
       plugins: {
@@ -841,8 +845,8 @@ function renderGapTable(selectedWeek) {
     tr.addEventListener('click', () => {
       document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.sub-view').forEach(v => v.classList.remove('active'));
-      document.querySelector('[data-sub="demand"]').classList.add('active');
-      document.getElementById('sub-demand').classList.add('active');
+      document.querySelector('[data-sub="summary"]').classList.add('active');
+      document.getElementById('sub-summary').classList.add('active');
       selectWeek(d.week);
     });
     tbody.appendChild(tr);
@@ -891,18 +895,18 @@ async function loadAllocationTable() {
       months.map(m => {
         const v = m[sk] || 0;
         const cls = v > 0 ? heatClass(v, skillMins[sk], skillMaxes[sk]) : '';
-        return `<td class="${cls}">${v > 0 ? v.toFixed(1) : '—'}</td>`;
+        return `<td class="${cls}">${v > 0 ? Math.round(v) : '—'}</td>`;
       }).join('');
     tbody.appendChild(tr);
   });
 
   [
-    { label: 'Total FTE Required', key: 'total_required', fmt: v => v.toFixed(1),
+    { label: 'Total FTE Required', key: 'total_required', fmt: v => Math.round(v),
       style: m => heatClass(m.total_required, minReq, maxReq), border: true },
     { label: 'Staff Available (avg/wk)', key: 'total_available',
-      fmt: v => v.toFixed(1), style: () => '', color: '#3498DB', border: false },
+      fmt: v => Math.round(v), style: () => '', color: '#3498DB', border: false },
     { label: 'Gap (FTE)', key: 'gap',
-      fmt: v => (v > 0 ? '+' : '') + v.toFixed(1),
+      fmt: v => (v > 0 ? '+' : '') + Math.round(v),
       style: () => '', color: m => gapColor(m.gap),
       border: false },
   ].forEach(row => {
@@ -1252,6 +1256,7 @@ let _rosterData = null;
 let _rosterActiveWeekIdx = 0;
 let _shiftPivoted = false;
 let _blockPivoted = false;
+let _rosterTerminal = 'ALL';
 
 window.toggleShiftPivot = function () {
   _shiftPivoted = !_shiftPivoted;
@@ -1283,25 +1288,45 @@ async function initFourWeekRoster() {
   _rosterActiveWeekIdx = 0;
   _shiftPivoted = false;
   _blockPivoted = false;
+  _rosterTerminal = 'ALL';
   const spb = document.getElementById('roster-shift-pivot-btn');
   const bpb = document.getElementById('roster-block-pivot-btn');
   if (spb) spb.classList.remove('btn-pivot-active');
   if (bpb) bpb.classList.remove('btn-pivot-active');
 
-  // Show loading
+  // Reset terminal filter buttons
+  document.querySelectorAll('.rtf-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.terminal === 'ALL');
+  });
+
+  await _fetchRosterData();
+}
+
+async function _fetchRosterData() {
   document.getElementById('roster-loading').style.display = 'flex';
   document.getElementById('roster-week-nav').style.display = 'none';
   document.getElementById('roster-shift-panel').style.display = 'none';
   document.getElementById('roster-block-panel').style.display = 'none';
 
   try {
-    _rosterData = await api('/api/long-term/four-week-roster');
+    _rosterData = await api('/api/long-term/four-week-roster?terminal=' + _rosterTerminal);
     renderRoster(_rosterData);
   } catch (e) {
     document.getElementById('roster-loading').innerHTML =
       '<span style="color:var(--crit)">Failed to load roster data. Please try again.</span>';
   }
 }
+
+window.setRosterTerminal = async function(terminal) {
+  if (terminal === _rosterTerminal) return;
+  _rosterTerminal = terminal;
+  document.querySelectorAll('.rtf-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.terminal === terminal);
+  });
+  _rosterData = null;
+  _rosterActiveWeekIdx = 0;
+  await _fetchRosterData();
+};
 
 function renderRoster(data) {
   document.getElementById('roster-loading').style.display = 'none';

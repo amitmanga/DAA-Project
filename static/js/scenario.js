@@ -46,189 +46,184 @@ function _buildUI() {
   root.innerHTML = `
     <div class="sc-layout">
 
-      <!-- LEFT: Constraint Editor -->
-      <div class="sc-left">
-        <div class="panel sc-editor-panel">
-          <div class="panel-title">Scenario Planner</div>
+      <!-- TOP: Constraint groups side by side -->
+      <div class="sc-constraints-bar">
 
-          <div class="sc-field-group">
-            <label class="sc-label">Scenario Name</label>
-            <input id="sc-name" class="sc-input" type="text" placeholder="e.g. Summer Peak — Extra Security" />
-          </div>
-          <div class="sc-field-row">
-            <div class="sc-field-half">
-              <label class="sc-label">Start Date</label>
-              <input id="sc-start-date" class="sc-input sc-input-sm" type="date" />
-            </div>
-            <div class="sc-field-half">
-              <label class="sc-label">End Date</label>
-              <input id="sc-end-date" class="sc-input sc-input-sm" type="date" />
+        <!-- Hard Constraints -->
+        <div class="sc-constraint-group sc-group-hard">
+          <div class="sc-group-header">
+            <span class="sc-group-badge sc-badge-hard">Hard</span>
+            <div>
+              <div class="sc-group-title">Hard Constraints</div>
+              <div class="sc-group-hint">Regulatory &amp; contractual — non-negotiable limits</div>
             </div>
           </div>
-
-          <!-- ── Hard Constraints ── -->
-          <div class="sc-constraint-group sc-group-hard">
-            <div class="sc-group-header">
-              <span class="sc-group-badge sc-badge-hard">Hard</span>
-              <div>
-                <div class="sc-group-title">Hard Constraints</div>
-                <div class="sc-group-hint">Regulatory &amp; contractual — non-negotiable limits</div>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Minimum Rest Between Shifts
-                <span class="sc-hint">Regulatory minimum hours off between consecutive shifts (EU Working Time Directive)</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-min-rest" min="8" max="16" step="1" value="11"
-                  oninput="document.getElementById('sv-min-rest').textContent=this.value+'h'">
-                <span class="sc-slider-val" id="sv-min-rest">11h</span>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Maximum Consecutive Working Days
-                <span class="sc-hint">Legal/contractual cap — after this many days a rest day is mandatory</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-max-consec" min="4" max="7" step="1" value="5"
-                  oninput="document.getElementById('sv-max-consec').textContent=this.value+' days'">
-                <span class="sc-slider-val" id="sv-max-consec">5 days</span>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Minimum SLA Coverage Floor
-                <span class="sc-hint">Contractual minimum: available headcount must cover at least this fraction of demand</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-cov-floor" min="0.70" max="1.00" step="0.01" value="0.85"
-                  oninput="document.getElementById('sv-cov-floor').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-                <span class="sc-slider-val" id="sv-cov-floor">85%</span>
-              </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Minimum Rest Between Shifts
+              <span class="sc-hint">Regulatory minimum hours off between consecutive shifts (EU Working Time Directive)</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-min-rest" min="8" max="16" step="1" value="11"
+                oninput="document.getElementById('sv-min-rest').textContent=this.value+'h'">
+              <span class="sc-slider-val" id="sv-min-rest">11h</span>
             </div>
           </div>
-
-          <!-- ── Soft Constraints ── -->
-          <div class="sc-constraint-group sc-group-soft">
-            <div class="sc-group-header">
-              <span class="sc-group-badge sc-badge-soft">Soft</span>
-              <div>
-                <div class="sc-group-title">Soft Constraints</div>
-                <div class="sc-group-hint">Operational targets — adjustable by planning team</div>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Absence Rate
-                <span class="sc-hint">Expected daily absence rate per staff member (sick leave, unplanned absence)</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-absence-rate" min="0" max="0.20" step="0.005" value="0.06"
-                  oninput="document.getElementById('sv-absence-rate').textContent=(parseFloat(this.value)*100).toFixed(1)+'%'">
-                <span class="sc-slider-val" id="sv-absence-rate">6.0%</span>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Overtime Allowance
-                <span class="sc-hint">Additional available capacity from authorised overtime as % of base headcount</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-overtime" min="0" max="0.20" step="0.01" value="0.00"
-                  oninput="document.getElementById('sv-overtime').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-                <span class="sc-slider-val" id="sv-overtime">0%</span>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Target Staff Utilisation
-                <span class="sc-hint">Productive utilisation rate accounting for breaks, admin, and training time</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-utilisation" min="0.50" max="1.00" step="0.05" value="0.80"
-                  oninput="document.getElementById('sv-utilisation').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-                <span class="sc-slider-val" id="sv-utilisation">80%</span>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Peak Period Buffer
-                <span class="sc-hint">Extra FTE headroom added on top of demand forecast during peak periods</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-peak-buffer" min="0" max="0.30" step="0.01" value="0.10"
-                  oninput="document.getElementById('sv-peak-buffer').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-                <span class="sc-slider-val" id="sv-peak-buffer">10%</span>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Cross-Training Rate
-                <span class="sc-hint">Fraction of workforce multi-skilled and flexibly deployable across touchpoints</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-cross-train" min="0" max="0.50" step="0.05" value="0.15"
-                  oninput="document.getElementById('sv-cross-train').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-                <span class="sc-slider-val" id="sv-cross-train">15%</span>
-              </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Maximum Consecutive Working Days
+              <span class="sc-hint">Legal/contractual cap — after this many days a rest day is mandatory</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-max-consec" min="4" max="7" step="1" value="5"
+                oninput="document.getElementById('sv-max-consec').textContent=this.value+' days'">
+              <span class="sc-slider-val" id="sv-max-consec">5 days</span>
             </div>
           </div>
-
-          <!-- ── Operational Heuristics ── -->
-          <div class="sc-constraint-group sc-group-heuristic">
-            <div class="sc-group-header">
-              <span class="sc-group-badge sc-badge-heuristic">Heuristic</span>
-              <div>
-                <div class="sc-group-title">Operational Heuristics</div>
-                <div class="sc-group-hint">Experience-based planning assumptions for scenario modelling</div>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Surge Demand Multiplier
-                <span class="sc-hint">Apply demand uplift for events, disruptions, or contingency planning</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-surge" min="1.0" max="2.5" step="0.05" value="1.0"
-                  oninput="document.getElementById('sv-surge').textContent=parseFloat(this.value).toFixed(2)+'×'">
-                <span class="sc-slider-val" id="sv-surge">1.00×</span>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">New Hire Fraction
-                <span class="sc-hint">New hires operate at ~70% of a fully trained agent's output capacity</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-new-hire" min="0" max="0.50" step="0.05" value="0.00"
-                  oninput="document.getElementById('sv-new-hire').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-                <span class="sc-slider-val" id="sv-new-hire">0%</span>
-              </div>
-            </div>
-
-            <div class="sc-slider-row">
-              <label class="sc-label">Senior Staff on Peak Days
-                <span class="sc-hint">Target ratio of experienced staff rostered for peak-traffic periods</span>
-              </label>
-              <div class="sc-slider-wrap">
-                <input type="range" id="sl-senior-ratio" min="0.10" max="0.50" step="0.05" value="0.30"
-                  oninput="document.getElementById('sv-senior-ratio').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
-                <span class="sc-slider-val" id="sv-senior-ratio">30%</span>
-              </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Minimum SLA Coverage Floor
+              <span class="sc-hint">Contractual minimum: available headcount must cover at least this fraction of demand</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-cov-floor" min="0.70" max="1.00" step="0.01" value="0.85"
+                oninput="document.getElementById('sv-cov-floor').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
+              <span class="sc-slider-val" id="sv-cov-floor">85%</span>
             </div>
           </div>
-
-          <button class="btn-run-scenario" id="btn-run-sc" onclick="scRunScenario()">
-            ▶ Run Scenario Optimisation
-          </button>
-          <div id="sc-run-status" class="sc-run-status"></div>
         </div>
-      </div>
 
-      <!-- RIGHT: Results + Saved Scenarios -->
-      <div class="sc-right">
+        <!-- Soft Constraints -->
+        <div class="sc-constraint-group sc-group-soft">
+          <div class="sc-group-header">
+            <span class="sc-group-badge sc-badge-soft">Soft</span>
+            <div>
+              <div class="sc-group-title">Soft Constraints</div>
+              <div class="sc-group-hint">Operational targets — adjustable by planning team</div>
+            </div>
+          </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Absence Rate
+              <span class="sc-hint">Expected daily absence rate per staff member (sick leave, unplanned absence)</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-absence-rate" min="0" max="0.20" step="0.005" value="0.06"
+                oninput="document.getElementById('sv-absence-rate').textContent=(parseFloat(this.value)*100).toFixed(1)+'%'">
+              <span class="sc-slider-val" id="sv-absence-rate">6.0%</span>
+            </div>
+          </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Overtime Allowance
+              <span class="sc-hint">Additional available capacity from authorised overtime as % of base headcount</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-overtime" min="0" max="0.20" step="0.01" value="0.00"
+                oninput="document.getElementById('sv-overtime').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
+              <span class="sc-slider-val" id="sv-overtime">0%</span>
+            </div>
+          </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Target Staff Utilisation
+              <span class="sc-hint">Productive utilisation rate accounting for breaks, admin, and training time</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-utilisation" min="0.50" max="1.00" step="0.05" value="0.80"
+                oninput="document.getElementById('sv-utilisation').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
+              <span class="sc-slider-val" id="sv-utilisation">80%</span>
+            </div>
+          </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Peak Period Buffer
+              <span class="sc-hint">Extra FTE headroom added on top of demand forecast during peak periods</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-peak-buffer" min="0" max="0.30" step="0.01" value="0.10"
+                oninput="document.getElementById('sv-peak-buffer').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
+              <span class="sc-slider-val" id="sv-peak-buffer">10%</span>
+            </div>
+          </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Cross-Training Rate
+              <span class="sc-hint">Fraction of workforce multi-skilled and flexibly deployable across touchpoints</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-cross-train" min="0" max="0.50" step="0.05" value="0.15"
+                oninput="document.getElementById('sv-cross-train').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
+              <span class="sc-slider-val" id="sv-cross-train">15%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Operational Heuristics -->
+        <div class="sc-constraint-group sc-group-heuristic">
+          <div class="sc-group-header">
+            <span class="sc-group-badge sc-badge-heuristic">Heuristic</span>
+            <div>
+              <div class="sc-group-title">Operational Heuristics</div>
+              <div class="sc-group-hint">Experience-based planning assumptions for scenario modelling</div>
+            </div>
+          </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Surge Demand Multiplier
+              <span class="sc-hint">Apply demand uplift for events, disruptions, or contingency planning</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-surge" min="1.0" max="2.5" step="0.05" value="1.0"
+                oninput="document.getElementById('sv-surge').textContent=parseFloat(this.value).toFixed(2)+'×'">
+              <span class="sc-slider-val" id="sv-surge">1.00×</span>
+            </div>
+          </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">New Hire Fraction
+              <span class="sc-hint">New hires operate at ~70% of a fully trained agent's output capacity</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-new-hire" min="0" max="0.50" step="0.05" value="0.00"
+                oninput="document.getElementById('sv-new-hire').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
+              <span class="sc-slider-val" id="sv-new-hire">0%</span>
+            </div>
+          </div>
+          <div class="sc-slider-row">
+            <label class="sc-label">Senior Staff on Peak Days
+              <span class="sc-hint">Target ratio of experienced staff rostered for peak-traffic periods</span>
+            </label>
+            <div class="sc-slider-wrap">
+              <input type="range" id="sl-senior-ratio" min="0.10" max="0.50" step="0.05" value="0.30"
+                oninput="document.getElementById('sv-senior-ratio').textContent=(parseFloat(this.value)*100).toFixed(0)+'%'">
+              <span class="sc-slider-val" id="sv-senior-ratio">30%</span>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /sc-constraints-bar -->
+
+      <!-- BOTTOM ROW: Scenario config (left) + Results (right) -->
+      <div class="sc-editor-row">
+
+        <!-- LEFT: Scenario name, dates, run button -->
+        <div class="sc-left">
+          <div class="panel sc-editor-panel">
+            <div class="panel-title">Scenario Planner</div>
+            <div class="sc-field-group">
+              <label class="sc-label">Scenario Name</label>
+              <input id="sc-name" class="sc-input" type="text" placeholder="e.g. Summer Peak — Extra Security" />
+            </div>
+            <div class="sc-field-row">
+              <div class="sc-field-half">
+                <label class="sc-label">Start Date</label>
+                <input id="sc-start-date" class="sc-input sc-input-sm" type="date" />
+              </div>
+              <div class="sc-field-half">
+                <label class="sc-label">End Date</label>
+                <input id="sc-end-date" class="sc-input sc-input-sm" type="date" />
+              </div>
+            </div>
+            <button class="btn-run-scenario" id="btn-run-sc" onclick="scRunScenario()">
+              ▶ Run Scenario Optimisation
+            </button>
+            <div id="sc-run-status" class="sc-run-status"></div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Results + Saved Scenarios -->
+        <div class="sc-right">
 
         <!-- Result panel (hidden until first run) -->
         <div id="sc-result-panel" class="panel sc-result-panel hidden">
@@ -253,7 +248,7 @@ function _buildUI() {
         </div>
 
         <!-- Saved Scenarios -->
-        <div class="panel mt-16" id="sc-saved-panel">
+        <div class="panel" id="sc-saved-panel">
           <div class="panel-title-row">
             <span class="panel-title" style="margin:0">Saved Scenarios</span>
             <span class="sc-compare-hint" id="sc-compare-hint">Select 2–3 scenarios to compare</span>
@@ -281,7 +276,7 @@ function _buildUI() {
         </div>
 
         <!-- Comparison panel -->
-        <div id="sc-compare-panel" class="panel mt-16 hidden">
+        <div id="sc-compare-panel" class="panel hidden">
           <div class="panel-title-row">
             <span class="panel-title" style="margin:0">Scenario Comparison</span>
             <button class="sc-close-btn" onclick="scCloseCompare()">✕ Close</button>
@@ -292,8 +287,9 @@ function _buildUI() {
           <div class="table-scroll mt-16" id="sc-comp-table-wrap"></div>
         </div>
 
-      </div>
-    </div>
+      </div><!-- /sc-right -->
+      </div><!-- /sc-editor-row -->
+    </div><!-- /sc-layout -->
   `;
 
   const today = new Date();
