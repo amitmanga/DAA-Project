@@ -5,6 +5,8 @@ let IDPAX_BASELINE_PAYLOAD = null;
 let IDPAX_SIM_PAYLOAD = null;
 let IDPAX_CHART = null;
 let IDPAX_CURRENT_SCENARIO = 'flight_delay';
+let IDPAX_CHART_PAYLOAD = null;
+const IDPAX_CHART_FILTERS = { terminal: 'ALL', skill: 'ALL' };
 
 const IDPAX_SERIES = [
   { key: 'checkin', label: 'Check-in', color: '#0ea5e9', axis: 'y' },
@@ -15,6 +17,8 @@ const IDPAX_SERIES = [
   { key: 'immigration', label: 'Immigration', color: '#10b981', axis: 'y' },
   { key: 'baggage', label: 'Baggage', color: '#3b82f6', axis: 'y' },
 ];
+
+const IDPAX_PAX_BY_ICAO = { A: 20, B: 50, C: 180, D: 260, E: 330, F: 500 };
 
 const IDPAX_TOUCHPOINT_ICONS = {
   check: '<path d="M3 7h18"/><path d="M5 7l2-4h10l2 4"/><path d="M6 11h12"/><path d="M8 15h8"/><path d="M10 19h4"/>',
@@ -51,6 +55,78 @@ function idpaxFmt(value) {
 function idpaxFmtDelta(value) {
   const n = Math.round(Number(value || 0));
   return n > 0 ? `+${n.toLocaleString()}` : n.toLocaleString();
+}
+
+function idpaxPaxForFlight(flight) {
+  const icao = String(flight?.icao_cat || '').trim().toUpperCase();
+  return IDPAX_PAX_BY_ICAO[icao] || 150;
+}
+
+function idpaxTerminalForFlight(flight) {
+  const terminal = String(flight?.terminal || '').trim().toUpperCase();
+  return terminal === 'T1' || terminal === 'T2' ? terminal : null;
+}
+
+function idpaxFlightServesTouchpoint(flight, touchpoint) {
+  const flowType = String(flight?.type || '').trim().toUpperCase();
+  const isDeparture = flowType === 'DEP' || flowType === 'TURN';
+  const isArrival = flowType === 'ARR' || flowType === 'TURN';
+  if (touchpoint === 'immigration' || touchpoint === 'baggage') return isArrival;
+  if (touchpoint === 'cbp') {
+    return isDeparture && String(flight?.cbp_required || '').trim().toLowerCase() === 'true';
+  }
+  return isDeparture;
+}
+
+function idpaxTerminalWeight(payload, touchpoint, terminal) {
+  if (terminal === 'ALL') return 1;
+  const flights = payload?.flights || IDPAX_DATA?.flights || [];
+  const counts = { T1: 0, T2: 0 };
+  flights.forEach(flight => {
+    const flightTerminal = idpaxTerminalForFlight(flight);
+    if (!flightTerminal || !idpaxFlightServesTouchpoint(flight, touchpoint)) return;
+    counts[flightTerminal] += idpaxPaxForFlight(flight);
+  });
+  const total = counts.T1 + counts.T2;
+  if (total <= 0) return 0.5;
+  return counts[terminal] / total;
+}
+
+function idpaxScaleSeriesForTerminal(series, payload, terminal) {
+  if (!series || terminal === 'ALL') return series || {};
+  const scaled = { ...series, labels: series.labels || [] };
+  IDPAX_SERIES.forEach(item => {
+    const weight = idpaxTerminalWeight(payload, item.key, terminal);
+    scaled[item.key] = (series[item.key] || []).map(value => Number(value || 0) * weight);
+  });
+  return scaled;
+}
+
+function idpaxFilteredSeriesItems() {
+  if (IDPAX_CHART_FILTERS.skill === 'ALL') return IDPAX_SERIES;
+  return IDPAX_SERIES.filter(item => item.key === IDPAX_CHART_FILTERS.skill);
+}
+
+function idpaxSmoothDistribution(values) {
+  const nums = (values || []).map(value => Number(value || 0));
+  if (nums.length < 5 || nums.every(value => value === 0)) return nums;
+
+  const radius = 6;
+  const sigma = 3;
+  const weights = [];
+  for (let offset = -radius; offset <= radius; offset += 1) {
+    weights.push(Math.exp(-(offset * offset) / (2 * sigma * sigma)));
+  }
+  const totalWeight = weights.reduce((sum, value) => sum + value, 0) || 1;
+
+  return nums.map((_, idx) => {
+    let weighted = 0;
+    for (let offset = -radius; offset <= radius; offset += 1) {
+      const sourceIdx = Math.max(0, Math.min(nums.length - 1, idx + offset));
+      weighted += nums[sourceIdx] * weights[offset + radius];
+    }
+    return Math.max(0, weighted / totalWeight);
+  });
 }
 
 function idpaxSeriesPeak(values) {
@@ -411,16 +487,18 @@ function idpaxRenderInsights(payload) {
 }
 
 function idpaxBuildDatasets(series, isSimulated = false, baselineSeries = null) {
+  const seriesItems = idpaxFilteredSeriesItems();
   if (isSimulated) {
     const base = baselineSeries || IDPAX_DATA?.series || {};
     const sim = series || {};
-    const baselineDatasets = IDPAX_SERIES.map(item => ({
+    const baselineDatasets = seriesItems.map(item => ({
       label: `${item.label} (Baseline)`,
-      data: base[item.key] || [],
+      data: idpaxSmoothDistribution(base[item.key] || []),
       borderColor: `${item.color}66`,
       backgroundColor: 'transparent',
       fill: false,
-      tension: 0.32,
+      cubicInterpolationMode: 'monotone',
+      tension: 0.45,
       borderWidth: 1.5,
       pointRadius: 0,
       hitRadius: 8,
@@ -428,13 +506,14 @@ function idpaxBuildDatasets(series, isSimulated = false, baselineSeries = null) 
       yAxisID: item.axis,
       borderDash: item.dash || [],
     }));
-    const simulatedDatasets = IDPAX_SERIES.map(item => ({
+    const simulatedDatasets = seriesItems.map(item => ({
       label: `${item.label} (Sim)`,
-      data: sim[item.key] || [],
+      data: idpaxSmoothDistribution(sim[item.key] || []),
       borderColor: item.color,
       backgroundColor: `${item.color}${item.axis === 'y1' ? '20' : '22'}`,
       fill: true,
-      tension: 0.32,
+      cubicInterpolationMode: 'monotone',
+      tension: 0.45,
       borderWidth: 2.8,
       pointRadius: 0,
       hitRadius: 8,
@@ -445,13 +524,14 @@ function idpaxBuildDatasets(series, isSimulated = false, baselineSeries = null) 
     return [...baselineDatasets, ...simulatedDatasets];
   }
 
-  return IDPAX_SERIES.map(item => ({
+  return seriesItems.map(item => ({
     label: item.label,
-    data: series[item.key] || [],
+    data: idpaxSmoothDistribution(series[item.key] || []),
     borderColor: item.color,
     backgroundColor: `${item.color}22`,
     fill: true,
-    tension: 0.32,
+    cubicInterpolationMode: 'monotone',
+    tension: 0.45,
     borderWidth: 2,
     pointRadius: 0,
     hitRadius: 8,
@@ -461,9 +541,42 @@ function idpaxBuildDatasets(series, isSimulated = false, baselineSeries = null) 
   }));
 }
 
+function idpaxSyncChartFilters(payload) {
+  const terminalSelect = document.getElementById('idpax-terminal-filter');
+  const skillSelect = document.getElementById('idpax-skill-filter');
+
+  if (skillSelect && !skillSelect.dataset.loaded) {
+    skillSelect.innerHTML = '<option value="ALL">All Skills</option>' + IDPAX_SERIES.map(item =>
+      `<option value="${idpaxEsc(item.key)}">${idpaxEsc(item.label)}</option>`
+    ).join('');
+    skillSelect.dataset.loaded = '1';
+  }
+
+  if (terminalSelect) terminalSelect.value = IDPAX_CHART_FILTERS.terminal;
+  if (skillSelect) skillSelect.value = IDPAX_CHART_FILTERS.skill;
+
+  if (terminalSelect && !terminalSelect.dataset.bound) {
+    terminalSelect.dataset.bound = '1';
+    terminalSelect.addEventListener('change', () => {
+      IDPAX_CHART_FILTERS.terminal = terminalSelect.value || 'ALL';
+      idpaxRenderChart(IDPAX_CHART_PAYLOAD || payload);
+    });
+  }
+
+  if (skillSelect && !skillSelect.dataset.bound) {
+    skillSelect.dataset.bound = '1';
+    skillSelect.addEventListener('change', () => {
+      IDPAX_CHART_FILTERS.skill = skillSelect.value || 'ALL';
+      idpaxRenderChart(IDPAX_CHART_PAYLOAD || payload);
+    });
+  }
+}
+
 function idpaxRenderChart(payload) {
   const canvas = document.getElementById('idpax-pulse-chart');
   if (!canvas || !window.Chart) return;
+  IDPAX_CHART_PAYLOAD = payload;
+  idpaxSyncChartFilters(payload);
   const title = document.querySelector('.idpax-chart-card .idpax-card-title span');
   if (title) {
     if (payload.simulation?.overlay_source) {
@@ -480,12 +593,14 @@ function idpaxRenderChart(payload) {
     IDPAX_CHART = null;
   }
 
-  const series = payload.series || {};
-  const labels = series.labels || [];
+  const terminal = IDPAX_CHART_FILTERS.terminal || 'ALL';
+  const series = idpaxScaleSeriesForTerminal(payload.series || {}, payload, terminal);
   const isSimulated = !!payload.simulation?.active;
   const isBaselinePreview = !!payload.baseline_preview;
-  const baselineSeries = payload.baseline || IDPAX_DATA?.series || null;
-  const simulatedSeries = payload.simulated || series;
+  const baselineSeries = idpaxScaleSeriesForTerminal(payload.baseline || IDPAX_DATA?.series || null, payload, terminal);
+  const simulatedSeries = idpaxScaleSeriesForTerminal(payload.simulated || series, payload, terminal);
+  const labelSource = isBaselinePreview ? baselineSeries : (isSimulated ? simulatedSeries : series);
+  const labels = labelSource?.labels || series.labels || baselineSeries?.labels || [];
 
   let datasets;
   if (isBaselinePreview) {

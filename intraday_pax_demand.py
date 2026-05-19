@@ -488,6 +488,53 @@ def _overlay_totals(overlay):
     }
 
 
+def _minute_labels(start_minute, end_minute):
+    start = max(0, min(1439, int(start_minute)))
+    end = max(start, min(1439, int(end_minute)))
+    return [_mins_to_hhmm(minute) for minute in range(start, end + 1)]
+
+
+def _reindex_series(series, labels):
+    source_labels = series.get('labels') or []
+    source_index = {str(label): idx for idx, label in enumerate(source_labels)}
+    out = {'labels': labels}
+    for touchpoint in TOUCHPOINTS:
+        values = _numbers(series.get(touchpoint))
+        out[touchpoint] = [
+            values[source_index[label]] if label in source_index and source_index[label] < len(values) else 0.0
+            for label in labels
+        ]
+    return out
+
+
+def _labels_for_delay_effect_span(base_dir, selected_flights, delay_mins, fallback_labels=None, pad_mins=30):
+    effect_rows = _load_flight_delay_effect_rows(base_dir)
+    if not effect_rows:
+        return fallback_labels or []
+
+    touched = []
+    for flight in selected_flights or []:
+        departure = flight.get('etd') or flight.get('scheduled_departure')
+        if not departure:
+            continue
+        old_etd = _mins(str(departure))
+        new_etd = old_etd + int(delay_mins)
+        for row in effect_rows:
+            offset = int(row['offset_mins'])
+            if any(abs(v) > 1e-9 for v in row.get('baseline', {}).values()):
+                touched.extend([old_etd + offset, old_etd + offset + 14])
+            if any(abs(v) > 1e-9 for v in row.get('simulation', {}).values()):
+                touched.extend([new_etd + offset, new_etd + offset + 14])
+
+    touched = [minute for minute in touched if 0 <= minute < 1440]
+    if not touched:
+        return fallback_labels or []
+
+    start = (max(0, min(touched) - pad_mins) // 15) * 15
+    end = min(1439, ((max(touched) + pad_mins + 14) // 15) * 15)
+    return _minute_labels(start, end)
+
+
 def _save_flight_delay_overlay_simulation(base_dir, payload, headers, column_touchpoints):
     """Write a 60-minute departure-delay workbook from flight_delay_effect.xlsx."""
     simulation_meta = payload.get('simulation') or {}
@@ -800,11 +847,15 @@ def build_flight_delay_baseline(base_dir, flight_nos):
     all selected flights. Simulated and delta series are zero-filled (simulation not run).
     """
     base = build_intraday_pax_pulse(base_dir)
-    labels = base['series'].get('labels', [])
-    n = len(labels)
-
     flights = _load_flights(base_dir)
     selected_flights = [f for f in flights if f['flight_no'] in set(flight_nos or [])]
+    labels = _labels_for_delay_effect_span(
+        base_dir,
+        selected_flights,
+        delay_mins=60,
+        fallback_labels=base['series'].get('labels', []),
+    )
+    n = len(labels)
 
     baseline_series = {'labels': labels, **{tp: [0.0] * n for tp in TOUCHPOINTS}}
     if selected_flights:
@@ -818,8 +869,9 @@ def build_flight_delay_baseline(base_dir, flight_nos):
 
     return {
         **base,
-        'baseline': {key: baseline_series.get(key, [0.0] * n) for key in TOUCHPOINTS},
-        'simulated': {key: [0.0] * n for key in TOUCHPOINTS},
+        'series': baseline_series,
+        'baseline': {'labels': labels, **{key: baseline_series.get(key, [0.0] * n) for key in TOUCHPOINTS}},
+        'simulated': {'labels': labels, **{key: [0.0] * n for key in TOUCHPOINTS}},
         'table': {
             'columns': base['table']['columns'],
             'rows': _table_from_series(zero_delta),
@@ -1010,6 +1062,15 @@ def simulate_intraday_pax(base_dir, scenario, params):
             }
 
         if selected_flights and delay == 60:
+            labels = _labels_for_delay_effect_span(
+                base_dir,
+                selected_flights,
+                delay_mins=delay,
+                fallback_labels=labels,
+            )
+            baseline_series = _reindex_series(baseline_series, labels)
+            series = deepcopy(baseline_series)
+
             # Baseline+simulation from file: baseline aligned to old ETD, simulation to new ETD
             effect = _combined_flight_delay_baseline_sim(base_dir, labels, selected_flights, delay)
             file_baseline = effect['baseline_series']
@@ -1055,9 +1116,9 @@ def simulate_intraday_pax(base_dir, scenario, params):
                 **base,
                 'series': series,
                 'labels': series.get('labels', []),
-                'baseline': {key: file_baseline.get(key, []) for key in TOUCHPOINTS},
-                'simulated': {key: file_simulated.get(key, []) for key in TOUCHPOINTS},
-                'overlay': {key: overlay_series.get(key, []) for key in TOUCHPOINTS},
+                'baseline': {'labels': labels, **{key: file_baseline.get(key, []) for key in TOUCHPOINTS}},
+                'simulated': {'labels': labels, **{key: file_simulated.get(key, []) for key in TOUCHPOINTS}},
+                'overlay': {'labels': labels, **{key: overlay_series.get(key, []) for key in TOUCHPOINTS}},
                 'impact': _build_impact(file_baseline, file_simulated),
                 'table': {
                     'columns': base['table']['columns'],
@@ -1203,8 +1264,8 @@ def simulate_intraday_pax(base_dir, scenario, params):
         **base,
         'series': series,
         'labels': series.get('labels', []),
-        'baseline': {key: baseline_series.get(key, []) for key in TOUCHPOINTS},
-        'simulated': {key: series.get(key, []) for key in TOUCHPOINTS},
+        'baseline': {'labels': labels, **{key: baseline_series.get(key, []) for key in TOUCHPOINTS}},
+        'simulated': {'labels': labels, **{key: series.get(key, []) for key in TOUCHPOINTS}},
         'impact': _build_impact(baseline_series, series),
         'table': {
             'columns': base['table']['columns'],

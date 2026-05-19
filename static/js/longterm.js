@@ -187,7 +187,6 @@ function switchView(view) {
     refreshAllCharts();
     if (typeof initLongTermPaxDemand === 'function') initLongTermPaxDemand();
   }
-  if (view === 'intraday-pax' && typeof initIntradayPaxDemand === 'function') initIntradayPaxDemand();
 }
 
 document.querySelectorAll('[data-view]').forEach(btn => {

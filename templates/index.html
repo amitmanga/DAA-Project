@@ -37,13 +37,7 @@
       <nav class="header-nav">
         <button class="nav-btn" type="button" data-view="long-term">Long Term</button>
         <button class="nav-btn" type="button" data-view="short-term">Short Term</button>
-        <div class="nav-menu">
-          <button class="nav-btn nav-trigger" type="button" data-section="intraday">Intraday</button>
-          <div class="nav-submenu">
-            <button class="nav-subitem" type="button" data-view="intraday-pax">PAX Demand</button>
-            <button class="nav-subitem" type="button" data-view="intraday">Resource Planning</button>
-          </div>
-        </div>
+        <button class="nav-btn" type="button" data-view="intraday">Intraday</button>
         <button class="nav-btn" data-view="config">Config</button>
       </nav>
       <div class="header-meta">
@@ -451,13 +445,8 @@
       </div>
     </section>
 
-    <!-- ===== INTRADAY PAX DEMAND VIEW ===== -->
-    <section id="view-intraday-pax" class="view">
-      <div class="page-header">
-        <h1 class="page-title">Intraday &middot; PAX Demand</h1>
-        <span class="sep">â€”</span>
-        <p class="page-sub">Live passenger pulse and what-if demand simulation</p>
-      </div>
+    <!-- ===== INTRADAY SCENARIO PLANNING TEMPLATE ===== -->
+    <template id="idpax-scenario-template">
       <div class="idpax-module">
         <section class="idpax-brand-row">
           <span class="stpax-pill">Pulse</span>
@@ -500,6 +489,22 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14h3v4H7z"/><path d="M12 10h3v8h-3z"/><path d="M17 6h3v12h-3z"/></svg>
               </div>
               <span>Live Touchpoint Pulse</span>
+              <div class="idpax-chart-filters">
+                <label>
+                  <span>Terminal</span>
+                  <select id="idpax-terminal-filter">
+                    <option value="ALL">All Terminals</option>
+                    <option value="T1">T1</option>
+                    <option value="T2">T2</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Skill</span>
+                  <select id="idpax-skill-filter">
+                    <option value="ALL">All Skills</option>
+                  </select>
+                </label>
+              </div>
             </div>
             <div class="idpax-chart-wrap">
               <canvas id="idpax-pulse-chart"></canvas>
@@ -527,7 +532,7 @@
 
         <section class="idpax-insight-grid" id="idpax-insight-grid"></section>
       </div>
-    </section>
+    </template>
 
     <!-- ===== CONFIG VIEW ===== -->
     <section id="view-config" class="view">

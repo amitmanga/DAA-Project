@@ -601,6 +601,39 @@ body.is-home-view .header-meta {
 .pax-card-title-row span {
   min-width: 0;
 }
+.idpax-chart-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.idpax-chart-filters label {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+.idpax-chart-filters label span {
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.idpax-chart-filters select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 800;
+  min-height: 32px;
+  min-width: 128px;
+  padding: 6px 10px;
+}
+.idpax-chart-filters select:focus {
+  border-color: var(--info);
+  outline: none;
+}
 .ltpax-kpi,
 .ltpax-card,
 .stpax-chart-card,

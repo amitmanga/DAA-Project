@@ -23,7 +23,7 @@ const ID_SKILL_COLOR = {
 let ID_DATA = null;
 let ID_SELECTED_FLIGHT = null;
 let ID_MANAGE_TASK = null;
-let ID_ACTIVE_TAB = 'staff-timeline';
+let ID_ACTIVE_TAB = 'opt';
 let ID_AUTO_REFRESH = null;
 let ID_SIM_TIMER = null;
 let ID_SIM_TIME = null;
@@ -255,9 +255,10 @@ function renderIntradayPage() {
     <div class="kpi-grid st-kpi-grid" id="id-kpis"></div>
     <div id="id-alerts-panel"></div>
     <div class="sub-tabs" style="margin-top:20px">
+      <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Staff Reallocation</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='staff-timeline'?'active':''}" data-idtab="staff-timeline">👤 Roster Timeline</button>
       <button class="sub-tab ${ID_ACTIVE_TAB==='demand'?'active':''}" data-idtab="demand">PAX Demand</button>
-      <button class="sub-tab ${ID_ACTIVE_TAB==='opt'?'active':''}" data-idtab="opt">⚙ Staff Reallocation</button>
+      <button class="sub-tab ${ID_ACTIVE_TAB==='scenario-planning'?'active':''}" data-idtab="scenario-planning">Scenario Planning</button>
     </div>
     <div id="id-sub-content"></div>
     <div id="id-flight-detail" class="flight-detail-panel"></div>
@@ -1020,6 +1021,14 @@ function renderIDSubContent() {
     document.getElementById('id-staff-timeline-search').addEventListener('input', doRefresh);
     document.getElementById('id-staff-timeline-shift').addEventListener('change', doRefresh);
     doRefresh();
+  } else if (ID_ACTIVE_TAB === 'scenario-planning') {
+    const template = document.getElementById('idpax-scenario-template');
+    container.innerHTML = template
+      ? template.innerHTML
+      : '<div class="empty-state">Scenario planning is unavailable.</div>';
+    if (typeof initIntradayPaxDemand === 'function') {
+      initIntradayPaxDemand();
+    }
   } else if (ID_ACTIVE_TAB === 'opt') {
     renderIDOptimization(container);
 
