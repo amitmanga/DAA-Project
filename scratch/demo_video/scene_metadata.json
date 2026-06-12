@@ -1,0 +1,67 @@
+[
+  {
+    "file": "01_home.png",
+    "title": "DAA Workforce",
+    "caption": "A single workspace for passenger demand, staffing capacity, and live resource planning."
+  },
+  {
+    "file": "02_long_term_forecast.png",
+    "title": "Strategic 12-Month Forecast",
+    "caption": "Annual passenger and flight forecasts show the demand signal that drives resource planning."
+  },
+  {
+    "file": "03_capacity_heatmap.png",
+    "title": "Capacity Hotspots",
+    "caption": "Weekly heatmaps surface high-demand periods, utilisation risk, and seasonal pressure points."
+  },
+  {
+    "file": "04_workforce_plan.png",
+    "title": "Workforce Plan",
+    "caption": "Role and terminal allocation converts the forecast into actionable staffing requirements."
+  },
+  {
+    "file": "05_roster_pattern.png",
+    "title": "Four-Week Roster Pattern",
+    "caption": "Shift templates show how weekly demand becomes practical staff coverage across the operation."
+  },
+  {
+    "file": "06_scenario_planning.png",
+    "title": "Scenario Planning",
+    "caption": "Monte Carlo stress testing helps compare demand surges, absence levels, and resilience options."
+  },
+  {
+    "file": "07_short_term_summary.png",
+    "title": "Three-Day Tactical View",
+    "caption": "The rolling short-term view highlights near-term demand, alerts, and coverage by skill."
+  },
+  {
+    "file": "08_task_allocation.png",
+    "title": "Task Allocation",
+    "caption": "The operational timeline maps staff assignments, breaks, and coverage windows for the selected day."
+  },
+  {
+    "file": "09_short_term_optimisation.png",
+    "title": "Optimisation Controls",
+    "caption": "Managers can tune travel time, shift stability, and secondary-skill preferences before optimising."
+  },
+  {
+    "file": "10_intraday_reallocation.png",
+    "title": "Live Staff Reallocation",
+    "caption": "Intraday heatmaps expose gaps by skill and time block, then recommend eligible staff moves."
+  },
+  {
+    "file": "11_intraday_timeline.png",
+    "title": "Live Roster Timeline",
+    "caption": "The live timeline keeps assignments, breaks, and shift coverage visible throughout the day."
+  },
+  {
+    "file": "12_intraday_pax_demand.png",
+    "title": "Passenger Demand Pulse",
+    "caption": "Fifteen-minute passenger signals show how touchpoint demand changes across terminals and roles."
+  },
+  {
+    "file": "13_config.png",
+    "title": "Configurable Assumptions",
+    "caption": "PAX productivity rates and staff skills can be updated, then reflected across every planning layer."
+  }
+]
